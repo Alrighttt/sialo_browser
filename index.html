@@ -17,7 +17,7 @@
       background: #0a0a0a;
       color: #e0e0e0;
       padding: 2rem;
-      max-width: 800px;
+      max-width: 1100px;
       margin: 0 auto;
     }
 
@@ -255,22 +255,23 @@
 
     .browser-container {
       display: flex;
+      flex-direction: column;
       gap: 1rem;
       margin-top: 1rem;
     }
 
     .browser-main {
-      flex: 1;
+      width: 100%;
       min-width: 0;
     }
 
     .browser-history {
-      width: 200px;
+      width: 100%;
       background: #0d0d0d;
       border: 1px solid #222;
       border-radius: 4px;
       padding: 0.75rem;
-      max-height: 600px;
+      max-height: 200px;
       overflow-y: auto;
     }
 
@@ -723,7 +724,7 @@
         <div class="browser-main">
           <iframe id="html-iframe"
             style="width:100%; height:600px; border:1px solid #333; border-radius:4px; background:white;"
-            sandbox="allow-same-origin"></iframe>
+            sandbox="allow-scripts" allowfullscreen></iframe>
           <!-- WebCodecs Video Player (outside sandboxed iframe) -->
           <div id="video-container"
             style="display:none; width:100%; height:600px; border:1px solid #333; border-radius:4px; background:#0a0a0a; box-sizing:border-box; position:relative; overflow:hidden;">
@@ -2461,6 +2462,1042 @@
     });
 
     // -- Decentralized Browser (HTML Viewer with Navigation) --
+
+    // --- Sia link interception via postMessage ---
+    // The iframe uses sandbox="allow-scripts" (no allow-same-origin), so
+    // JavaScript inside it runs in an isolated opaque origin that CANNOT
+    // access the parent's variables, localStorage, or cookies.
+    //
+    // We inject a small script into every HTML page that intercepts clicks
+    // on sia:// links and sends a postMessage to the parent.  The parent
+    // then downloads the target via the SDK (which holds the app key) and
+    // loads it back into the iframe.
+
+    // Script injected into every HTML page loaded in the iframe.
+    // Handles three things:
+    //  1. Intercepts clicks on <a href="sia://..."> and asks the parent to navigate
+    //  2. Finds <img>, <audio>, <source>, <link> with sia:// src and asks the
+    //     parent to download the resource (full download, sent back as ArrayBuffer)
+    //  3. Finds <video src="sia://..."> and requests WebCodecs streaming from the
+    //     parent (mp4box demux in parent, VideoDecoder + canvas in iframe)
+    const SIA_INJECTED_SCRIPT = `
+<script>
+(function() {
+  // --- 1. Link navigation ---
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a');
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (href && href.indexOf('sia://') === 0) {
+      e.preventDefault();
+      window.parent.postMessage({ type: 'SIA_NAVIGATE', url: href }, '*');
+    }
+  });
+
+  // --- 2. Embedded resource loading (images, CSS, etc.) ---
+  var _reqId = 0;
+  var _pending = {};
+
+  function requestResource(el, attr) {
+    var url = el.getAttribute(attr);
+    if (!url || url.indexOf('sia://') !== 0) return;
+    var id = 'r' + (++_reqId);
+    _pending[id] = { el: el, attr: attr };
+    if (el.tagName === 'IMG') {
+      el.setAttribute('data-sia-loading', '1');
+      if (!el.style.minHeight) el.style.minHeight = '40px';
+      el.style.opacity = '0.3';
+    }
+    window.parent.postMessage({ type: 'SIA_RESOURCE', url: url, requestId: id }, '*');
+  }
+
+  // --- 3. Video streaming via WebCodecs ---
+  var _streamSessions = {};
+  var _streamIdCounter = 0;
+
+  function formatTime(sec) {
+    if (!sec || sec < 0) sec = 0;
+    var m = Math.floor(sec / 60);
+    var s = Math.floor(sec % 60);
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+
+  function drawPlayButton(canvas) {
+    var ctx0 = canvas.getContext('2d');
+    ctx0.fillStyle = '#000';
+    ctx0.fillRect(0, 0, canvas.width, canvas.height);
+    ctx0.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx0.beginPath();
+    var cx = canvas.width / 2;
+    var cy = canvas.height / 2;
+    var sz = Math.min(canvas.width, canvas.height) * 0.15;
+    ctx0.moveTo(cx - sz * 0.5, cy - sz);
+    ctx0.lineTo(cx - sz * 0.5, cy + sz);
+    ctx0.lineTo(cx + sz, cy);
+    ctx0.closePath();
+    ctx0.fill();
+  }
+
+  function togglePause(session) {
+    if (session.paused) {
+      session.paused = false;
+      if (session.wallClockSynced && !session.hasAudio) {
+        session.wallClockStart = performance.now() - ((session.pauseOffsetUs - session.videoTimeBase) / 1000);
+      }
+      if (session.audioEl && session.audioEl.paused) session.audioEl.play().catch(function(){});
+      if (session.playBtn) session.playBtn.innerHTML = '&#9646;&#9646;';
+    } else {
+      // Snapshot time BEFORE setting paused (getMediaTimeUs checks s.paused first)
+      var t = getMediaTimeUs(session);
+      session.paused = true;
+      session.pauseOffsetUs = t >= 0 ? t : 0;
+      if (session.audioEl && !session.audioEl.paused) session.audioEl.pause();
+      if (session.playBtn) session.playBtn.innerHTML = '&#9654;';
+    }
+  }
+
+  function requestVideoStream(videoEl) {
+    var url = videoEl.getAttribute('src');
+    if (!url || url.indexOf('sia://') !== 0) return;
+    if (typeof VideoDecoder === 'undefined') {
+      requestResource(videoEl, 'src');
+      return;
+    }
+
+    var sessionId = 's' + (++_streamIdCounter);
+
+    // Container (position:relative for controls overlay)
+    var container = document.createElement('div');
+    container.style.cssText = 'position:relative;overflow:hidden;background:#000;border-radius:4px;max-width:100%;';
+
+    var canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;cursor:pointer;background:#000;';
+    if (videoEl.width) canvas.width = videoEl.width;
+    else canvas.width = 640;
+    if (videoEl.height) canvas.height = videoEl.height;
+    else canvas.height = 360;
+    if (videoEl.className) canvas.className = videoEl.className;
+    container.appendChild(canvas);
+
+    // Controls overlay (matches main player design)
+    var controls = document.createElement('div');
+    controls.style.cssText = 'position:absolute;bottom:0;left:0;right:0;padding:8px 12px;background:linear-gradient(transparent,rgba(0,0,0,0.8));display:flex;align-items:center;gap:10px;opacity:0;transition:opacity 0.3s;';
+
+    var playBtn = document.createElement('button');
+    playBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;';
+    playBtn.innerHTML = '&#9654;';
+
+    var timeSpan = document.createElement('span');
+    timeSpan.style.cssText = 'color:#ccc;font-size:12px;font-family:monospace;min-width:60px;';
+    timeSpan.textContent = '0:00';
+
+    var seekbar = document.createElement('div');
+    seekbar.style.cssText = 'flex:1;height:20px;display:flex;align-items:center;cursor:pointer;position:relative;';
+    var seekTrack = document.createElement('div');
+    seekTrack.style.cssText = 'width:100%;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;position:relative;overflow:visible;transition:height 0.15s;';
+    var seekBuffered = document.createElement('div');
+    seekBuffered.style.cssText = 'position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,0.25);border-radius:2px;width:0%;';
+    var seekPlayed = document.createElement('div');
+    seekPlayed.style.cssText = 'position:absolute;top:0;left:0;height:100%;background:#10b981;border-radius:2px;width:0%;';
+    var seekThumb = document.createElement('div');
+    seekThumb.style.cssText = 'position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#10b981;transform:translate(-50%,-50%);left:0%;opacity:0;transition:opacity 0.15s;';
+    seekTrack.appendChild(seekBuffered);
+    seekTrack.appendChild(seekPlayed);
+    seekTrack.appendChild(seekThumb);
+    seekbar.appendChild(seekTrack);
+    seekbar.addEventListener('mouseenter', function() { seekThumb.style.opacity = '1'; seekTrack.style.height = '6px'; });
+    seekbar.addEventListener('mouseleave', function() { seekThumb.style.opacity = '0'; seekTrack.style.height = '4px'; });
+
+    var volSlider = document.createElement('input');
+    volSlider.type = 'range'; volSlider.min = '0'; volSlider.max = '1'; volSlider.step = '0.01'; volSlider.value = '1';
+    volSlider.style.cssText = 'width:60px;cursor:pointer;accent-color:#10b981;';
+
+    var fsBtn = document.createElement('button');
+    fsBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:4px 8px;';
+    fsBtn.innerHTML = '&#x26F6;';
+
+    controls.appendChild(playBtn);
+    controls.appendChild(timeSpan);
+    controls.appendChild(seekbar);
+    controls.appendChild(volSlider);
+    controls.appendChild(fsBtn);
+    container.appendChild(controls);
+
+    // Show/hide controls on hover
+    var hideTimeout;
+    function showControls() {
+      controls.style.opacity = '1';
+      clearTimeout(hideTimeout);
+      hideTimeout = setTimeout(function() { controls.style.opacity = '0'; }, 3000);
+    }
+    container.addEventListener('mousemove', showControls);
+    container.addEventListener('mouseenter', showControls);
+
+    // Status line
+    var statusDiv = document.createElement('div');
+    statusDiv.style.cssText = 'color:#888;font-size:0.8rem;padding:0.5rem 1.25rem;';
+
+    var autoplay = videoEl.hasAttribute('autoplay');
+    if (!autoplay) {
+      statusDiv.textContent = 'Click to play';
+      drawPlayButton(canvas);
+    } else {
+      statusDiv.textContent = 'Loading video...';
+    }
+
+    videoEl.style.display = 'none';
+    videoEl.parentNode.insertBefore(container, videoEl.nextSibling);
+    videoEl.parentNode.insertBefore(statusDiv, container.nextSibling);
+
+    var session = {
+      canvas: canvas,
+      ctx: canvas.getContext('2d'),
+      container: container,
+      controls: controls,
+      playBtn: playBtn,
+      timeSpan: timeSpan,
+      seekPlayed: seekPlayed,
+      seekBuffered: seekBuffered,
+      seekThumb: seekThumb,
+      statusDiv: statusDiv,
+      videoEl: videoEl,
+      decoder: null,
+      frameBuffer: [],
+      pendingSamples: [],
+      canvasSized: false,
+      paused: false,
+      pauseOffsetUs: 0,
+      wallClockStart: 0,
+      videoTimeBase: -1,
+      wallClockSynced: false,
+      lastRafTime: 0,
+      downloadComplete: false,
+      mediaDuration: 0,
+      hasAudio: false,
+      audioEl: null,
+      audioMediaSource: null,
+      audioSourceBuffer: null,
+      audioAppendQueue: [],
+      audioSbAppending: false,
+      renderRunning: false,
+      aborted: false,
+      started: false,
+      seeking: false,
+      decoderConfig: null,
+      audioMode: null,
+    };
+    _streamSessions[sessionId] = session;
+
+    // Play/pause via canvas click or play button
+    canvas.addEventListener('click', function() {
+      if (!session.started) {
+        session.started = true;
+        statusDiv.textContent = 'Loading video...';
+        playBtn.innerHTML = '&#9646;&#9646;';
+        window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
+        return;
+      }
+      togglePause(session);
+    });
+    playBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (!session.started) {
+        session.started = true;
+        statusDiv.textContent = 'Loading video...';
+        playBtn.innerHTML = '&#9646;&#9646;';
+        window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
+        return;
+      }
+      togglePause(session);
+    });
+
+    // Volume
+    volSlider.addEventListener('input', function() {
+      if (session.audioEl) session.audioEl.volume = parseFloat(volSlider.value);
+    });
+    volSlider.addEventListener('click', function(e) { e.stopPropagation(); });
+
+    // Fullscreen
+    fsBtn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else {
+        container.requestFullscreen().catch(function() {});
+      }
+    });
+
+    // Seek bar: click + drag to seek
+    function seekFrac(e) {
+      var rect = seekbar.getBoundingClientRect();
+      return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    }
+    function updateSeekVisual(frac) {
+      var pct = (frac * 100) + '%';
+      if (session.seekPlayed) session.seekPlayed.style.width = pct;
+      if (session.seekThumb) session.seekThumb.style.left = pct;
+      if (session.timeSpan && session.mediaDuration > 0) {
+        session.timeSpan.textContent = formatTime(frac * session.mediaDuration) + ' / ' + formatTime(session.mediaDuration);
+      }
+    }
+    seekbar.addEventListener('click', function(e) { e.stopPropagation(); });
+    var dragging = false;
+    seekbar.addEventListener('mousedown', function(e) {
+      if (!session.started || session.mediaDuration <= 0) return;
+      e.preventDefault();
+      dragging = true;
+      session.seeking = true;
+      updateSeekVisual(seekFrac(e));
+    });
+    document.addEventListener('mousemove', function(e) {
+      if (!dragging) return;
+      updateSeekVisual(seekFrac(e));
+    });
+    document.addEventListener('mouseup', function(e) {
+      if (!dragging) return;
+      dragging = false;
+      session.seeking = false;
+      var frac = seekFrac(e);
+      var timeSec = frac * session.mediaDuration;
+      updateSeekVisual(frac);
+      window.parent.postMessage({ type: 'SIA_STREAM_SEEK', sessionId: sessionId, timeSec: timeSec }, '*');
+    });
+
+    if (autoplay) {
+      session.started = true;
+      statusDiv.textContent = 'Loading video...';
+      playBtn.innerHTML = '&#9646;&#9646;';
+      window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
+    }
+  }
+
+  function getMediaTimeUs(s) {
+    if (s.paused) return s.pauseOffsetUs;
+    if (s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3) {
+      // Audio is playing with data — use as master clock.
+      // Re-sync wall-clock baseline so fallback picks up seamlessly if audio stalls.
+      var t = s.audioEl.currentTime * 1e6;
+      s.videoTimeBase = t;
+      s.wallClockStart = performance.now();
+      s.wallClockSynced = true;
+      return t;
+    }
+    // Audio not ready (buffering after seek, or no audio) — use wall-clock timing
+    if (!s.wallClockSynced) return -1;
+    return s.videoTimeBase + (performance.now() - s.wallClockStart) * 1000;
+  }
+
+  function feedSamples(s) {
+    if (!s.decoder || s.decoder.state !== 'configured') return;
+    var maxFeed = s.frameBuffer.length === 0 ? 8 : 2;
+    var fed = 0;
+    // After decoder reset, skip delta frames until a keyframe arrives
+    if (s._needsKeyframe) {
+      while (s.pendingSamples.length > 0 && !s.pendingSamples[0].is_sync) {
+        s.pendingSamples.shift();
+      }
+      if (s.pendingSamples.length > 0 && s.pendingSamples[0].is_sync) {
+        s._needsKeyframe = false;
+      } else {
+        return; // still waiting for keyframe
+      }
+    }
+    while (s.pendingSamples.length > 0 && fed < maxFeed) {
+      if (s.decoder.decodeQueueSize + s.frameBuffer.length >= 12) break;
+      var sample = s.pendingSamples.shift();
+      fed++;
+      var ts = (sample.cts * 1e6) / sample.timescale;
+      try {
+        s.decoder.decode(new EncodedVideoChunk({
+          type: sample.is_sync ? 'key' : 'delta',
+          timestamp: ts,
+          duration: (sample.duration * 1e6) / sample.timescale,
+          data: sample.data,
+        }));
+      } catch (e) {}
+    }
+  }
+
+  function drainAudioQueue(s) {
+    if (!s.audioSourceBuffer || s.audioSbAppending || s.audioSourceBuffer.updating || s.audioAppendQueue.length === 0) return;
+    if (s.audioMediaSource.readyState !== 'open') return;
+    var buf = s.audioAppendQueue.shift();
+    s.audioSbAppending = true;
+    try {
+      s.audioSourceBuffer.appendBuffer(buf);
+    } catch (e) {
+      s.audioSbAppending = false;
+      if (e.name === 'QuotaExceededError') {
+        s.audioAppendQueue.unshift(buf);
+        if (s.audioSourceBuffer.buffered.length > 0 && s.audioEl) {
+          var removeEnd = s.audioEl.currentTime - 5;
+          if (removeEnd > s.audioSourceBuffer.buffered.start(0)) {
+            s.audioSourceBuffer.remove(s.audioSourceBuffer.buffered.start(0), removeEnd);
+          }
+        }
+      }
+    }
+  }
+
+  function maybeEndAudio(s) {
+    if (!s.downloadComplete || s.audioAppendQueue.length > 0 || s.audioSbAppending) return;
+    if (s.audioMediaSource && s.audioMediaSource.readyState === 'open') {
+      try { s.audioMediaSource.endOfStream(); } catch (e) {}
+    }
+  }
+
+  function renderLoop(sessionId) {
+    var s = _streamSessions[sessionId];
+    if (!s || s.aborted) {
+      if (s) { while (s.frameBuffer.length > 0) s.frameBuffer.shift().close(); }
+      return;
+    }
+
+    // Stall compensation (when using wall-clock timing)
+    var now = performance.now();
+    var usingAudioClock = s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3;
+    if (s.lastRafTime > 0 && s.wallClockSynced && !usingAudioClock && !s.paused) {
+      var gapMs = now - s.lastRafTime;
+      if (gapMs > 50) s.wallClockStart += (gapMs - 16.67);
+    }
+    s.lastRafTime = now;
+
+    feedSamples(s);
+
+    if (s.paused) {
+      // Update time display while paused
+      var pausedSec = s.pauseOffsetUs / 1e6;
+      if (s.timeSpan && s.mediaDuration > 0) {
+        s.timeSpan.textContent = formatTime(pausedSec) + ' / ' + formatTime(s.mediaDuration);
+      }
+      requestAnimationFrame(function() { renderLoop(sessionId); });
+      return;
+    }
+
+    // Establish timing on first frame
+    if (!s.wallClockSynced && !s.hasAudio && s.frameBuffer.length > 0) {
+      s.videoTimeBase = s.frameBuffer[0].timestamp;
+      s.wallClockStart = performance.now();
+      s.wallClockSynced = true;
+      s.lastRafTime = s.wallClockStart;
+    }
+
+    var mediaTimeUs = getMediaTimeUs(s);
+    if (mediaTimeUs < 0) {
+      requestAnimationFrame(function() { renderLoop(sessionId); });
+      return;
+    }
+
+    // Draw the latest frame whose time has arrived
+    var frameToDraw = null;
+    while (s.frameBuffer.length > 0 && s.frameBuffer[0].timestamp <= mediaTimeUs) {
+      if (frameToDraw) frameToDraw.close();
+      frameToDraw = s.frameBuffer.shift();
+    }
+    if (frameToDraw) {
+      if (!s.canvasSized) {
+        s.canvas.width = frameToDraw.displayWidth;
+        s.canvas.height = frameToDraw.displayHeight;
+        s.canvasSized = true;
+      }
+      s.ctx.drawImage(frameToDraw, 0, 0, s.canvas.width, s.canvas.height);
+      frameToDraw.close();
+    }
+
+    // Update controls
+    var mediaTimeSec = mediaTimeUs / 1e6;
+    if (s.timeSpan) {
+      if (s.mediaDuration > 0) {
+        s.timeSpan.textContent = formatTime(mediaTimeSec) + ' / ' + formatTime(s.mediaDuration);
+      } else {
+        s.timeSpan.textContent = formatTime(mediaTimeSec);
+      }
+    }
+    if (s.mediaDuration > 0 && !s.seeking) {
+      var playedPct = Math.min(100, (mediaTimeSec / s.mediaDuration) * 100);
+      if (s.seekPlayed) s.seekPlayed.style.width = playedPct + '%';
+      if (s.seekThumb) s.seekThumb.style.left = playedPct + '%';
+    }
+
+    requestAnimationFrame(function() { renderLoop(sessionId); });
+  }
+
+  function handleStreamInit(sessionId, d) {
+    var s = _streamSessions[sessionId];
+    if (!s) return;
+
+    // Set up audio MSE if audio config provided
+    if (d.audioConfig && typeof MediaSource !== 'undefined') {
+      var audioEl = document.createElement('audio');
+      audioEl.style.display = 'none';
+      document.body.appendChild(audioEl);
+      var ms = new MediaSource();
+      audioEl.src = URL.createObjectURL(ms);
+      s.audioEl = audioEl;
+      s.audioMediaSource = ms;
+
+      ms.addEventListener('sourceopen', function() {
+        try {
+          s.audioSourceBuffer = ms.addSourceBuffer(d.audioConfig.mime);
+          s.audioSourceBuffer.addEventListener('updateend', function() {
+            s.audioSbAppending = false;
+            drainAudioQueue(s);
+            maybeEndAudio(s);
+          });
+          s.hasAudio = true;
+          if (d.audioConfig.initSegment) {
+            s.audioInitSegment = d.audioConfig.initSegment.slice(0); // keep a copy for seek recovery
+            s.audioAppendQueue.push(d.audioConfig.initSegment);
+            drainAudioQueue(s);
+          }
+          audioEl.play().catch(function(){});
+        } catch (e) {
+          console.warn('Audio setup failed:', e);
+        }
+      }, { once: true });
+    }
+
+    // Set up VideoDecoder
+    if (d.videoConfig) {
+      var config = {
+        codec: d.videoConfig.codec,
+        codedWidth: d.videoConfig.codedWidth,
+        codedHeight: d.videoConfig.codedHeight,
+      };
+      if (d.videoConfig.description) {
+        config.description = new Uint8Array(d.videoConfig.description);
+      }
+
+      s.decoder = new VideoDecoder({
+        output: function(frame) {
+          if (s.aborted) { frame.close(); return; }
+          s.frameBuffer.push(frame);
+        },
+        error: function(e) {
+          console.error('VideoDecoder error:', e);
+        }
+      });
+      s.decoderConfig = config;
+      s.decoder.configure(config);
+
+      if (!s.renderRunning) {
+        s.renderRunning = true;
+        requestAnimationFrame(function() { renderLoop(sessionId); });
+      }
+    }
+
+    s.mediaDuration = d.duration || 0;
+    if (d.audioConfig && d.audioConfig.mode) s.audioMode = d.audioConfig.mode;
+    if (s.mediaDuration > 0) {
+      s.timeSpan.textContent = '0:00 / ' + formatTime(s.mediaDuration);
+      s.statusDiv.textContent = 'Streaming video (' + formatTime(s.mediaDuration) + ')...';
+    } else {
+      s.statusDiv.textContent = 'Streaming video...';
+    }
+  }
+
+  // --- 4. Message dispatcher ---
+  window.addEventListener('message', function(e) {
+    var d = e.data;
+    if (!d) return;
+
+    // Resource response (images, etc.)
+    if (d.type === 'SIA_RESOURCE_RESPONSE') {
+      var req = _pending[d.requestId];
+      if (!req) return;
+      delete _pending[d.requestId];
+      if (d.error) { console.error('sia:// resource failed:', d.error); return; }
+      var blob = new Blob([d.data], { type: d.mimeType || 'application/octet-stream' });
+      var blobUrl = URL.createObjectURL(blob);
+      req.el.setAttribute(req.attr, blobUrl);
+      if (req.el.tagName === 'IMG') {
+        req.el.style.opacity = '';
+        req.el.removeAttribute('data-sia-loading');
+        req.el.style.minHeight = '';
+      }
+      return;
+    }
+
+    // Stream messages
+    var sid = d.sessionId;
+    var s = sid ? _streamSessions[sid] : null;
+
+    if (d.type === 'SIA_STREAM_INIT' && s) {
+      handleStreamInit(sid, d);
+      return;
+    }
+    if (d.type === 'SIA_STREAM_VIDEO' && s && d.samples) {
+      for (var i = 0; i < d.samples.length; i++) {
+        s.pendingSamples.push(d.samples[i]);
+      }
+      return;
+    }
+    if (d.type === 'SIA_STREAM_AUDIO' && s && d.buffer) {
+      s.audioAppendQueue.push(d.buffer);
+      drainAudioQueue(s);
+      return;
+    }
+    if (d.type === 'SIA_STREAM_PROGRESS' && s) {
+      var pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
+      s.statusDiv.textContent = 'Streaming: slab ' + d.current + '/' + d.total + ' (' + pct + '%)';
+      if (s.mediaDuration > 0 && d.total > 0 && s.seekBuffered) {
+        var bufPct = Math.min(100, (d.current / d.total) * 100);
+        s.seekBuffered.style.width = bufPct + '%';
+      }
+      return;
+    }
+    if (d.type === 'SIA_STREAM_SEEK_FLUSH' && s) {
+      var timeSec = d.timeSec;
+      var seekTimeUs = timeSec * 1e6;
+      // Reset decoder (immediately stops pending work, no stale frames)
+      if (s.decoder) {
+        if (s.decoder.state === 'configured') s.decoder.reset();
+        if (s.decoderConfig) s.decoder.configure(s.decoderConfig);
+        s._needsKeyframe = true;
+      }
+
+      // Clear buffers
+      s.pendingSamples.length = 0;
+      while (s.frameBuffer.length > 0) s.frameBuffer.shift().close();
+
+      // Reset timing
+      s.pauseOffsetUs = seekTimeUs;
+      s.videoTimeBase = seekTimeUs;
+      s.wallClockStart = performance.now();
+      s.wallClockSynced = true;
+      s.lastRafTime = s.wallClockStart;
+
+      // Handle audio — clear SourceBuffer entirely, let re-extracted audio fill fresh.
+      // Previous approach of suppressing duplicate audio on the parent side was unreliable.
+      s.audioAppendQueue.length = 0;
+      if (s.audioSourceBuffer) {
+        if (s.audioSourceBuffer.updating) {
+          try { s.audioSourceBuffer.abort(); } catch (ex) {}
+        }
+        s.audioSbAppending = false;
+        // Set timestampOffset for raw-mse before remove (must be while updating=false)
+        if (s.audioMode === 'raw-mse') {
+          try { s.audioSourceBuffer.timestampOffset = timeSec; } catch (ex) {}
+        }
+        // Re-queue init segment for fMP4 (SourceBuffer stays configured after remove,
+        // but re-appending init segment ensures clean segment boundary)
+        if (s.audioMode === 'fmp4-mse' && s.audioInitSegment) {
+          s.audioAppendQueue.push(s.audioInitSegment.slice(0));
+        }
+        // Clear all buffered audio — re-extracted + new audio fills from seek point
+        try { s.audioSourceBuffer.remove(0, Infinity); } catch (ex) {}
+      }
+      if (s.audioEl) {
+        s.audioEl.pause();
+        s.audioEl.currentTime = timeSec;
+        if (!s.paused) {
+          s.audioEl.play().catch(function(){});
+        }
+      }
+
+      // Update visual
+      if (s.mediaDuration > 0) {
+        var pct = Math.min(100, (timeSec / s.mediaDuration) * 100);
+        if (s.seekPlayed) s.seekPlayed.style.width = pct + '%';
+        if (s.seekThumb) s.seekThumb.style.left = pct + '%';
+      }
+      if (s.timeSpan && s.mediaDuration > 0) {
+        s.timeSpan.textContent = formatTime(timeSec) + ' / ' + formatTime(s.mediaDuration);
+      }
+      return;
+    }
+    if (d.type === 'SIA_STREAM_END' && s) {
+      s.downloadComplete = true;
+      if (s.seekBuffered) s.seekBuffered.style.width = '100%';
+      if (s.decoder && s.decoder.state === 'configured') {
+        s.decoder.flush().catch(function(){});
+      }
+      maybeEndAudio(s);
+      s.statusDiv.textContent = 'Download complete.';
+      return;
+    }
+    if (d.type === 'SIA_STREAM_ERROR' && s) {
+      s.statusDiv.textContent = 'Stream error: ' + d.error;
+      s.statusDiv.style.color = '#f87171';
+      return;
+    }
+  });
+
+  // --- 5. Scan + MutationObserver ---
+  function scan(root) {
+    var selectors = [
+      'img[src^=\"sia://\"]',
+      'video[src^=\"sia://\"]',
+      'video[poster^=\"sia://\"]',
+      'audio[src^=\"sia://\"]',
+      'source[src^=\"sia://\"]',
+      'link[href^=\"sia://\"]'
+    ];
+    var els = root.querySelectorAll(selectors.join(','));
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      // Video elements: use streaming path
+      if ((el.tagName === 'VIDEO') && el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0) {
+        requestVideoStream(el);
+        continue;
+      }
+      if (el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0)
+        requestResource(el, 'src');
+      if (el.hasAttribute('href') && el.getAttribute('href').indexOf('sia://') === 0)
+        requestResource(el, 'href');
+      if (el.hasAttribute('poster') && el.getAttribute('poster').indexOf('sia://') === 0)
+        requestResource(el, 'poster');
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { scan(document); });
+  } else {
+    scan(document);
+  }
+
+  new MutationObserver(function(muts) {
+    for (var i = 0; i < muts.length; i++) {
+      var nodes = muts[i].addedNodes;
+      for (var j = 0; j < nodes.length; j++) {
+        if (nodes[j].nodeType === 1) scan(nodes[j]);
+      }
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+<\/script>`;
+
+    // Inject the interceptor script into HTML before loading into the iframe.
+    function createHtmlBlobUrl(htmlString) {
+      let injected;
+      const bodyClose = htmlString.lastIndexOf('</body>');
+      if (bodyClose !== -1) {
+        injected = htmlString.slice(0, bodyClose) + SIA_INJECTED_SCRIPT + htmlString.slice(bodyClose);
+      } else {
+        injected = htmlString + SIA_INJECTED_SCRIPT;
+      }
+      const blob = new Blob([injected], { type: 'text/html' });
+      return URL.createObjectURL(blob);
+    }
+
+    // Listen for messages from the sandboxed iframe.
+    window.addEventListener('message', (event) => {
+      const d = event.data;
+      if (!d) return;
+
+      // 1. Link navigation
+      if (d.type === 'SIA_NAVIGATE' && typeof d.url === 'string') {
+        console.log('🔗 Sia link clicked in iframe:', d.url);
+        const addressBar = document.getElementById('address-bar');
+        addressBar.value = d.url;
+        document.querySelector('#browser-nav').scrollIntoView({ behavior: 'smooth' });
+        loadContentWithAutoDetect();
+        return;
+      }
+
+      // 2. Embedded resource request
+      if (d.type === 'SIA_RESOURCE' && typeof d.url === 'string' && d.requestId) {
+        handleSiaResourceRequest(d.url, d.requestId);
+        return;
+      }
+
+      // 3. Video streaming request
+      if (d.type === 'SIA_STREAM_REQUEST' && typeof d.url === 'string' && d.sessionId) {
+        console.log('[iframe-stream] Stream request:', d.url);
+        handleSiaStreamRequest(d.url, d.sessionId);
+      }
+
+      // 4. Video seek request from iframe
+      if (d.type === 'SIA_STREAM_SEEK' && typeof d.timeSec === 'number' && d.sessionId) {
+        if (_activeIframeStream && _activeIframeStream.sessionId === d.sessionId && _activeIframeStream.seek) {
+          console.log('[iframe-stream] Seek request:', d.timeSec.toFixed(2) + 's');
+          _activeIframeStream.seek(d.timeSec);
+        }
+      }
+    });
+
+    // Queue for sia:// resource requests — serialized to avoid re-entering the WASM tokio runtime.
+    const _siaResourceQueue = [];
+    let _siaResourceProcessing = false;
+
+    function handleSiaResourceRequest(url, requestId) {
+      _siaResourceQueue.push({ url, requestId });
+      if (!_siaResourceProcessing) {
+        _processSiaResourceQueue();
+      }
+    }
+
+    async function _processSiaResourceQueue() {
+      _siaResourceProcessing = true;
+      while (_siaResourceQueue.length > 0) {
+        const { url, requestId } = _siaResourceQueue.shift();
+        const iframe = document.getElementById('html-iframe');
+        if (!iframe || !iframe.contentWindow) continue;
+
+        try {
+          const dummyStatus = document.createElement('span');
+          const dummyProgress = document.createElement('progress');
+          const result = await parallelDownload(url, dummyStatus, dummyProgress, 'Resource');
+          const blob = result.blob;
+
+          const detected = await fileTypeFromBlob(blob);
+          const mimeType = detected ? detected.mime : 'application/octet-stream';
+          const arrayBuffer = await blob.arrayBuffer();
+
+          iframe.contentWindow.postMessage({
+            type: 'SIA_RESOURCE_RESPONSE',
+            requestId,
+            data: arrayBuffer,
+            mimeType,
+          }, '*', [arrayBuffer]);
+        } catch (e) {
+          console.error('Failed to download sia:// resource:', url, e);
+          iframe.contentWindow.postMessage({
+            type: 'SIA_RESOURCE_RESPONSE',
+            requestId,
+            error: e.message,
+          }, '*');
+        }
+      }
+      _siaResourceProcessing = false;
+    }
+
+    // --- Iframe video streaming: parent-side relay ---
+    // Downloads video via worker, demuxes with mp4box on the main thread,
+    // relays codec config + video samples + audio segments to iframe via postMessage.
+    let _activeIframeStream = null;
+
+    async function handleSiaStreamRequest(url, sessionId) {
+      const iframe = document.getElementById('html-iframe');
+      if (!iframe || !iframe.contentWindow) return;
+
+      if (_activeIframeStream) {
+        _activeIframeStream.abort();
+        _activeIframeStream = null;
+      }
+
+      const mp4box = createMP4Box();
+      let byteOffset = 0;
+      let aborted = false;
+      // audioMode is set inside onReady, used by onSamples
+      let _audioMode = null;
+
+      function post(msg, transfers) {
+        if (aborted || !iframe.contentWindow) return;
+        iframe.contentWindow.postMessage(msg, '*', transfers || []);
+      }
+
+      mp4box.onReady = (info) => {
+        const mediaTracks = info.tracks.filter(t => t.video || t.audio);
+        if (mediaTracks.length === 0) {
+          post({ type: 'SIA_STREAM_ERROR', sessionId, error: 'No media tracks found' });
+          return;
+        }
+
+        const duration = (info.duration && info.timescale) ? info.duration / info.timescale : 0;
+
+        // Video track + codec description
+        let videoTrackId = null;
+        let videoConfig = null;
+        for (const track of mediaTracks) {
+          if (!track.video || videoTrackId !== null) continue;
+          videoTrackId = track.id;
+          try {
+            const trak = mp4box.getTrackById(track.id);
+            const entry = trak.mdia.minf.stbl.stsd.entries[0];
+            const descBox = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
+            let descBuf = null;
+            if (descBox) {
+              const s = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
+              descBox.write(s);
+              descBuf = s.buffer.slice(8);
+            }
+            videoConfig = {
+              codec: track.codec,
+              codedWidth: track.video.width,
+              codedHeight: track.video.height,
+              description: descBuf,
+            };
+          } catch (e) {
+            console.error('[iframe-stream] video config extraction failed:', e);
+          }
+        }
+
+        // Audio track — pass 1: fMP4 MSE, pass 2: raw MSE
+        let audioTrackId = null;
+        let audioConfig = null;
+        const rawMimeMap = { 'mp4a.6b': 'audio/mpeg', 'mp4a.69': 'audio/mpeg' };
+
+        for (const track of mediaTracks) {
+          if (!track.audio) continue;
+          const mime = `video/mp4; codecs="${track.codec}"`;
+          if (window.MediaSource && MediaSource.isTypeSupported(mime)) {
+            audioTrackId = track.id;
+            _audioMode = 'fmp4-mse';
+            mp4box.setSegmentOptions(audioTrackId, 'audio', { nbSamples: 100, rapAlignment: true });
+            break;
+          }
+        }
+        if (!audioTrackId) {
+          for (const track of mediaTracks) {
+            if (!track.audio) continue;
+            const rawMime = rawMimeMap[track.codec];
+            if (rawMime && window.MediaSource && MediaSource.isTypeSupported(rawMime)) {
+              audioTrackId = track.id;
+              _audioMode = 'raw-mse';
+              break;
+            }
+          }
+        }
+
+        // Set extraction options SYNCHRONOUSLY before mp4box.start()
+        if (videoTrackId !== null) {
+          mp4box.setExtractionOptions(videoTrackId, 'video', { nbSamples: 200 });
+        }
+        if (audioTrackId !== null && _audioMode === 'raw-mse') {
+          mp4box.setExtractionOptions(audioTrackId, 'audio', { nbSamples: 200 });
+        }
+
+        // Init segment for fMP4 audio
+        let audioInitBuf = null;
+        let audioMime = null;
+        if (audioTrackId !== null && _audioMode === 'fmp4-mse') {
+          const initResult = mp4box.initializeSegmentation();
+          audioInitBuf = initResult.buffer || null;
+          const t = mediaTracks.find(x => x.id === audioTrackId);
+          audioMime = `video/mp4; codecs="${t.codec}"`;
+        } else if (audioTrackId !== null && _audioMode === 'raw-mse') {
+          const t = mediaTracks.find(x => x.id === audioTrackId);
+          audioMime = rawMimeMap[t.codec];
+        }
+        if (audioTrackId !== null) {
+          audioConfig = { mode: _audioMode, mime: audioMime, initSegment: audioInitBuf };
+        }
+
+        mp4box.start();
+
+        const transfers = [];
+        if (videoConfig && videoConfig.description) transfers.push(videoConfig.description);
+        if (audioConfig && audioConfig.initSegment) transfers.push(audioConfig.initSegment);
+        post({ type: 'SIA_STREAM_INIT', sessionId, videoConfig, audioConfig, duration }, transfers);
+      };
+
+      mp4box.onSamples = (trackId, user, samples) => {
+        if (aborted) return;
+        if (user === 'audio' && _audioMode === 'raw-mse') {
+          for (const sample of samples) {
+            if (aborted) break;
+            const buf = sample.data.buffer.slice(sample.data.byteOffset, sample.data.byteOffset + sample.data.byteLength);
+            post({ type: 'SIA_STREAM_AUDIO', sessionId, buffer: buf }, [buf]);
+          }
+          return;
+        }
+        if (user !== 'video') return;
+        const batch = [];
+        const transfers = [];
+        for (const sample of samples) {
+          if (aborted) break;
+          const buf = sample.data.buffer.slice(sample.data.byteOffset, sample.data.byteOffset + sample.data.byteLength);
+          batch.push({ data: buf, cts: sample.cts, duration: sample.duration, timescale: sample.timescale, is_sync: sample.is_sync });
+          transfers.push(buf);
+        }
+        if (batch.length > 0) {
+          post({ type: 'SIA_STREAM_VIDEO', sessionId, samples: batch }, transfers);
+        }
+      };
+
+      mp4box.onSegment = (trackId, user, buffer) => {
+        if (aborted || user !== 'audio') return;
+        post({ type: 'SIA_STREAM_AUDIO', sessionId, buffer: buffer }, [buffer]);
+      };
+
+      mp4box.onError = (e) => console.error('[iframe-stream] mp4box error:', e);
+
+      // Download via worker (separate WASM instance — no tokio re-entrancy)
+      const worker = new Worker('./worker.js', { type: 'module' });
+      const streamPromise = new Promise((resolve, reject) => {
+        worker.onmessage = (e) => {
+          const msg = e.data;
+          if (msg.type === 'chunk') {
+            if (aborted) return;
+            const buf = msg.data;
+            buf.fileStart = msg.offset;
+            byteOffset += msg.size;
+            mp4box.appendBuffer(buf);
+          } else if (msg.type === 'progress') {
+            if (aborted) return;
+            post({ type: 'SIA_STREAM_PROGRESS', sessionId, current: msg.current, total: msg.total });
+          } else if (msg.type === 'complete') {
+            resolve();
+          } else if (msg.type === 'error') {
+            reject(new Error(msg.message));
+          }
+        };
+        worker.onerror = (e) => reject(new Error(`Worker error: ${e.message}`));
+      });
+
+      worker.postMessage({
+        type: 'start',
+        indexerUrl: getUrl(),
+        keyHex: getKeyHex(),
+        maxDownloads: getMaxDownloads(),
+        objectUrl: url,
+        logLevel: getLogLevel(),
+      });
+
+      _activeIframeStream = {
+        sessionId,
+        seek: (timeSec) => {
+          if (aborted) return;
+          mp4box.stop();
+          mp4box.seek(timeSec, true);
+          // Clear stale sample accumulators left over from pre-stop extraction.
+          // Without this, start() mixes old samples into the first post-seek batch.
+          // Must be AFTER seek() so trak.nextSample is set to the seek position.
+          if (mp4box.extractedTracks) {
+            for (const t of mp4box.extractedTracks) t.samples = [];
+          }
+          if (mp4box.fragmentedTracks) {
+            for (const t of mp4box.fragmentedTracks) {
+              const ns = t.trak.nextSample;
+              t.segmentStream = undefined;
+              if (t.state) {
+                t.state.lastFragmentSampleNumber = ns;
+                t.state.lastSegmentSampleNumber = ns;
+                t.state.accumulatedSize = 0;
+              }
+            }
+          }
+          post({ type: 'SIA_STREAM_SEEK_FLUSH', sessionId, timeSec });
+          mp4box.start();
+        },
+        abort: () => {
+          if (aborted) return;
+          aborted = true;
+          worker.terminate();
+          try { mp4box.flush(); } catch (e) {}
+        }
+      };
+
+      try {
+        await streamPromise;
+        if (!aborted) {
+          mp4box.flush();
+          post({ type: 'SIA_STREAM_END', sessionId });
+        }
+      } catch (e) {
+        if (!aborted) {
+          post({ type: 'SIA_STREAM_ERROR', sessionId, error: e.message });
+        }
+        aborted = true;
+        worker.terminate();
+      }
+
+      if (_activeIframeStream && _activeIframeStream.sessionId === sessionId) {
+        _activeIframeStream = null;
+      }
+    }
+
     const HISTORY_STORAGE_KEY = 'sia-browser-history';
     const browserHistory = [];
     let currentHistoryIndex = -1;
@@ -2695,6 +3732,10 @@
         activeBrowserStreamAbort.abort();
         activeBrowserStreamAbort = null;
       }
+      if (_activeIframeStream) {
+        _activeIframeStream.abort();
+        _activeIframeStream = null;
+      }
 
       // If blob URL is null (e.g., after page refresh or streaming video), re-download the file
       if (!item.blobUrl) {
@@ -2738,6 +3779,10 @@
       if (activeBrowserStreamAbort) {
         activeBrowserStreamAbort.abort();
         activeBrowserStreamAbort = null;
+      }
+      if (_activeIframeStream) {
+        _activeIframeStream.abort();
+        _activeIframeStream = null;
       }
 
       try {
@@ -2813,6 +3858,27 @@
           const audioBlob = new Blob([data], { type: mimeType });
           const audioUrl = URL.createObjectURL(audioBlob);
           const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;}audio{width:90%;max-width:600px;}</style></head><body><h2 style="margin-bottom:2rem;">🎵 Audio Player</h2><audio controls autoplay><source src="${audioUrl}" type="${mimeType}">Your browser does not support the audio element.</audio></body></html>`;
+          const blob = new Blob([html], { type: 'text/html' });
+          blobUrl = URL.createObjectURL(blob);
+        } else if (item.fileType === 'html') {
+          // HTML: rewrite sia:// links for in-page navigation
+          const htmlText = new TextDecoder().decode(data);
+          blobUrl = createHtmlBlobUrl(htmlText);
+        } else if (item.fileType === 'image') {
+          const imgBlob = new Blob([data], { type: mimeType });
+          let html;
+          try {
+            const bitmap = await createImageBitmap(imgBlob);
+            const cvs = document.createElement('canvas');
+            cvs.width = bitmap.width;
+            cvs.height = bitmap.height;
+            cvs.getContext('2d').drawImage(bitmap, 0, 0);
+            bitmap.close();
+            const pngDataUrl = cvs.toDataURL('image/png');
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;}img{max-width:100%;max-height:100vh;object-fit:contain;}</style></head><body><img src="${pngDataUrl}" alt="Image"></body></html>`;
+          } catch {
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${mimeType} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
+          }
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
         } else {
@@ -2934,6 +4000,10 @@
       if (activeBrowserStreamAbort) {
         activeBrowserStreamAbort.abort();
         activeBrowserStreamAbort = null;
+      }
+      if (_activeIframeStream) {
+        _activeIframeStream.abort();
+        _activeIframeStream = null;
       }
 
       try {
@@ -3100,12 +4170,34 @@
           status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${elapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
           return;
 
+        } else if (fileType === 'html') {
+          // HTML: rewrite sia:// links so they work as in-page navigations
+          const htmlText = new TextDecoder().decode(new Uint8Array(await downloadedBlob.arrayBuffer()));
+          blobUrl = createHtmlBlobUrl(htmlText);
+        } else if (fileType === 'image') {
+          // Convert image to PNG via canvas so it works inside the sandboxed iframe.
+          // Falls back to an error message for formats the browser can't decode (e.g. HEIC on Chrome).
+          const imgBlob = new Blob([downloadedBlob], { type: mimeType });
+          let html;
+          try {
+            const bitmap = await createImageBitmap(imgBlob);
+            const cvs = document.createElement('canvas');
+            cvs.width = bitmap.width;
+            cvs.height = bitmap.height;
+            cvs.getContext('2d').drawImage(bitmap, 0, 0);
+            bitmap.close();
+            const pngDataUrl = cvs.toDataURL('image/png');
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;}img{max-width:100%;max-height:100vh;object-fit:contain;}</style></head><body><img src="${pngDataUrl}" alt="Image"></body></html>`;
+          } catch {
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${mimeType} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
+          }
+          const blob = new Blob([html], { type: 'text/html' });
+          blobUrl = URL.createObjectURL(blob);
         } else {
-          // For other types (image, html, unknown), load directly
+          // Unknown types: load directly
           blobUrl = URL.createObjectURL(new Blob([downloadedBlob], { type: mimeType }));
         }
 
-        console.log(`🎬 LINE 1712 - Setting iframe.src for ${fileType} (non-MSE path)`);
         iframe.src = blobUrl;
 
         const displayUrl = `${typeLabel}: ${url}`;
@@ -3234,8 +4326,9 @@
 
           const { blob, elapsed, size } = await parallelDownload(url, status, progress, 'Downloading');
 
-          // Load into iframe (let browser detect content type)
-          const blobUrl = URL.createObjectURL(blob);
+          // Rewrite sia:// links in HTML content before loading
+          const htmlText = await blob.text();
+          const blobUrl = createHtmlBlobUrl(htmlText);
           iframe.src = blobUrl;
 
           // Add to history
