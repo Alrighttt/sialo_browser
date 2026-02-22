@@ -602,3 +602,141 @@ progress::-moz-progress-bar {
 #vc-seekbar:hover #vc-seek-thumb {
   opacity: 1;
 }
+
+/* Registration Wizard */
+.wizard-container {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 2rem 0;
+}
+.wizard-dots {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 2rem;
+}
+.wizard-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #333;
+  transition: background 0.2s;
+}
+.wizard-dot.active {
+  background: #10b981;
+}
+.wizard-dot.completed {
+  background: #1a6b3c;
+}
+.wizard-step {
+  display: none;
+}
+.wizard-step.active {
+  display: block;
+}
+.wizard-back {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 0.85rem;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 1rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.wizard-back::before {
+  content: '\2190';
+}
+.wizard-back:hover {
+  color: #e0e0e0;
+}
+.wizard-heading {
+  font-size: 1.5rem;
+  color: #e0e0e0;
+  margin-bottom: 0.5rem;
+}
+.wizard-subtext {
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+}
+.wizard-field {
+  margin-bottom: 1rem;
+}
+.wizard-field .label {
+  margin-bottom: 0.35rem;
+}
+.wizard-btn {
+  background: #10b981;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin-top: 0.5rem;
+}
+.wizard-btn:hover {
+  background: #059669;
+}
+.wizard-btn:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+.wizard-btn-secondary {
+  background: #2a2a2a;
+  color: #ccc;
+  border: 1px solid #444;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.wizard-btn-secondary:hover {
+  background: #333;
+  color: #fff;
+}
+.wizard-status {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  background: #0d0d0d;
+  border: 1px solid #222;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.5;
+}
+.wizard-status:empty {
+  display: none;
+}
+.wizard-link {
+  color: #60a5fa;
+  word-break: break-all;
+}
+.wizard-success {
+  text-align: center;
+  padding: 1rem 0;
+}
+.wizard-success .wizard-heading {
+  color: #4ade80;
+}
+.wizard-key-display {
+  background: #0d0d0d;
+  border: 1px solid #222;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: monospace;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 1rem 0;
+  text-align: left;
+  line-height: 1.6;
+}

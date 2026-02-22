@@ -32,6 +32,7 @@
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">System</div>
         <button class="gear-menu-item" data-panel="setup"><span class="gear-menu-icon">&#9881;</span> Settings</button>
+        <button class="gear-menu-item" data-panel="register"><span class="gear-menu-icon">&#128273;</span> Register</button>
         <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS Diagnostics</button>
       </div>
       <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
@@ -76,7 +77,93 @@
         <video id="mse-video" controls controlsList="nodownload" autoplay style="width:100%; height:100%; background:#000; display:none;"></video>
       </div>
 
-      <!-- Panel: Settings (Config + Register) -->
+      <!-- Panel: Registration Wizard (first-run only) -->
+      <div id="panel-register" class="viewport-panel internal-page" data-panel="register">
+        <div class="internal-page-content">
+          <div class="wizard-container">
+            <div class="wizard-dots">
+              <div class="wizard-dot active" data-dot="1"></div>
+              <div class="wizard-dot" data-dot="2"></div>
+              <div class="wizard-dot" data-dot="3"></div>
+              <div class="wizard-dot" data-dot="4"></div>
+              <div class="wizard-dot" data-dot="5"></div>
+            </div>
+
+            <!-- Step 1: Welcome + Indexer URL -->
+            <div class="wizard-step active" data-step="1">
+              <h1 class="wizard-heading">Welcome to Sia Browser</h1>
+              <p class="wizard-subtext">Connect to an indexer to get started. You'll need the URL of the indexer you want to register with.</p>
+              <div class="wizard-field">
+                <div class="label">Indexer URL</div>
+                <input id="wiz-url" type="text" placeholder="https://indexer.example.com" />
+              </div>
+              <button id="wiz-btn-next" class="wizard-btn">Next</button>
+            </div>
+
+            <!-- Step 2: App Identity -->
+            <div class="wizard-step" data-step="2">
+              <button class="wizard-back" data-back="1">Back</button>
+              <h1 class="wizard-heading">Register Your App</h1>
+              <p class="wizard-subtext">Give your app a name and description so the indexer knows what's connecting.</p>
+              <div class="wizard-field">
+                <div class="label">App Name</div>
+                <input id="wiz-name" type="text" placeholder="My App" />
+              </div>
+              <div class="wizard-field">
+                <div class="label">App Description</div>
+                <input id="wiz-desc" type="text" placeholder="A brief description of your app" />
+              </div>
+              <div class="wizard-field">
+                <div class="label">Service URL</div>
+                <input id="wiz-service-url" type="text" placeholder="https://myapp.example.com" />
+              </div>
+              <button id="wiz-btn-request" class="wizard-btn">Request Connection</button>
+              <div id="wiz-status-request" class="wizard-status"></div>
+            </div>
+
+            <!-- Step 3: Approve Connection -->
+            <div class="wizard-step" data-step="3">
+              <button class="wizard-back" data-back="2">Back</button>
+              <h1 class="wizard-heading">Approve Connection</h1>
+              <p class="wizard-subtext">Open the link below to approve the connection request, then click the button to continue.</p>
+              <div id="wiz-approval-link" class="wizard-status"></div>
+              <button id="wiz-btn-approve" class="wizard-btn" style="margin-top:1rem;">Check for Approval</button>
+              <div id="wiz-status-approve" class="wizard-status"></div>
+            </div>
+
+            <!-- Step 4: Recovery Phrase -->
+            <div class="wizard-step" data-step="4">
+              <button class="wizard-back" data-back="3">Back</button>
+              <h1 class="wizard-heading">Recovery Phrase</h1>
+              <p class="wizard-subtext">Generate a new recovery phrase or enter an existing one. This phrase is used to derive your cryptographic keys — save it securely.</p>
+              <div class="wizard-field">
+                <div class="label">Recovery Phrase</div>
+                <div class="row">
+                  <input id="wiz-mnemonic" type="text" placeholder="enter or generate a recovery phrase" />
+                  <button id="wiz-btn-generate" class="wizard-btn-secondary">Generate</button>
+                </div>
+              </div>
+              <button id="wiz-btn-register" class="wizard-btn">Register</button>
+              <div id="wiz-status-register" class="wizard-status"></div>
+            </div>
+
+            <!-- Step 5: Done -->
+            <div class="wizard-step" data-step="5">
+              <div class="wizard-success">
+                <h1 class="wizard-heading">You're all set!</h1>
+                <p class="wizard-subtext">Your app is registered and your key has been saved.</p>
+              </div>
+              <div id="wiz-key-display" class="wizard-key-display"></div>
+              <p style="color:#fbbf24; font-size:0.85rem; margin-bottom:1.5rem; text-align:center;">Save your recovery phrase and app key seed securely!</p>
+              <div style="text-align:center;">
+                <button id="wiz-btn-start" class="wizard-btn">Start Browsing</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panel: Settings -->
       <div id="panel-setup" class="viewport-panel internal-page" data-panel="setup">
         <div class="internal-page-content">
           <div class="panel-section">
@@ -85,84 +172,42 @@
       <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
       <div class="label">App Key (hex seed)</div>
       <input id="cfg-key" type="text" placeholder="e.g. ab12cd34..." style="margin-bottom:0.5rem" />
-      <hr />
-      <div class="label" style="cursor:pointer; user-select:none;" id="performance-toggle">
-        <span id="performance-arrow" style="display:inline-block; transition:transform 0.2s;">▶</span> Performance
-      </div>
-      <div id="performance-section" style="display:none;">
-        <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; margin-top:0.5rem;">
-          <button id="preset-conservative"
-            style="flex:1; padding:0.6rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-            🐢 Conservative<br><span style="font-size:0.7rem; opacity:0.9;">Most Stable</span>
-          </button>
-          <button id="preset-balanced"
-            style="flex:1; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-            ⚖️ Balanced<br><span style="font-size:0.7rem; opacity:0.9;">Recommended</span>
-          </button>
-          <button id="preset-fast"
-            style="flex:1; padding:0.6rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-            🚀 Fast<br><span style="font-size:0.7rem; opacity:0.9;">May Be Unstable</span>
-          </button>
-        </div>
-        <div class="label" style="margin-top:0.5rem;">Performance</div>
-        <div
-          style="display:grid; grid-template-columns: 2fr 1fr; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
-          <label style="font-size:0.85rem; color:#999;">Max Downloads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector downloads per worker. Higher values increase throughput but use more connections.</span></span></label>
-          <input id="cfg-max-downloads" type="number" min="1" value="8"
-            style="padding:0.4rem; text-align:center;" />
-          <label style="font-size:0.85rem; color:#999;">Max Uploads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase throughput but use more connections.</span></span></label>
-          <input id="cfg-max-uploads" type="number" min="1" value="8"
-            style="padding:0.4rem; text-align:center;" />
-          <label style="font-size:0.85rem; color:#999;">Download Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab downloads. More workers allow multiple slabs to download simultaneously, improving speed for large files.</span></span></label>
-          <input id="cfg-download-workers" type="number" min="1" value="8"
-            style="padding:0.4rem; text-align:center;" />
-          <label style="font-size:0.85rem; color:#999;">Upload Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab uploads. More workers allow multiple slabs to upload simultaneously, improving speed for large files.</span></span></label>
-          <input id="cfg-upload-workers" type="number" min="1" value="8"
-            style="padding:0.4rem; text-align:center;" />
-          <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output is written to the browser console (open DevTools to view).</span></span></label>
-          <input id="cfg-debug-logging" type="checkbox" style="cursor:pointer; justify-self:center;" />
-        </div>
-      </div>
-      <hr />
-      <div class="label">Recovery Phrase</div>
-      <div class="row">
-        <input id="phrase" type="text" placeholder="recovery phrase appears here" />
-        <button id="btn-generate">Generate</button>
-        <button id="btn-validate">Validate</button>
-      </div>
-      <div class="output" id="phrase-output"></div>
           </div><!-- /panel-section: Configuration -->
 
           <div class="panel-section">
-            <h2>Register App</h2>
-      <div class="label">App Name</div>
-      <input id="reg-name" type="text" placeholder="My App" style="margin-bottom:0.5rem" />
-      <div class="label">App Description</div>
-      <input id="reg-desc" type="text" placeholder="A brief description of your app" style="margin-bottom:0.5rem" />
-      <div class="label">Service URL</div>
-      <input id="reg-service-url" type="text" placeholder="https://myapp.example.com" style="margin-bottom:0.5rem" />
-      <div class="row">
-        <button id="btn-request-connection">1. Request Connection</button>
+            <h2>Performance</h2>
+      <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem;">
+        <button id="preset-conservative"
+          style="flex:1; padding:0.6rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+          Conservative<br><span style="font-size:0.7rem; opacity:0.9;">Most Stable</span>
+        </button>
+        <button id="preset-balanced"
+          style="flex:1; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+          Balanced<br><span style="font-size:0.7rem; opacity:0.9;">Recommended</span>
+        </button>
+        <button id="preset-fast"
+          style="flex:1; padding:0.6rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+          Fast<br><span style="font-size:0.7rem; opacity:0.9;">May Be Unstable</span>
+        </button>
       </div>
-      <div class="output" id="reg-status" style="display:none;"></div>
-      <div id="reg-approval" style="display:none; margin-top:0.75rem;">
-        <div class="label">Approve the connection by visiting the link above, then:</div>
-        <div class="row">
-          <button id="btn-wait-approval">2. Wait for Approval</button>
-        </div>
+      <div
+        style="display:grid; grid-template-columns: 2fr 1fr; gap:0.5rem; align-items:center;">
+        <label style="font-size:0.85rem; color:#999;">Max Downloads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector downloads per worker. Higher values increase throughput but use more connections.</span></span></label>
+        <input id="cfg-max-downloads" type="number" min="1" value="8"
+          style="padding:0.4rem; text-align:center;" />
+        <label style="font-size:0.85rem; color:#999;">Max Uploads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase throughput but use more connections.</span></span></label>
+        <input id="cfg-max-uploads" type="number" min="1" value="8"
+          style="padding:0.4rem; text-align:center;" />
+        <label style="font-size:0.85rem; color:#999;">Download Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab downloads. More workers allow multiple slabs to download simultaneously, improving speed for large files.</span></span></label>
+        <input id="cfg-download-workers" type="number" min="1" value="8"
+          style="padding:0.4rem; text-align:center;" />
+        <label style="font-size:0.85rem; color:#999;">Upload Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab uploads. More workers allow multiple slabs to upload simultaneously, improving speed for large files.</span></span></label>
+        <input id="cfg-upload-workers" type="number" min="1" value="8"
+          style="padding:0.4rem; text-align:center;" />
+        <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output is written to the browser console (open DevTools to view).</span></span></label>
+        <input id="cfg-debug-logging" type="checkbox" style="cursor:pointer; justify-self:center;" />
       </div>
-      <div id="reg-finalize" style="display:none; margin-top:0.75rem;">
-        <div class="label">Recovery Phrase (uses the phrase from Configuration above, or enter one here)</div>
-        <div class="row">
-          <input id="reg-mnemonic" type="text" placeholder="leave blank to use the phrase above" />
-          <button id="btn-reg-generate">Generate</button>
-        </div>
-        <div class="row" style="margin-top:0.5rem">
-          <button id="btn-register">3. Register</button>
-        </div>
-      </div>
-      <div class="output" id="reg-result" style="display:none; margin-top:0.75rem;"></div>
-          </div><!-- /panel-section: Register -->
+          </div><!-- /panel-section: Performance -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-setup -->
 
@@ -390,7 +435,6 @@
   <script type="module">
     import init, {
       generateRecoveryPhrase,
-      validateRecoveryPhrase,
       AppKey,
       Builder,
       UploadOptions,
@@ -406,6 +450,9 @@
 
     // Import video streaming pipelines
     import { webcodecStream as _webcodecStream, transmuxAndStream as _transmuxAndStream } from './video-streaming.js';
+
+    // Import registration wizard
+    import { initRegistrationWizard } from './register.js';
 
     // Check browser compatibility on page load
     window.addEventListener('DOMContentLoaded', () => {
@@ -469,7 +516,7 @@
     const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([k, v]) => [v, k]));
 
     const PANEL_TITLES = {
-      'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
+      'register': 'Register', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
       'upload-text': 'Upload Text', 'download': 'Download', 'objects': 'My Objects',
       'share': 'Share', 'cors': 'CORS Diagnostics', 'history': 'History',
     };
@@ -483,6 +530,7 @@
     let activeTabId = null;
     let nextTabId = 1;
     let streamingTabId = null; // ID of the tab currently using the shared video-container
+    let loadContentInProgress = false;
 
     // Auto-sync iframe-status changes to the active tab's statusHTML
     {
@@ -825,10 +873,29 @@
       document.querySelectorAll('.gear-menu-item').forEach(item => {
         item.addEventListener('click', () => {
           const panelName = item.dataset.panel;
-          if (!item.disabled) {
-            openOrActivateInternalTab(panelName);
-            gearMenu.style.display = 'none';
+          if (item.disabled) return;
+
+          if (panelName === 'register') {
+            const hasKey = !!localStorage.getItem('app-key');
+            const hasUrl = !!localStorage.getItem('indexer-url');
+            if (hasKey || hasUrl) {
+              if (!confirm('You already have an indexer URL and app key configured. Re-registering will overwrite them. Continue?')) {
+                gearMenu.style.display = 'none';
+                return;
+              }
+            }
+            // Initialize wizard handlers if not already done
+            if (!window._wizardInitialized) {
+              initRegistrationWizard({
+                Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+                closeTab, activateTab, tabs,
+              });
+              window._wizardInitialized = true;
+            }
           }
+
+          openOrActivateInternalTab(panelName);
+          gearMenu.style.display = 'none';
         });
       });
 
@@ -1277,18 +1344,7 @@
       debugLoggingCheckbox.checked = true;
     }
 
-    // Performance section toggle
-    document.getElementById('performance-toggle').addEventListener('click', () => {
-      const section = document.getElementById('performance-section');
-      const arrow = document.getElementById('performance-arrow');
-      if (section.style.display === 'none') {
-        section.style.display = 'block';
-        arrow.style.transform = 'rotate(90deg)';
-      } else {
-        section.style.display = 'none';
-        arrow.style.transform = 'rotate(0deg)';
-      }
-    });
+
 
     // Save to localStorage when config changes
     urlInput.addEventListener('input', () => {
@@ -1417,11 +1473,24 @@
       if (bar) { bar.value = ''; bar.focus(); }
     });
 
-    // Create initial tabs: Settings + Homepage
-    openOrActivateInternalTab('setup');
+    // Create initial tabs based on whether user has registered
     const homepageUrl = 'sia://app.sia.storage/objects/531182566fd9bf90c462f7c44e269e8cc6ff87a7413556ca37d56ead8938606a/shared?sv=2376575341&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=KdAe0ofC4I9hoUSAk-LFuu5fysyH6cZV68WiBdd5thEr-D08Dy3flrpD-TmaIFkdguLGIDZ69vU-wNOr-QlUDQ%3D%3D#encryption_key=4_jLc1I_GyL4FuMTiAAVmGrzQLOGxene8OAb5yzg9Xg=';
-    createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
-    // Settings stays active — user configures first, then clicks Homepage tab to browse
+    const isFirstRun = !localStorage.getItem('app-key');
+
+    if (isFirstRun) {
+      // First run: show registration wizard, Homepage tab in background
+      initRegistrationWizard({
+        Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+        closeTab, activateTab, tabs,
+      });
+      window._wizardInitialized = true;
+      openOrActivateInternalTab('register');
+      createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
+    } else {
+      // Returning user: go straight to Homepage
+      const hpTab = createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
+      activateTab(hpTab.id);
+    }
 
     // -- Performance Presets --
     function setPreset(maxDl, maxUl, dlWorkers, ulWorkers) {
@@ -1438,154 +1507,6 @@
     document.getElementById('preset-conservative').addEventListener('click', () => setPreset(4, 4, 4, 4));
     document.getElementById('preset-balanced').addEventListener('click', () => setPreset(8, 8, 8, 8));
     document.getElementById('preset-fast').addEventListener('click', () => setPreset(16, 16, 16, 16));
-
-    // -- Recovery Phrase --
-    document.getElementById('btn-generate').addEventListener('click', () => {
-      const phrase = generateRecoveryPhrase();
-      document.getElementById('phrase').value = phrase;
-      document.getElementById('phrase-output').innerHTML = '<span class="pass">Generated successfully</span>';
-    });
-
-    document.getElementById('btn-validate').addEventListener('click', () => {
-      const phrase = document.getElementById('phrase').value.trim();
-      const out = document.getElementById('phrase-output');
-      if (!phrase) {
-        out.innerHTML = '<span class="fail">Enter a phrase first</span>';
-        return;
-      }
-      try {
-        validateRecoveryPhrase(phrase);
-        out.innerHTML = '<span class="pass">Valid recovery phrase</span>';
-      } catch (e) {
-        out.innerHTML = `<span class="fail">Invalid: ${e.message}</span>`;
-      }
-    });
-
-    // -- Register --
-    let regBuilder = null;
-    let regAppId = null;
-
-    document.getElementById('btn-request-connection').addEventListener('click', async () => {
-      const status = document.getElementById('reg-status');
-      const approvalDiv = document.getElementById('reg-approval');
-      const finalizeDiv = document.getElementById('reg-finalize');
-      const resultDiv = document.getElementById('reg-result');
-      const btn = document.getElementById('btn-request-connection');
-
-      const url = getUrl();
-      const name = document.getElementById('reg-name').value.trim();
-      const desc = document.getElementById('reg-desc').value.trim();
-      const serviceUrl = document.getElementById('reg-service-url').value.trim();
-
-      status.style.display = 'none';
-      approvalDiv.style.display = 'none';
-      finalizeDiv.style.display = 'none';
-      resultDiv.style.display = 'none';
-
-      if (!url || !name || !desc || !serviceUrl) {
-        status.style.display = 'block';
-        status.innerHTML = '<span class="fail">Indexer URL (in Configuration) and all fields are required</span>';
-        return;
-      }
-
-      try {
-        btn.disabled = true;
-        btn.textContent = 'Requesting connection...';
-        status.style.display = 'block';
-        status.textContent = 'Requesting connection from indexer...';
-
-        regAppId = randomHex(32);
-        regBuilder = new Builder(url);
-
-        const appMetadata = JSON.stringify({
-          appID: regAppId,
-          name: name,
-          description: desc,
-          serviceURL: serviceUrl
-        });
-
-        await regBuilder.requestConnection(appMetadata);
-
-        const responseUrl = regBuilder.responseUrl();
-        status.innerHTML = `<span class="pass">✓ Connection requested!</span>\n\nApprove this app by visiting:\n<a href="${responseUrl}" target="_blank" rel="noopener" style="color:#60a5fa; word-break:break-all;">${responseUrl}</a>`;
-        approvalDiv.style.display = 'block';
-
-        btn.textContent = '1. Request Connection';
-        btn.disabled = false;
-      } catch (e) {
-        status.style.display = 'block';
-        status.innerHTML = `<span class="fail">Failed to request connection: ${e.message}</span>`;
-        btn.textContent = '1. Request Connection';
-        btn.disabled = false;
-      }
-    });
-
-    document.getElementById('btn-wait-approval').addEventListener('click', async () => {
-      const status = document.getElementById('reg-status');
-      const finalizeDiv = document.getElementById('reg-finalize');
-      const btn = document.getElementById('btn-wait-approval');
-
-      if (!regBuilder) {
-        status.innerHTML += `\n<span class="fail">Complete step 1 first</span>`;
-        return;
-      }
-
-      try {
-        btn.disabled = true;
-        btn.textContent = 'Waiting for approval...';
-        status.innerHTML += '\n\nPolling for approval (this may take a while)...';
-
-        await regBuilder.waitForApproval();
-
-        status.innerHTML += `\n<span class="pass">Approved!</span>`;
-        btn.textContent = 'Approved!';
-        finalizeDiv.style.display = 'block';
-      } catch (e) {
-        btn.disabled = false;
-        btn.textContent = '3. Wait for Approval';
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
-      }
-    });
-
-    document.getElementById('btn-reg-generate').addEventListener('click', () => {
-      document.getElementById('reg-mnemonic').value = generateRecoveryPhrase();
-    });
-
-    document.getElementById('btn-register').addEventListener('click', async () => {
-      const status = document.getElementById('reg-status');
-      const resultDiv = document.getElementById('reg-result');
-      // use register-specific mnemonic if provided, otherwise fall back to config phrase
-      const mnemonic = document.getElementById('reg-mnemonic').value.trim()
-        || document.getElementById('phrase').value.trim();
-
-      if (!regBuilder) {
-        status.innerHTML += `\n<span class="fail">Complete previous steps first</span>`;
-        return;
-      }
-      if (!mnemonic) {
-        status.innerHTML += `\n<span class="fail">Enter a recovery phrase in Configuration or the field above</span>`;
-        return;
-      }
-
-      try {
-        status.innerHTML += '\nRegistering...';
-        const sdk = await regBuilder.register(mnemonic);
-        const appKey = sdk.appKey();
-        const seed = hex(appKey.export());
-        const pubkey = appKey.publicKey();
-
-        // auto-fill the config app key field and save to localStorage
-        document.getElementById('cfg-key').value = seed;
-        localStorage.setItem('app-key', seed);
-
-        status.innerHTML += `\n<span class="pass">Registered successfully!</span>`;
-        resultDiv.style.display = 'block';
-        resultDiv.innerHTML = `<span class="pass">Registration complete!</span>\n\nApp Key Seed (auto-filled in Configuration above):\n${seed}\n\nPublic Key:\n${pubkey}\n\n<span style="color:#fbbf24;">Save your recovery phrase and app key seed securely!</span>`;
-        regBuilder = null;
-      } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
-      }
-    });
 
     // -- Account Dashboard --
     async function loadAccountDashboard() {
@@ -3394,7 +3315,6 @@
 
 
     // Auto-detect file type using MIME sniffing
-    let loadContentInProgress = false;
     async function loadContentWithAutoDetect() {
       if (loadContentInProgress) {
         console.log('[browser] loadContentWithAutoDetect already in progress, ignoring');
