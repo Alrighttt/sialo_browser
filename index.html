@@ -1479,7 +1479,7 @@
     });
 
     // Create initial tabs based on whether user has registered
-    const homepageUrl = 'sia://app.sia.storage/objects/531182566fd9bf90c462f7c44e269e8cc6ff87a7413556ca37d56ead8938606a/shared?sv=2376575341&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=KdAe0ofC4I9hoUSAk-LFuu5fysyH6cZV68WiBdd5thEr-D08Dy3flrpD-TmaIFkdguLGIDZ69vU-wNOr-QlUDQ%3D%3D#encryption_key=4_jLc1I_GyL4FuMTiAAVmGrzQLOGxene8OAb5yzg9Xg=';
+    const homepageUrl = 'sia://app.sia.storage/objects/f77ddd265d11a1424b725c10ed2f1ab2b8aff5978af5d09b34a7f80ef373ae65/shared?sv=2376597235&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=SlYyn0FyeQtC4Tal7alSu-3uoV--3gnCLfopuw00D2jcw_-jiDaKrY0DpM4ibuWsrDWyKepc_m0gwwrq-vQ_Ag%3D%3D#encryption_key=Iq5ay8K8B5brtgJrLD1rJEAEEsEZD23CVPIxZ8gU104=';
     const isFirstRun = !localStorage.getItem('app-key');
 
     if (isFirstRun) {
@@ -2607,7 +2607,7 @@
             mimeType,
           }, '*', [arrayBuffer]);
         } catch (e) {
-          console.error('Failed to download sia:// resource:', url, e);
+          console.error('[parent] Failed to download sia:// resource:', url, e);
           iframe.contentWindow.postMessage({
             type: 'SIA_RESOURCE_RESPONSE',
             requestId,
