@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>indexd WASM Demo</title>
+  <title>Sia Browser</title>
   <style>
     * {
       box-sizing: border-box;
@@ -16,15 +16,12 @@
       font-family: system-ui, -apple-system, sans-serif;
       background: #0a0a0a;
       color: #e0e0e0;
-      padding: 2rem;
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-
-    h1 {
-      font-size: 1.5rem;
-      margin-bottom: 1.5rem;
-      color: #fff;
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     h2 {
@@ -33,7 +30,7 @@
       color: #b0b0b0;
     }
 
-    section {
+    .panel-section {
       background: #151515;
       border: 1px solid #2a2a2a;
       border-radius: 8px;
@@ -116,10 +113,17 @@
       text-align: center;
       padding: 2rem;
       color: #888;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     #app {
       display: none;
+      flex: 1;
+      flex-direction: column;
+      overflow: hidden;
     }
 
     .info-tip {
@@ -209,78 +213,248 @@
       border-radius: 4px;
     }
 
-    /* Browser Navigation Controls */
-    .browser-nav {
+    /* Browser Chrome Bar */
+    #browser-chrome {
       display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-      margin-top: 1rem;
-      padding: 0.5rem;
-      background: #0d0d0d;
-      border: 1px solid #222;
-      border-radius: 4px;
-    }
-
-    .browser-nav-row {
-      display: flex;
-      gap: 0.5rem;
       align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: #111;
+      border-bottom: 1px solid #222;
+      flex-shrink: 0;
+      position: relative;
     }
 
-    .browser-nav button {
-      padding: 0.4rem 0.75rem;
+    #gear-btn {
+      background: none;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 0.4rem 0.5rem;
+      color: #999;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.1rem;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+    #gear-btn:hover { color: #e0e0e0; border-color: #555; background: #1a1a1a; }
+
+    .nav-btn {
+      background: none;
+      border: none;
+      color: #777;
+      cursor: pointer;
+      font-size: 1.1rem;
+      padding: 0.3rem 0.35rem;
+      line-height: 1;
+      flex-shrink: 0;
+      border-radius: 3px;
+    }
+    .nav-btn:hover:not(:disabled) { color: #e0e0e0; background: #1a1a1a; }
+    .nav-btn:disabled { color: #333; cursor: default; }
+
+    #gear-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0.75rem;
+      z-index: 1000;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 8px;
+      min-width: 220px;
+      padding: 0.5rem 0;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .gear-menu-header {
+      padding: 0.5rem 1rem;
       font-size: 0.8rem;
-      min-width: auto;
+      font-weight: 600;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
+    .gear-menu-sep {
+      border: none;
+      border-top: 1px solid #2a2a2a;
+      margin: 0.25rem 0;
+    }
+    .gear-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      width: 100%;
+      padding: 0.55rem 1rem;
+      background: none;
+      border: none;
+      color: #ccc;
+      font-size: 0.9rem;
+      cursor: pointer;
+      text-align: left;
+    }
+    .gear-menu-item:hover { background: #252525; color: #fff; }
+    .gear-menu-item.active { background: #1a3a2a; color: #4ade80; }
+    .gear-menu-item:disabled { color: #555; cursor: not-allowed; }
+    .gear-menu-item:disabled:hover { background: none; }
+    .gear-menu-icon { width: 1.2em; text-align: center; flex-shrink: 0; }
 
-    .browser-nav .address-bar {
+    #chrome-address-bar {
       flex: 1;
+      width: auto;
       background: #1a1a1a;
       border: 1px solid #333;
       border-radius: 4px;
-      padding: 0.4rem 0.6rem;
+      padding: 0.45rem 0.6rem;
       font-family: monospace;
-      font-size: 0.75rem;
+      font-size: 0.8rem;
       color: #ddd;
+      min-width: 0;
+    }
+    #chrome-address-bar:focus { outline: none; border-color: #10b981; background: #222; }
+
+    #btn-go {
+      background: #10b981;
+      border: none;
+      color: #fff;
+      font-weight: bold;
+      padding: 0.45rem 1.5rem;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+    #btn-go:hover { background: #059669; }
+
+    #btn-external-tab {
+      background: #f59e0b;
+      border: none;
+      color: #fff;
+      font-size: 0.8rem;
+      padding: 0.4rem 0.6rem;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    #btn-external-tab:hover { background: #d97706; }
+
+    /* Viewport */
+    #viewport {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+      background: #0a0a0a;
+      min-height: 0;
+    }
+    .viewport-panel {
+      display: none;
+      width: 100%;
+      height: 100%;
+    }
+    .internal-page {
+      overflow-y: auto;
+      padding: 2rem;
+    }
+    .internal-page-content {
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    /* Tab Bar */
+    #tab-bar {
+      display: flex;
+      align-items: stretch;
+      background: #0d0d0d;
+      border-bottom: 1px solid #222;
+      flex-shrink: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      min-height: 30px;
+      scrollbar-width: none;
+    }
+    #tab-bar::-webkit-scrollbar { display: none; }
+    #tab-list {
+      display: flex;
+      align-items: stretch;
+      min-width: 0;
+    }
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.4rem 0.25rem 0.7rem;
+      background: #111;
+      border-right: 1px solid #1a1a1a;
+      cursor: pointer;
+      white-space: nowrap;
+      max-width: 180px;
+      min-width: 40px;
+      font-size: 0.72rem;
+      color: #777;
+      transition: background 0.15s, color 0.15s;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .tab:hover { background: #1a1a1a; color: #ccc; }
+    .tab.active {
+      background: #0a0a0a;
+      color: #e0e0e0;
+      border-bottom: 2px solid #10b981;
+    }
+    .tab-label {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-
-    .browser-nav .address-bar:focus {
-      outline: none;
-      border-color: #667eea;
-      background: #222;
-    }
-
-    .browser-container {
-      display: flex;
-      flex-direction: column;
-      gap: 1rem;
-      margin-top: 1rem;
-    }
-
-    .browser-main {
-      width: 100%;
+      flex: 1;
       min-width: 0;
     }
-
-    .browser-history {
-      width: 100%;
-      background: #0d0d0d;
-      border: 1px solid #222;
-      border-radius: 4px;
-      padding: 0.75rem;
-      max-height: 200px;
-      overflow-y: auto;
-    }
-
-    .browser-history h3 {
+    .tab-close {
+      background: none;
+      border: none;
+      color: #555;
       font-size: 0.85rem;
-      color: #b0b0b0;
-      margin-bottom: 0.5rem;
+      cursor: pointer;
+      padding: 0 0.15rem;
+      line-height: 1;
+      flex-shrink: 0;
+      border-radius: 3px;
     }
+    .tab-close:hover { color: #ef4444; background: rgba(239,68,68,0.15); }
+    #tab-new {
+      background: none;
+      border: none;
+      border-right: 1px solid #1a1a1a;
+      color: #555;
+      font-size: 1rem;
+      cursor: pointer;
+      padding: 0 0.7rem;
+      flex-shrink: 0;
+    }
+    #tab-new:hover { color: #10b981; background: #1a1a1a; }
 
+    /* Status Bar */
+    #status-bar {
+      flex-shrink: 0;
+      padding: 0.35rem 0.75rem;
+      background: #111;
+      border-top: 1px solid #222;
+      font-size: 0.75rem;
+      color: #666;
+      font-family: monospace;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    #status-bar .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #f59e0b;
+      flex-shrink: 0;
+    }
+    #status-bar .status-dot.connected { background: #4ade80; }
+
+    /* History items (used in history panel) */
     .history-item {
       font-size: 0.75rem;
       padding: 0.4rem;
@@ -329,6 +503,18 @@
     .history-delete {
       flex-shrink: 0;
     }
+
+    /* Browser progress bar (thin) */
+    #browser-progress {
+      width: 100%;
+      height: 3px;
+      flex-shrink: 0;
+      display: none;
+      margin: 0;
+    }
+    #browser-progress::-webkit-progress-bar { background: #0a0a0a; border-radius: 0; }
+    #browser-progress::-webkit-progress-value { background: #10b981; border-radius: 0; }
+    #browser-progress::-moz-progress-bar { background: #10b981; border-radius: 0; }
 
     /* Volume slider: custom styling so thumb visually spans the full track.
        The input is widened by thumb-width (12px) with negative margins so the
@@ -428,14 +614,79 @@
 </head>
 
 <body>
-  <h1>indexd WASM Demo</h1>
-
   <div id="loading">Loading WASM module...</div>
 
   <div id="app">
-    <!-- Configuration -->
-    <section>
-      <h2>Configuration</h2>
+
+    <!-- Browser Chrome Bar -->
+    <div id="browser-chrome">
+      <button id="gear-btn" title="Menu">&#9881;</button>
+      <div id="gear-menu" style="display:none;">
+        <div class="gear-menu-header">Browse</div>
+        <button class="gear-menu-item" data-panel="dashboard"><span class="gear-menu-icon">&#128202;</span> Dashboard</button>
+        <button class="gear-menu-item" data-panel="objects"><span class="gear-menu-icon">&#128193;</span> My Objects</button>
+        <button class="gear-menu-item" data-panel="history"><span class="gear-menu-icon">&#128220;</span> History</button>
+        <hr class="gear-menu-sep">
+        <div class="gear-menu-header">Transfer</div>
+        <button class="gear-menu-item" data-panel="upload-file"><span class="gear-menu-icon">&#128228;</span> Upload File</button>
+        <button class="gear-menu-item" data-panel="upload-text"><span class="gear-menu-icon">&#128221;</span> Upload Text</button>
+        <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span> Download</button>
+        <hr class="gear-menu-sep">
+        <div class="gear-menu-header">Share</div>
+        <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share Object</button>
+        <hr class="gear-menu-sep">
+        <div class="gear-menu-header">System</div>
+        <button class="gear-menu-item" data-panel="setup"><span class="gear-menu-icon">&#9881;</span> Settings</button>
+        <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS Diagnostics</button>
+      </div>
+      <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
+      <button id="btn-forward" class="nav-btn" title="Go forward" disabled>&#8594;</button>
+      <input type="text" id="chrome-address-bar" placeholder="Paste Sia share URL or object ID..."
+        title="Press Enter or click Go to auto-detect file type">
+      <button id="btn-go" title="Auto-detect file type and load content">Go</button>
+      <button id="btn-external-tab"
+        title="Opens in new tab with JavaScript enabled - use only for trusted content">&#9888; External</button>
+    </div>
+
+    <!-- Progress bar -->
+    <!-- Tab Bar -->
+    <div id="tab-bar">
+      <div id="tab-list"></div>
+      <button id="tab-new" title="New Tab">+</button>
+    </div>
+
+    <progress id="browser-progress" max="100" value="0"></progress>
+
+    <!-- Viewport -->
+    <div id="viewport">
+
+      <!-- Browser tab iframes are created dynamically by createTab() -->
+
+      <!-- Browser: shared video container (used by streaming browser tabs) -->
+      <div id="video-container" class="viewport-panel" data-panel="browser"
+        style="background:#0a0a0a; position:relative; overflow:hidden;">
+        <canvas id="stream-canvas" style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
+        <div id="video-controls" style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s;">
+          <button id="vc-playpause" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 8px;">&#9654;</button>
+          <span id="vc-time" style="color:#ccc; font-size:12px; font-family:monospace; min-width:60px;">0:00</span>
+          <div id="vc-seekbar">
+            <div id="vc-seek-track">
+              <div id="vc-seek-buffered"></div>
+              <div id="vc-seek-played"></div>
+              <div id="vc-seek-thumb"></div>
+            </div>
+          </div>
+          <input id="vc-volume" type="range" min="0" max="1" step="0.01" value="1" class="vc-vol-slider">
+          <button id="vc-fullscreen" style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 8px;">&#x26F6;</button>
+        </div>
+        <video id="mse-video" controls controlsList="nodownload" autoplay style="width:100%; height:100%; background:#000; display:none;"></video>
+      </div>
+
+      <!-- Panel: Settings (Config + Register) -->
+      <div id="panel-setup" class="viewport-panel internal-page" data-panel="setup">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Configuration</h2>
       <div class="label">Indexer URL</div>
       <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
       <div class="label">App Key (hex seed)</div>
@@ -486,12 +737,10 @@
         <button id="btn-validate">Validate</button>
       </div>
       <div class="output" id="phrase-output"></div>
+          </div><!-- /panel-section: Configuration -->
 
-    </section>
-
-    <!-- Register -->
-    <section>
-      <h2>Register App</h2>
+          <div class="panel-section">
+            <h2>Register App</h2>
       <div class="label">App Name</div>
       <input id="reg-name" type="text" placeholder="My App" style="margin-bottom:0.5rem" />
       <div class="label">App Description</div>
@@ -519,11 +768,15 @@
         </div>
       </div>
       <div class="output" id="reg-result" style="display:none; margin-top:0.75rem;"></div>
-    </section>
+          </div><!-- /panel-section: Register -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-setup -->
 
-    <!-- Account Dashboard -->
-    <section id="account-dashboard">
-      <h2>Account Dashboard</h2>
+      <!-- Panel: Dashboard -->
+      <div id="panel-dashboard" class="viewport-panel internal-page" data-panel="dashboard">
+        <div class="internal-page-content">
+          <div class="panel-section" id="account-dashboard">
+            <h2>Account Dashboard</h2>
       <div class="row" style="margin-bottom:1rem;">
         <button id="btn-refresh-account">Load Account Data</button>
       </div>
@@ -601,26 +854,33 @@
       </div>
 
       <div class="output" id="account-status" style="margin-top:1rem;"></div>
-    </section>
+          </div><!-- /panel-section: Dashboard -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-dashboard -->
 
-    <!-- CORS Diagnostics -->
-    <section>
-      <h2>🔧 CORS Diagnostics</h2>
-      <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
-        Sends an OPTIONS preflight request to every API endpoint. The last two auth UI routes intentionally
-        have CORS disabled.
-      </p>
-      <button id="btn-cors-run-all"
-        style="width:100%; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; margin-bottom:1rem;">
-        Run All CORS Tests
-      </button>
-      <div id="cors-results" style="font-size:0.85rem;"></div>
-    </section>
+      <!-- Panel: CORS Diagnostics -->
+      <div id="panel-cors" class="viewport-panel internal-page" data-panel="cors">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>CORS Diagnostics</h2>
+            <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
+              Sends an OPTIONS preflight request to every API endpoint. The last two auth UI routes intentionally
+              have CORS disabled.
+            </p>
+            <button id="btn-cors-run-all"
+              style="width:100%; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; margin-bottom:1rem;">
+              Run All CORS Tests
+            </button>
+            <div id="cors-results" style="font-size:0.85rem;"></div>
+          </div><!-- /panel-section: CORS -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-cors -->
 
-
-    <!-- Upload Text -->
-    <section>
-      <h2>Upload Text</h2>
+      <!-- Panel: Upload Text -->
+      <div id="panel-upload-text" class="viewport-panel internal-page" data-panel="upload-text">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Upload Text</h2>
       <div class="label">Text to upload</div>
       <textarea id="ul-text" rows="4" placeholder="Type or paste text here..."></textarea>
       <div class="row" style="margin-top:0.5rem">
@@ -629,132 +889,109 @@
       </div>
       <progress id="ul-progress" max="100" value="0" style="display:none"></progress>
       <div class="output" id="ul-status"></div>
-    </section>
+          </div><!-- /panel-section: Upload Text -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-upload-text -->
 
-    <!-- Upload File -->
-    <section>
-      <h2>Upload File</h2>
-      <div class="dropzone" id="uf-dropzone">
-        Drop a file here or click to select
-        <input type="file" id="uf-file" style="display:none" />
-        <div class="file-info" id="uf-file-info"></div>
-      </div>
-      <div class="row" style="margin-top:0.5rem">
-        <button id="btn-upload-file">Upload ( web workers )</button>
-        <button id="btn-upload-file-simple">Upload ( single-threaded )</button>
-      </div>
-      <progress id="uf-progress" max="100" value="0" style="display:none"></progress>
-      <div class="output" id="uf-status"></div>
-    </section>
-
-
-    <!-- Download File -->
-    <section>
-      <h2>Download File</h2>
-      <div class="label">Object ID or Share URL</div>
-      <input id="dl-url" type="text" placeholder="Paste sia:// URL or object ID (hex)" style="margin-bottom:0.5rem" />
-      <div class="label">Filename</div>
-      <div class="row">
-        <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
-        <button id="btn-download">Download</button>
-      </div>
-      <progress id="dl-progress" max="100" value="0" style="display:none"></progress>
-      <div class="output" id="dl-status"></div>
-    </section>
-
-    <!-- List Objects -->
-    <section>
-      <h2>My Objects</h2>
-      <div class="row">
-        <button id="btn-list-objects">Refresh List</button>
-        <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem" placeholder="Limit" />
-      </div>
-      <div class="output" id="list-status"></div>
-      <div id="objects-list" style="margin-top:1rem; max-height:400px; overflow-y:auto;">
-        <!-- Objects will be displayed here -->
-      </div>
-    </section>
-
-    <!-- Share Object -->
-    <section>
-      <h2>Share Object</h2>
-      <div class="label">Object ID (hex)</div>
-      <input id="share-object-id" type="text" placeholder="e.g. 0e90d697f504..." style="margin-bottom:0.5rem" />
-      <div class="label">Expires in</div>
-      <div class="row">
-        <input id="share-duration" type="number" value="24" min="1" style="width:5rem" />
-        <select id="share-unit"
-          style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.5rem;">
-          <option value="3600000">hours</option>
-          <option value="86400000" selected>days</option>
-          <option value="604800000">weeks</option>
-        </select>
-        <button id="btn-share">Generate Link</button>
-      </div>
-      <div class="output" id="share-status"></div>
-    </section>
-
-    <!-- HTML Viewer (Decentralized Browser) -->
-    <section>
-      <h2>🌐 Decentralized Browser</h2>
-
-      <!-- Browser Navigation Controls -->
-      <div class="browser-nav" id="browser-nav">
-        <div class="browser-nav-row">
-          <input type="text" class="address-bar" id="address-bar" placeholder="Paste Sia share URL or object ID..."
-            title="Press Enter or click Go to auto-detect file type" style="flex:1;">
-          <button id="btn-go" title="Auto-detect file type and load content"
-            style="background:#10b981; border-color:#10b981; font-weight:bold; padding:0.5rem 2rem;">Go</button>
-        </div>
-        <div class="browser-nav-row" style="justify-content:flex-start; gap:0.5rem;">
-          <button id="btn-external-tab"
-            title="⚠️ Opens in new tab with JavaScript enabled - use only for trusted content"
-            style="background:#f59e0b; border-color:#f59e0b; font-size:0.85rem; padding:0.4rem 0.8rem;">⚠️ Open in
-            External Tab</button>
-          <span style="color:#888; font-size:0.8rem; font-style:italic;">Warning: External tab allows JavaScript
-            execution</span>
-        </div>
-      </div>
-
-      <progress id="iframe-progress" max="100" value="0" style="display:none; margin-top:1rem"></progress>
-      <div class="output" id="iframe-status"></div>
-
-      <!-- Browser Container with Iframe and History -->
-      <div class="browser-container" id="browser-container">
-        <div class="browser-main">
-          <iframe id="html-iframe"
-            style="width:100%; height:600px; border:1px solid #333; border-radius:4px; background:white;"
-            sandbox="allow-scripts" allowfullscreen></iframe>
-          <!-- WebCodecs Video Player (outside sandboxed iframe) -->
-          <div id="video-container"
-            style="display:none; width:100%; height:600px; border:1px solid #333; border-radius:4px; background:#0a0a0a; box-sizing:border-box; position:relative; overflow:hidden;">
-            <canvas id="stream-canvas" style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
-            <!-- Minimal controls overlay -->
-            <div id="video-controls" style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s;">
-              <button id="vc-playpause" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 8px;">&#9654;</button>
-              <span id="vc-time" style="color:#ccc; font-size:12px; font-family:monospace; min-width:60px;">0:00</span>
-              <div id="vc-seekbar">
-                <div id="vc-seek-track">
-                  <div id="vc-seek-buffered"></div>
-                  <div id="vc-seek-played"></div>
-                  <div id="vc-seek-thumb"></div>
-                </div>
-              </div>
-              <input id="vc-volume" type="range" min="0" max="1" step="0.01" value="1" class="vc-vol-slider">
-              <button id="vc-fullscreen" style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 8px;">&#x26F6;</button>
+      <!-- Panel: Upload File -->
+      <div id="panel-upload-file" class="viewport-panel internal-page" data-panel="upload-file">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Upload File</h2>
+            <div class="dropzone" id="uf-dropzone">
+              Drop a file here or click to select
+              <input type="file" id="uf-file" style="display:none" />
+              <div class="file-info" id="uf-file-info"></div>
             </div>
-            <!-- MSE fallback video (hidden, used only when WebCodecs unavailable) -->
-            <video id="mse-video" controls controlsList="nodownload" autoplay style="width:100%; height:100%; background:#000; display:none;"></video>
-          </div>
-        </div>
-        <div class="browser-history">
-          <h3>📜 History</h3>
-          <div id="history-list"></div>
-        </div>
-      </div>
-    </section>
+            <div class="row" style="margin-top:0.5rem">
+              <button id="btn-upload-file">Upload ( web workers )</button>
+              <button id="btn-upload-file-simple">Upload ( single-threaded )</button>
+            </div>
+            <progress id="uf-progress" max="100" value="0" style="display:none"></progress>
+            <div class="output" id="uf-status"></div>
+          </div><!-- /panel-section: Upload File -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-upload-file -->
 
-  </div>
+      <!-- Panel: Download -->
+      <div id="panel-download" class="viewport-panel internal-page" data-panel="download">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Download File</h2>
+            <div class="label">Object ID or Share URL</div>
+            <input id="dl-url" type="text" placeholder="Paste sia:// URL or object ID (hex)" style="margin-bottom:0.5rem" />
+            <div class="label">Filename</div>
+            <div class="row">
+              <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
+              <button id="btn-download">Download</button>
+            </div>
+            <progress id="dl-progress" max="100" value="0" style="display:none"></progress>
+            <div class="output" id="dl-status"></div>
+          </div><!-- /panel-section: Download -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-download -->
+
+      <!-- Panel: My Objects -->
+      <div id="panel-objects" class="viewport-panel internal-page" data-panel="objects">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>My Objects</h2>
+            <div class="row">
+              <button id="btn-list-objects">Refresh List</button>
+              <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem" placeholder="Limit" />
+            </div>
+            <div class="output" id="list-status"></div>
+            <div id="objects-list" style="margin-top:1rem; max-height:none; overflow-y:visible;">
+              <!-- Objects will be displayed here -->
+            </div>
+          </div><!-- /panel-section: My Objects -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-objects -->
+
+      <!-- Panel: Share Object -->
+      <div id="panel-share" class="viewport-panel internal-page" data-panel="share">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Share Object</h2>
+            <div class="label">Object ID (hex)</div>
+            <input id="share-object-id" type="text" placeholder="e.g. 0e90d697f504..." style="margin-bottom:0.5rem" />
+            <div class="label">Expires in</div>
+            <div class="row">
+              <input id="share-duration" type="number" value="24" min="1" style="width:5rem" />
+              <select id="share-unit"
+                style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.5rem;">
+                <option value="3600000">hours</option>
+                <option value="86400000" selected>days</option>
+                <option value="604800000">weeks</option>
+              </select>
+              <button id="btn-share">Generate Link</button>
+            </div>
+            <div class="output" id="share-status"></div>
+          </div><!-- /panel-section: Share -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-share -->
+
+      <!-- Panel: History -->
+      <div id="panel-history" class="viewport-panel internal-page" data-panel="history">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Browsing History</h2>
+            <div id="history-list"></div>
+          </div><!-- /panel-section: History -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-history -->
+
+    </div><!-- /viewport -->
+
+    <!-- Status Bar -->
+    <div id="status-bar">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Not connected</span>
+      <span style="flex:1;"></span>
+      <span id="iframe-status" style="color:#888; font-size:0.75rem; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+    </div>
+
+  </div><!-- /app -->
 
   <script type="module">
     import init, {
@@ -817,6 +1054,396 @@
       if (bytes < 1e9) return (bytes / 1e6).toFixed(1) + ' MB';
       if (bytes < 1e12) return (bytes / 1e9).toFixed(2) + ' GB';
       return (bytes / 1e12).toFixed(2) + ' TB';
+    }
+
+    // ── Panel & Tab Management ──────────────────────────────────
+
+    const PANEL_URLS = {
+      'setup':       'sia://settings',
+      'dashboard':   'sia://dashboard',
+      'upload-file': 'sia://upload',
+      'upload-text': 'sia://upload/text',
+      'download':    'sia://download',
+      'objects':     'sia://objects',
+      'share':       'sia://share',
+      'cors':        'sia://diagnostics',
+      'history':     'sia://history',
+    };
+    const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([k, v]) => [v, k]));
+
+    const PANEL_TITLES = {
+      'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
+      'upload-text': 'Upload Text', 'download': 'Download', 'objects': 'My Objects',
+      'share': 'Share', 'cors': 'CORS Diagnostics', 'history': 'History',
+    };
+
+    // Backward-compat globals (derived from active tab)
+    let activePanel = null;
+    let lastBrowserUrl = '';
+
+    // Tab state
+    let tabs = [];
+    let activeTabId = null;
+    let nextTabId = 1;
+    let streamingTabId = null; // ID of the tab currently using the shared video-container
+
+    function createTab({ type, panelName, url, label }) {
+      const id = 'tab-' + (nextTabId++);
+      const tab = {
+        id,
+        type,              // 'browser' or 'internal'
+        panelName: panelName || null,
+        label: label || (panelName ? PANEL_TITLES[panelName] : 'New Tab'),
+        url: url || '',
+        iframeEl: null,
+        isStreaming: false,
+        streamAbort: null,
+        iframeStreamAbort: null,
+        navHistory: [],    // per-tab navigation history: [{ url, blobUrl, label, fileType }]
+        navIndex: -1,      // current position in navHistory
+        contentLoaded: false, // true once content has been loaded into this tab
+      };
+
+      if (type === 'browser') {
+        const iframe = document.createElement('iframe');
+        iframe.className = 'viewport-panel';
+        iframe.dataset.tabId = id;
+        iframe.style.cssText = 'border:none; background:white; display:none; width:100%; height:100%;';
+        iframe.sandbox = 'allow-scripts';
+        iframe.allowFullscreen = true;
+        document.getElementById('viewport').appendChild(iframe);
+        tab.iframeEl = iframe;
+      }
+
+      tabs.push(tab);
+      renderTabBar();
+      return tab;
+    }
+
+    function activateTab(tabId) {
+      const tab = tabs.find(t => t.id === tabId);
+      if (!tab) return;
+      if (activeTabId === tabId) return; // already active
+
+      // Hide previous tab's content
+      const prevTab = tabs.find(t => t.id === activeTabId);
+      if (prevTab) {
+        if (prevTab.type === 'browser') {
+          if (prevTab.iframeEl) prevTab.iframeEl.style.display = 'none';
+          if (prevTab.isStreaming) {
+            document.getElementById('video-container').style.display = 'none';
+          }
+        } else {
+          const panel = document.getElementById('panel-' + prevTab.panelName);
+          if (panel) panel.style.display = 'none';
+        }
+      } else {
+        // No previous tab — hide everything
+        document.querySelectorAll('#viewport > .viewport-panel').forEach(el => {
+          el.style.display = 'none';
+        });
+      }
+
+      // Show new tab's content
+      if (tab.type === 'browser') {
+        if (tab.isStreaming && tab.id === streamingTabId) {
+          document.getElementById('video-container').style.display = 'block';
+          if (tab.iframeEl) tab.iframeEl.style.display = 'none';
+        } else if (tab.iframeEl) {
+          tab.iframeEl.style.display = 'block';
+        }
+        activePanel = 'browser';
+        lastBrowserUrl = tab.url;
+      } else {
+        const panel = document.getElementById('panel-' + tab.panelName);
+        if (panel) panel.style.display = 'block';
+        activePanel = tab.panelName;
+      }
+
+      activeTabId = tabId;
+      updateAddressBarForTab(tab);
+      highlightActiveMenuItem(tab.type === 'internal' ? tab.panelName : null);
+      renderTabBar();
+      updateNavButtons();
+
+      // Auto-load browser tabs that have a URL but haven't loaded content yet
+      if (tab.type === 'browser' && tab.url && !tab.contentLoaded) {
+        loadContentWithAutoDetect();
+      }
+    }
+
+    function closeTab(tabId) {
+      const idx = tabs.findIndex(t => t.id === tabId);
+      if (idx === -1) return;
+      const tab = tabs[idx];
+
+      // Clean up browser tab resources
+      if (tab.type === 'browser') {
+        if (tab.streamAbort) { tab.streamAbort.abort(); tab.streamAbort = null; }
+        if (tab.iframeStreamAbort) { tab.iframeStreamAbort.abort(); tab.iframeStreamAbort = null; }
+        if (tab.iframeEl) tab.iframeEl.remove();
+        if (tab.isStreaming && tab.id === streamingTabId) {
+          document.getElementById('video-container').style.display = 'none';
+          document.getElementById('mse-video').src = '';
+          streamingTabId = null;
+        }
+      } else {
+        // Hide the internal panel
+        const panel = document.getElementById('panel-' + tab.panelName);
+        if (panel) panel.style.display = 'none';
+      }
+
+      tabs.splice(idx, 1);
+
+      if (activeTabId === tabId) {
+        activeTabId = null;
+        if (tabs.length === 0) {
+          const newTab = createTab({ type: 'browser', label: 'New Tab' });
+          activateTab(newTab.id);
+        } else {
+          const newIdx = Math.min(idx, tabs.length - 1);
+          activateTab(tabs[newIdx].id);
+        }
+      }
+      renderTabBar();
+    }
+
+    function renderTabBar() {
+      const tabList = document.getElementById('tab-list');
+      if (!tabList) return;
+      tabList.innerHTML = '';
+
+      for (const tab of tabs) {
+        const el = document.createElement('div');
+        el.className = 'tab' + (tab.id === activeTabId ? ' active' : '');
+        el.dataset.tabId = tab.id;
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'tab-label';
+        labelSpan.textContent = tab.label;
+        labelSpan.title = tab.url || tab.label;
+
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'tab-close';
+        closeBtn.innerHTML = '&times;';
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeTab(tab.id);
+        });
+
+        el.appendChild(labelSpan);
+        el.appendChild(closeBtn);
+        el.addEventListener('click', () => activateTab(tab.id));
+        tabList.appendChild(el);
+      }
+    }
+
+    function getActiveTab() {
+      return tabs.find(t => t.id === activeTabId) || null;
+    }
+
+    function getActiveTabIframe() {
+      const tab = getActiveTab();
+      if (tab && tab.type === 'browser' && tab.iframeEl) return tab.iframeEl;
+      return null;
+    }
+
+    function findTabByIframeWindow(win) {
+      return tabs.find(t => t.type === 'browser' && t.iframeEl && t.iframeEl.contentWindow === win) || null;
+    }
+
+    function openOrActivateInternalTab(panelName) {
+      const existing = tabs.find(t => t.type === 'internal' && t.panelName === panelName);
+      if (existing) {
+        activateTab(existing.id);
+        return existing;
+      }
+      const tab = createTab({
+        type: 'internal',
+        panelName,
+        url: PANEL_URLS[panelName],
+        label: PANEL_TITLES[panelName] || panelName,
+      });
+      activateTab(tab.id);
+      return tab;
+    }
+
+    function getOrCreateActiveBrowserTab() {
+      const active = getActiveTab();
+      if (active && active.type === 'browser') return active;
+      // Create a new browser tab
+      const tab = createTab({ type: 'browser', label: 'New Tab' });
+      activateTab(tab.id);
+      return tab;
+    }
+
+    function updateAddressBarForTab(tab) {
+      const bar = document.getElementById('chrome-address-bar');
+      if (!bar) return;
+      if (tab.type === 'browser') {
+        bar.value = tab.url || '';
+      } else {
+        bar.value = PANEL_URLS[tab.panelName] || '';
+      }
+    }
+
+    function highlightActiveMenuItem(panelName) {
+      document.querySelectorAll('.gear-menu-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.panel === panelName);
+      });
+    }
+
+    function updateConnectionStatus(connected, detail) {
+      const dot = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      if (dot) dot.classList.toggle('connected', connected);
+      if (text) text.textContent = detail || (connected ? 'Connected' : 'Not connected');
+    }
+
+    // Track which browser element is active (iframe or video) for the current streaming tab
+    function setBrowserView(showVideo) {
+      const vc = document.getElementById('video-container');
+      if (vc) vc.dataset.active = showVideo ? 'true' : 'false';
+    }
+
+    // ── Per-tab back/forward navigation ──────────────────────────
+
+    // Push a new entry to the active browser tab's nav history.
+    // Truncates any forward history (just like a real browser).
+    function pushTabNav(tab, entry) {
+      if (!tab || tab.type !== 'browser') return;
+      // Avoid duplicate consecutive entries for the same URL
+      if (tab.navIndex >= 0 && tab.navHistory[tab.navIndex] &&
+          tab.navHistory[tab.navIndex].url === entry.url) {
+        // Update blobUrl in case it changed (re-download)
+        tab.navHistory[tab.navIndex].blobUrl = entry.blobUrl;
+        return;
+      }
+      // Truncate forward history
+      tab.navHistory.splice(tab.navIndex + 1);
+      tab.navHistory.push(entry);
+      tab.navIndex = tab.navHistory.length - 1;
+      updateNavButtons();
+    }
+
+    function updateNavButtons() {
+      const tab = getActiveTab();
+      const back = document.getElementById('btn-back');
+      const fwd = document.getElementById('btn-forward');
+      if (!back || !fwd) return;
+      if (tab && tab.type === 'browser') {
+        back.disabled = tab.navIndex <= 0;
+        fwd.disabled = tab.navIndex >= tab.navHistory.length - 1;
+      } else {
+        back.disabled = true;
+        fwd.disabled = true;
+      }
+    }
+
+    let navInProgress = false; // guard to prevent pushTabNav during back/forward
+
+    function goBack() {
+      const tab = getActiveTab();
+      if (!tab || tab.type !== 'browser' || tab.navIndex <= 0) return;
+      tab.navIndex--;
+      navigateTabNavEntry(tab);
+    }
+
+    function goForward() {
+      const tab = getActiveTab();
+      if (!tab || tab.type !== 'browser' || tab.navIndex >= tab.navHistory.length - 1) return;
+      tab.navIndex++;
+      navigateTabNavEntry(tab);
+    }
+
+    function navigateTabNavEntry(tab) {
+      const entry = tab.navHistory[tab.navIndex];
+      if (!entry) return;
+
+      navInProgress = true; // prevent pushTabNav from re-pushing during this load
+
+      tab.url = entry.url;
+      tab.label = entry.label || (entry.url.length > 30 ? entry.url.substring(0, 30) + '...' : entry.url);
+      lastBrowserUrl = entry.url;
+      renderTabBar();
+
+      const addressBar = document.getElementById('chrome-address-bar');
+      if (addressBar) addressBar.value = entry.url;
+
+      if (entry.blobUrl) {
+        // We have a cached blob — load it directly without re-downloading
+        const iframe = tab.iframeEl;
+        if (iframe) iframe.src = entry.blobUrl;
+        updateNavButtons();
+        navInProgress = false;
+      } else {
+        // No cached blob — re-download
+        addressBar.value = entry.url;
+        loadContentWithAutoDetect().finally(() => { navInProgress = false; });
+      }
+    }
+
+    // Gear menu setup (runs after DOM ready)
+    function initGearMenu() {
+      const gearBtn = document.getElementById('gear-btn');
+      const gearMenu = document.getElementById('gear-menu');
+      if (!gearBtn || !gearMenu) return;
+
+      gearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        gearMenu.style.display = gearMenu.style.display === 'none' ? 'block' : 'none';
+      });
+
+      document.addEventListener('click', () => {
+        gearMenu.style.display = 'none';
+      });
+
+      gearMenu.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+
+      document.querySelectorAll('.gear-menu-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const panelName = item.dataset.panel;
+          if (!item.disabled) {
+            openOrActivateInternalTab(panelName);
+            gearMenu.style.display = 'none';
+          }
+        });
+      });
+
+      // Address bar: detect internal pseudo-URLs on Enter
+      const chromeBar = document.getElementById('chrome-address-bar');
+      if (chromeBar) {
+        chromeBar.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            handleChromeBarNavigation();
+          }
+        });
+      }
+    }
+
+    function handleChromeBarNavigation() {
+      const bar = document.getElementById('chrome-address-bar');
+      if (!bar) return;
+      const url = bar.value.trim();
+      if (!url) return;
+
+      // Check for internal panel pseudo-URLs
+      const panelName = URL_TO_PANEL[url];
+      if (panelName) {
+        openOrActivateInternalTab(panelName);
+        return;
+      }
+
+      // sia:// content — load into the active browser tab, or create one
+      const browserTab = getOrCreateActiveBrowserTab();
+      browserTab.url = url;
+      browserTab.label = url.length > 30 ? url.substring(0, 30) + '...' : url;
+      lastBrowserUrl = url;
+      renderTabBar();
+      loadContentWithAutoDetect();
     }
 
     // Streaming download helper — avoids holding the entire file in WASM memory.
@@ -1310,6 +1937,7 @@
       cachedSdk = sdk;
       cachedConfig = currentConfig;
       statusEl.innerHTML = '<span class="pass">Connected!</span>';
+      updateConnectionStatus(true, 'Connected to ' + url);
       return sdk;
     }
 
@@ -1317,7 +1945,24 @@
     console.log('[JS] WASM module initialized successfully');
     if (debugLoggingCheckbox.checked) setLogLevel('debug');
     document.getElementById('loading').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
+    document.getElementById('app').style.display = 'flex';
+
+    // Initialize gear menu and tab bar
+    initGearMenu();
+
+    // Wire up "+" new tab button
+    document.getElementById('tab-new').addEventListener('click', () => {
+      const tab = createTab({ type: 'browser', label: 'New Tab' });
+      activateTab(tab.id);
+      const bar = document.getElementById('chrome-address-bar');
+      if (bar) { bar.value = ''; bar.focus(); }
+    });
+
+    // Create initial tabs: Settings + Homepage
+    openOrActivateInternalTab('setup');
+    const homepageUrl = 'sia://app.sia.storage/objects/531182566fd9bf90c462f7c44e269e8cc6ff87a7413556ca37d56ead8938606a/shared?sv=2376575341&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=KdAe0ofC4I9hoUSAk-LFuu5fysyH6cZV68WiBdd5thEr-D08Dy3flrpD-TmaIFkdguLGIDZ69vU-wNOr-QlUDQ%3D%3D#encryption_key=4_jLc1I_GyL4FuMTiAAVmGrzQLOGxene8OAb5yzg9Xg=';
+    createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
+    // Settings stays active — user configures first, then clicks Homepage tab to browse
 
     // -- Performance Presets --
     function setPreset(maxDl, maxUl, dlWorkers, ulWorkers) {
@@ -2148,13 +2793,11 @@
       dlUrl.value = objectId;
       dlFilename.value = 'download_' + objectId.substring(0, 8);
 
-      // Scroll to download section
-      document.querySelector('#btn-download').parentElement.parentElement.scrollIntoView({ behavior: 'smooth' });
-
-      // Trigger download after a brief delay to let scroll finish
+      // Switch to download tab and trigger download
+      openOrActivateInternalTab('download');
       setTimeout(() => {
         document.getElementById('btn-download').click();
-      }, 500);
+      }, 100);
     };
 
     // Helper function to copy to clipboard
@@ -2211,16 +2854,15 @@
 
     // Helper function to view an object in the browser
     window.viewObjectById = async (objectId) => {
-      const addressBar = document.getElementById('address-bar');
+      const tab = getOrCreateActiveBrowserTab();
+      tab.url = objectId;
+      tab.label = objectId.length > 30 ? objectId.substring(0, 30) + '...' : objectId;
+      lastBrowserUrl = objectId;
+      renderTabBar();
+
+      const addressBar = document.getElementById('chrome-address-bar');
       addressBar.value = objectId;
-
-      // Scroll to browser section
-      document.querySelector('#browser-nav').scrollIntoView({ behavior: 'smooth' });
-
-      // Trigger view after a brief delay
-      setTimeout(() => {
-        loadContentWithAutoDetect();
-      }, 500);
+      loadContentWithAutoDetect();
     };
 
     // Helper function to share an object (generate share URL)
@@ -3185,33 +3827,46 @@
       const d = event.data;
       if (!d) return;
 
-      // 1. Link navigation
+      // Find which tab's iframe sent this message
+      const sourceTab = event.source ? findTabByIframeWindow(event.source) : null;
+
+      // 1. Link navigation — navigate within the source tab
       if (d.type === 'SIA_NAVIGATE' && typeof d.url === 'string') {
         console.log('🔗 Sia link clicked in iframe:', d.url);
-        const addressBar = document.getElementById('address-bar');
-        addressBar.value = d.url;
-        document.querySelector('#browser-nav').scrollIntoView({ behavior: 'smooth' });
+        if (sourceTab) {
+          sourceTab.url = d.url;
+          sourceTab.label = d.url.length > 30 ? d.url.substring(0, 30) + '...' : d.url;
+          if (sourceTab.id === activeTabId) {
+            document.getElementById('chrome-address-bar').value = d.url;
+            lastBrowserUrl = d.url;
+          }
+          renderTabBar();
+        }
+        // Set address bar and load (loadContentWithAutoDetect reads from address bar)
+        document.getElementById('chrome-address-bar').value = d.url;
         loadContentWithAutoDetect();
         return;
       }
 
-      // 2. Embedded resource request
+      // 2. Embedded resource request — route to source tab's iframe
       if (d.type === 'SIA_RESOURCE' && typeof d.url === 'string' && d.requestId) {
-        handleSiaResourceRequest(d.url, d.requestId);
+        handleSiaResourceRequest(d.url, d.requestId, sourceTab);
         return;
       }
 
-      // 3. Video streaming request
+      // 3. Video streaming request — route to source tab's iframe
       if (d.type === 'SIA_STREAM_REQUEST' && typeof d.url === 'string' && d.sessionId) {
         console.log('[iframe-stream] Stream request:', d.url);
-        handleSiaStreamRequest(d.url, d.sessionId);
+        handleSiaStreamRequest(d.url, d.sessionId, sourceTab);
       }
 
       // 4. Video seek request from iframe
       if (d.type === 'SIA_STREAM_SEEK' && typeof d.timeSec === 'number' && d.sessionId) {
-        if (_activeIframeStream && _activeIframeStream.sessionId === d.sessionId && _activeIframeStream.seek) {
+        // Find the tab that owns this stream
+        const streamTab = sourceTab || tabs.find(t => t.iframeStreamAbort && t.iframeStreamAbort.sessionId === d.sessionId);
+        if (streamTab && streamTab.iframeStreamAbort && streamTab.iframeStreamAbort.sessionId === d.sessionId && streamTab.iframeStreamAbort.seek) {
           console.log('[iframe-stream] Seek request:', d.timeSec.toFixed(2) + 's');
-          _activeIframeStream.seek(d.timeSec);
+          streamTab.iframeStreamAbort.seek(d.timeSec);
         }
       }
     });
@@ -3220,8 +3875,8 @@
     const _siaResourceQueue = [];
     let _siaResourceProcessing = false;
 
-    function handleSiaResourceRequest(url, requestId) {
-      _siaResourceQueue.push({ url, requestId });
+    function handleSiaResourceRequest(url, requestId, sourceTab) {
+      _siaResourceQueue.push({ url, requestId, sourceTab });
       if (!_siaResourceProcessing) {
         _processSiaResourceQueue();
       }
@@ -3230,8 +3885,9 @@
     async function _processSiaResourceQueue() {
       _siaResourceProcessing = true;
       while (_siaResourceQueue.length > 0) {
-        const { url, requestId } = _siaResourceQueue.shift();
-        const iframe = document.getElementById('html-iframe');
+        const { url, requestId, sourceTab } = _siaResourceQueue.shift();
+        // Use the source tab's iframe, or fall back to active tab's iframe
+        const iframe = (sourceTab && sourceTab.iframeEl) || getActiveTabIframe();
         if (!iframe || !iframe.contentWindow) continue;
 
         try {
@@ -3265,15 +3921,15 @@
     // --- Iframe video streaming: parent-side relay ---
     // Downloads video via worker, demuxes with mp4box on the main thread,
     // relays codec config + video samples + audio segments to iframe via postMessage.
-    let _activeIframeStream = null;
-
-    async function handleSiaStreamRequest(url, sessionId) {
-      const iframe = document.getElementById('html-iframe');
+    async function handleSiaStreamRequest(url, sessionId, sourceTab) {
+      const tab = sourceTab || getActiveTab();
+      const iframe = tab && tab.iframeEl;
       if (!iframe || !iframe.contentWindow) return;
 
-      if (_activeIframeStream) {
-        _activeIframeStream.abort();
-        _activeIframeStream = null;
+      // Abort any existing stream on this tab
+      if (tab.iframeStreamAbort) {
+        tab.iframeStreamAbort.abort();
+        tab.iframeStreamAbort = null;
       }
 
       const mp4box = createMP4Box();
@@ -3445,7 +4101,7 @@
         logLevel: getLogLevel(),
       });
 
-      _activeIframeStream = {
+      tab.iframeStreamAbort = {
         sessionId,
         seek: (timeSec) => {
           if (aborted) return;
@@ -3493,8 +4149,8 @@
         worker.terminate();
       }
 
-      if (_activeIframeStream && _activeIframeStream.sessionId === sessionId) {
-        _activeIframeStream = null;
+      if (tab.iframeStreamAbort && tab.iframeStreamAbort.sessionId === sessionId) {
+        tab.iframeStreamAbort = null;
       }
     }
 
@@ -3539,39 +4195,25 @@
     // Load history when page loads
     loadHistoryFromStorage();
 
-    // If history is empty, add the welcome page to history
-    if (browserHistory.length === 0) {
-      const welcomeUrl = 'sia://app.sia.storage/objects/09ea72b591744fc1743c31464691b1ec5980fcb095599f457997e9ad37577f7e/shared?sv=1802936115&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=slOkbXbAiHIouqyFvSIG2q-tCbKGXMMSHN_2jE2H9BI_f-siLvrGpvh-3uwzZXwwxbpUSSqCLM0t_lUqQm1RCw%3D%3D#encryption_key=vateUaubfTjtSy5o6yG2sk37UX2s9KBZaUenzd9OP68=';
-
-      // Add welcome page to history (without blob URL - user will click to load)
-      browserHistory.push({
-        displayUrl: welcomeUrl,
-        blobUrl: null,
-        title: 'Welcome to Sia Browser',
-        external: false,
-        originalUrl: welcomeUrl,
-        fileType: 'html'
-      });
-
-      currentHistoryIndex = 0;
-      updateBrowserUI();
-      saveHistoryToStorage();
-
-      console.log('📄 Welcome page added to history');
-    }
-
     function updateBrowserUI() {
-      const addressBar = document.getElementById('address-bar');
+      const addressBar = document.getElementById('chrome-address-bar');
       const historyList = document.getElementById('history-list');
 
-      // Update address bar with raw URL (so user can click Go or External Tab)
-      if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
-        const current = browserHistory[currentHistoryIndex];
-        addressBar.value = current.originalUrl || current.displayUrl;
-        addressBar.title = current.displayUrl; // Tooltip shows formatted version
-      } else {
-        addressBar.value = '';
-        addressBar.placeholder = 'Paste Sia share URL or object ID...';
+      // Only update address bar when viewing the browser panel
+      if (activePanel === 'browser') {
+        if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
+          const current = browserHistory[currentHistoryIndex];
+          const url = current.originalUrl || current.displayUrl;
+          addressBar.value = url;
+          lastBrowserUrl = url;
+          addressBar.title = current.displayUrl;
+        } else {
+          addressBar.value = '';
+          addressBar.placeholder = 'Paste Sia share URL or object ID...';
+        }
+      } else if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
+        // Still track the last browser URL even if not viewing it
+        lastBrowserUrl = browserHistory[currentHistoryIndex].originalUrl || browserHistory[currentHistoryIndex].displayUrl;
       }
 
       // Update history list
@@ -3649,13 +4291,13 @@
         currentHistoryIndex = Math.max(0, index - 1);
         if (browserHistory.length === 0) {
           currentHistoryIndex = -1;
-          // Clear the iframe
-          const iframe = document.getElementById('html-iframe');
+          // Clear the active browser tab's iframe
+          const iframe = getActiveTabIframe();
           const videoContainer = document.getElementById('video-container');
           const video = document.getElementById('mse-video');
-          iframe.src = '';
-          iframe.style.display = 'block';
+          if (iframe) { iframe.src = ''; iframe.style.display = 'block'; }
           videoContainer.style.display = 'none';
+          setBrowserView(false);
           video.src = '';
         }
       } else if (currentHistoryIndex > index) {
@@ -3727,15 +4369,14 @@
       currentHistoryIndex = index;
       const item = browserHistory[index];
 
-      // Stop any active browser stream when navigating away
-      if (activeBrowserStreamAbort) {
-        activeBrowserStreamAbort.abort();
-        activeBrowserStreamAbort = null;
-      }
-      if (_activeIframeStream) {
-        _activeIframeStream.abort();
-        _activeIframeStream = null;
-      }
+      // Get or create a browser tab for this history item
+      const tab = getOrCreateActiveBrowserTab();
+
+      // Stop any active stream on this tab
+      if (tab.streamAbort) { tab.streamAbort.abort(); tab.streamAbort = null; }
+      if (tab.iframeStreamAbort) { tab.iframeStreamAbort.abort(); tab.iframeStreamAbort = null; }
+      if (streamingTabId === tab.id) streamingTabId = null;
+      tab.isStreaming = false;
 
       // If blob URL is null (e.g., after page refresh or streaming video), re-download the file
       if (!item.blobUrl) {
@@ -3748,26 +4389,35 @@
       if (item.external) {
         window.open(item.blobUrl, '_blank');
       } else {
-        // Show iframe, hide video
-        const iframe = document.getElementById('html-iframe');
+        // Show tab's iframe, hide video
+        const iframe = tab.iframeEl;
         const videoContainer = document.getElementById('video-container');
         const video = document.getElementById('mse-video');
 
-        iframe.style.display = 'block';
+        if (iframe) iframe.style.display = 'block';
         videoContainer.style.display = 'none';
+        setBrowserView(false);
         video.src = '';
 
-        // Load in iframe
-        iframe.src = item.blobUrl;
+        // Load in the tab's iframe
+        if (iframe) iframe.src = item.blobUrl;
+        tab.contentLoaded = true;
       }
+
+      tab.url = item.originalUrl || item.displayUrl;
+      tab.label = item.title || item.displayUrl;
+      lastBrowserUrl = tab.url;
+      renderTabBar();
+      pushTabNav(tab, { url: tab.url, blobUrl: item.blobUrl || null, label: tab.label, fileType: item.fileType || 'html' });
       updateBrowserUI();
     }
 
     // Re-download a history item (when blob URL is missing after refresh)
     async function redownloadHistoryItem(item, index) {
       const status = document.getElementById('iframe-status');
-      const progress = document.getElementById('iframe-progress');
-      const iframe = document.getElementById('html-iframe');
+      const progress = document.getElementById('browser-progress');
+      const tab = getOrCreateActiveBrowserTab();
+      const iframe = tab.iframeEl;
       const videoContainer = document.getElementById('video-container');
       const canvas = document.getElementById('stream-canvas');
       const video = document.getElementById('mse-video');
@@ -3775,15 +4425,11 @@
       progress.style.display = 'none';
       progress.value = 0;
 
-      // Stop any active browser stream
-      if (activeBrowserStreamAbort) {
-        activeBrowserStreamAbort.abort();
-        activeBrowserStreamAbort = null;
-      }
-      if (_activeIframeStream) {
-        _activeIframeStream.abort();
-        _activeIframeStream = null;
-      }
+      // Stop any active stream on this tab
+      if (tab.streamAbort) { tab.streamAbort.abort(); tab.streamAbort = null; }
+      if (tab.iframeStreamAbort) { tab.iframeStreamAbort.abort(); tab.iframeStreamAbort = null; }
+      if (streamingTabId === tab.id) streamingTabId = null;
+      tab.isStreaming = false;
 
       try {
         const sdk = await connectSdk(status);
@@ -3798,6 +4444,7 @@
 
           iframe.style.display = 'none';
           videoContainer.style.display = 'block';
+          setBrowserView(true);
 
           // Try WebCodecs first
           if (typeof VideoDecoder !== 'undefined') {
@@ -3805,7 +4452,9 @@
               canvas.style.display = 'block';
               video.style.display = 'none';
               const result = await webcodecStream(sdk, obj, canvas, status, progress, item.originalUrl);
-              activeBrowserStreamAbort = result;
+              tab.streamAbort = result;
+              tab.isStreaming = true;
+              streamingTabId = tab.id;
               status.innerHTML = `<span class="pass">${status.textContent}</span>`;
               updateBrowserUI();
               return;
@@ -3819,7 +4468,9 @@
             canvas.style.display = 'none';
             video.style.display = 'block';
             const result = await transmuxAndStream(sdk, obj, video, status, progress);
-            activeBrowserStreamAbort = result;
+            tab.streamAbort = result;
+            tab.isStreaming = true;
+            streamingTabId = tab.id;
             status.innerHTML = `<span class="pass">${status.textContent}</span>`;
             updateBrowserUI();
             return;
@@ -3827,6 +4478,7 @@
             console.error('[browser] MSE re-stream failed:', e);
             videoContainer.style.display = 'none';
             iframe.style.display = 'block';
+            setBrowserView(false);
             status.textContent = 'Streaming failed, re-downloading...';
           }
         }
@@ -3898,7 +4550,9 @@
           iframe.src = blobUrl;
           status.innerHTML = '<span class="pass">✓ Loaded!</span>';
         }
+        tab.contentLoaded = true;
 
+        if (!navInProgress) pushTabNav(tab, { url: item.originalUrl || item.displayUrl, blobUrl, label: item.title || item.displayUrl, fileType: item.fileType || 'html' });
         updateBrowserUI();
       } catch (e) {
         status.innerHTML = `<span class="fail">Error re-downloading: ${e.message}</span>`;
@@ -3952,10 +4606,10 @@
       saveHistoryToStorage();
     }
 
-    // Address bar navigation (Enter key) - uses auto-detection
-    document.getElementById('address-bar').addEventListener('keypress', async (e) => {
+    // Address bar navigation (Enter key) - checks pseudo-URLs first, then auto-detects
+    document.getElementById('chrome-address-bar').addEventListener('keypress', async (e) => {
       if (e.key === 'Enter') {
-        loadContentWithAutoDetect();
+        handleChromeBarNavigation();
       }
     });
 
@@ -3969,26 +4623,33 @@
       }
       loadContentInProgress = true;
 
-      const addressBar = document.getElementById('address-bar');
+      const addressBar = document.getElementById('chrome-address-bar');
       const url = addressBar.value.trim();
 
       if (!url) {
-        const status = document.getElementById('iframe-status');
-        status.innerHTML = '<span style="color:#f59e0b">⚠️ Enter a URL in the address bar first.</span>';
         loadContentInProgress = false;
         return;
       }
 
+      // Ensure we have an active browser tab
+      const tab = getOrCreateActiveBrowserTab();
+      tab.url = url;
+      lastBrowserUrl = url;
+
       const status = document.getElementById('iframe-status');
-      const progress = document.getElementById('iframe-progress');
-      const iframe = document.getElementById('html-iframe');
+      const progress = document.getElementById('browser-progress');
+      const iframe = tab.iframeEl;
       const videoContainer = document.getElementById('video-container');
       const canvas = document.getElementById('stream-canvas');
       const video = document.getElementById('mse-video');
 
-      // Reset display: show iframe, hide video
+      if (!iframe) { loadContentInProgress = false; return; }
+
+      // Reset display: show this tab's iframe, hide video
       iframe.style.display = 'block';
       videoContainer.style.display = 'none';
+      setBrowserView(false);
+      tab.isStreaming = false;
       canvas.style.display = 'block';
       video.style.display = 'none';
       video.src = '';
@@ -3996,15 +4657,16 @@
       progress.style.display = 'none';
       progress.value = 0;
 
-      // Stop any active browser stream
-      if (activeBrowserStreamAbort) {
-        activeBrowserStreamAbort.abort();
-        activeBrowserStreamAbort = null;
+      // Stop any active stream on this tab
+      if (tab.streamAbort) {
+        tab.streamAbort.abort();
+        tab.streamAbort = null;
       }
-      if (_activeIframeStream) {
-        _activeIframeStream.abort();
-        _activeIframeStream = null;
+      if (tab.iframeStreamAbort) {
+        tab.iframeStreamAbort.abort();
+        tab.iframeStreamAbort = null;
       }
+      if (streamingTabId === tab.id) streamingTabId = null;
 
       try {
         const sdk = await connectSdk(status);
@@ -4025,19 +4687,29 @@
             try {
               iframe.style.display = 'none';
               videoContainer.style.display = 'block';
+              setBrowserView(true);
+              tab.isStreaming = true;
+              streamingTabId = tab.id;
               canvas.style.display = 'block';
               video.style.display = 'none';
 
               const result = await webcodecStream(sdk, obj, canvas, status, progress, url);
-              activeBrowserStreamAbort = result;
+              tab.streamAbort = result;
+              tab.contentLoaded = true;
+
+              tab.label = 'Video: ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
+              renderTabBar();
 
               const displayUrl = `Video (streaming): ${url}`;
               addToHistory(displayUrl, null, displayUrl, false, url, 'video');
+              if (!navInProgress) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
               status.innerHTML = `<span class="pass">${status.textContent}</span>`;
               return;
             } catch (wcErr) {
               console.error('[browser] WebCodecs streaming failed:', wcErr);
-              activeBrowserStreamAbort = null;
+              tab.streamAbort = null;
+              tab.isStreaming = false;
+              streamingTabId = null;
             }
           }
 
@@ -4047,25 +4719,37 @@
             try {
               iframe.style.display = 'none';
               videoContainer.style.display = 'block';
+              setBrowserView(true);
+              tab.isStreaming = true;
+              streamingTabId = tab.id;
               canvas.style.display = 'none';
               video.style.display = 'block';
 
               const result = await transmuxAndStream(sdk, obj, video, status, progress);
-              activeBrowserStreamAbort = result;
+              tab.streamAbort = result;
+              tab.contentLoaded = true;
+
+              tab.label = 'Video: ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
+              renderTabBar();
 
               const displayUrl = `Video (streaming): ${url}`;
               addToHistory(displayUrl, null, displayUrl, false, url, 'video');
+              if (!navInProgress) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
               status.innerHTML = `<span class="pass">${status.textContent}</span>`;
               return;
             } catch (mseErr) {
               console.error('[browser] MSE streaming failed, falling back to full download:', mseErr);
-              activeBrowserStreamAbort = null;
+              tab.streamAbort = null;
+              tab.isStreaming = false;
+              streamingTabId = null;
             }
           }
 
           // Both streaming methods failed — fall through to full download
           iframe.style.display = 'block';
           videoContainer.style.display = 'none';
+          setBrowserView(false);
+          tab.isStreaming = false;
           status.textContent = 'Streaming unavailable, downloading full file...';
         }
 
@@ -4165,6 +4849,7 @@
 
           const displayUrl = `PDF: ${url}`;
           addToHistory(displayUrl, blobUrl, displayUrl, true, url, 'pdf');
+          if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: displayUrl, fileType: 'pdf' });
 
           const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
           status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${elapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
@@ -4199,9 +4884,15 @@
         }
 
         iframe.src = blobUrl;
+        tab.contentLoaded = true;
+
+        // Update tab metadata
+        tab.label = typeLabel + ': ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
+        renderTabBar();
 
         const displayUrl = `${typeLabel}: ${url}`;
         addToHistory(displayUrl, blobUrl, displayUrl, false, url, fileType);
+        if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: tab.label, fileType });
 
         const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
         status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${elapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
@@ -4212,8 +4903,12 @@
       }
     }
 
-    // Go button - auto-detects file type
-    document.getElementById('btn-go').addEventListener('click', loadContentWithAutoDetect);
+    // Go button - checks pseudo-URLs first, then auto-detects
+    document.getElementById('btn-go').addEventListener('click', handleChromeBarNavigation);
+
+    // Back/Forward buttons
+    document.getElementById('btn-back').addEventListener('click', goBack);
+    document.getElementById('btn-forward').addEventListener('click', goForward);
 
     // Open in external tab (with warning)
     document.getElementById('btn-external-tab').addEventListener('click', async () => {
@@ -4236,7 +4931,7 @@
       }
 
       // No current blob URL - need to download from address bar
-      const addressBar = document.getElementById('address-bar');
+      const addressBar = document.getElementById('chrome-address-bar');
       const url = addressBar.value.trim();
 
       if (!url) {
@@ -4245,7 +4940,7 @@
       }
 
       // Download and open in new tab
-      const progress = document.getElementById('iframe-progress');
+      const progress = document.getElementById('browser-progress');
 
       progress.style.display = 'none';
       progress.value = 0;
@@ -4311,12 +5006,16 @@
       const { type, url, title } = event.data;
 
       if (type === 'LOAD_IN_VIEWER') {
-        // Load the share URL in the iframe viewer
+        // Load the share URL in a browser tab
+        const tab = getOrCreateActiveBrowserTab();
+        tab.url = url;
+        tab.label = title || (url.length > 30 ? url.substring(0, 30) + '...' : url);
+        lastBrowserUrl = url;
+        renderTabBar();
+
         const status = document.getElementById('iframe-status');
-        const progress = document.getElementById('iframe-progress');
-        const iframe = document.getElementById('html-iframe');
-        const browserNav = document.getElementById('browser-nav');
-        const browserContainer = document.getElementById('browser-container');
+        const progress = document.getElementById('browser-progress');
+        const iframe = tab.iframeEl;
 
         progress.style.display = 'none';
         progress.value = 0;
@@ -4329,11 +5028,13 @@
           // Rewrite sia:// links in HTML content before loading
           const htmlText = await blob.text();
           const blobUrl = createHtmlBlobUrl(htmlText);
-          iframe.src = blobUrl;
+          if (iframe) iframe.src = blobUrl;
+          tab.contentLoaded = true;
 
           // Add to history
           const displayUrl = title || url;
           addToHistory(displayUrl, blobUrl, title, false, url, 'html');
+          if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: displayUrl, fileType: 'html' });
 
           status.innerHTML = `Size: ${formatSize(size)}\nLoaded in ${elapsed}s\n<span class="pass">${title || 'File'} loaded!</span>`;
         } catch (e) {
@@ -4342,7 +5043,7 @@
       } else if (type === 'LOAD_IN_NEW_TAB') {
         // Download and open in new tab
         const status = document.getElementById('iframe-status');
-        const progress = document.getElementById('iframe-progress');
+        const progress = document.getElementById('browser-progress');
 
         progress.style.display = 'none';
         progress.value = 0;
@@ -5554,8 +6255,6 @@
         }
       };
     }
-
-    let activeBrowserStreamAbort = null;
 
   </script>
 </body>
