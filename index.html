@@ -454,12 +454,17 @@
     // Import registration wizard
     import { initRegistrationWizard } from './register.js';
 
+    // Debug logging helpers — gated by the Debug Logging checkbox in settings.
+    // Defined at module scope so they're available everywhere (including DOMContentLoaded handlers).
+    function _dbg(...args) { if (localStorage.getItem('log-level') === 'debug') console.log(...args); }
+    function _dbgWarn(...args) { if (localStorage.getItem('log-level') === 'debug') console.warn(...args); }
+
     // Check browser compatibility on page load
     window.addEventListener('DOMContentLoaded', () => {
-      console.log('🌐 Browser compatibility check:');
-      console.log('  WebTransport:', typeof WebTransport !== 'undefined' ? '✅ Available' : '❌ Not available');
-      console.log('  Secure context:', window.isSecureContext ? '✅ Yes' : '❌ No (requires HTTPS)');
-      console.log('  Browser:', navigator.userAgent);
+      _dbg('🌐 Browser compatibility check:');
+      _dbg('  WebTransport:', typeof WebTransport !== 'undefined' ? '✅ Available' : '❌ Not available');
+      _dbg('  Secure context:', window.isSecureContext ? '✅ Yes' : '❌ No (requires HTTPS)');
+      _dbg('  Browser:', navigator.userAgent);
 
       if (typeof WebTransport === 'undefined') {
         const warning = document.createElement('div');
@@ -1382,7 +1387,7 @@
 
     // Helpers object passed to extracted modules so they can access utilities
     // without being coupled to index.html's scope.
-    const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, DownloadOptions, createMP4Box };
+    const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, DownloadOptions, createMP4Box, _dbg, _dbgWarn };
 
     function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl) {
       return _webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, streamHelpers);
@@ -1429,20 +1434,20 @@
     }
 
     await init();
-    console.log('[JS] WASM module initialized successfully');
+    _dbg('[JS] WASM module initialized successfully');
 
     // Long task detection: logs any task that blocks the main thread > 50ms
     if (typeof PerformanceObserver !== 'undefined') {
       try {
         const longTaskObserver = new PerformanceObserver((list) => {
           for (const entry of list.getEntries()) {
-            console.warn(`[LONG-TASK] ${entry.duration.toFixed(1)}ms at ${entry.startTime.toFixed(1)} (name: ${entry.name})`);
+            _dbgWarn(`[LONG-TASK] ${entry.duration.toFixed(1)}ms at ${entry.startTime.toFixed(1)} (name: ${entry.name})`);
           }
         });
         longTaskObserver.observe({ type: 'longtask', buffered: false });
-        console.log('[JS] Long task observer installed');
+        _dbg('[JS] Long task observer installed');
       } catch (e) {
-        console.warn('[JS] Long task observer not supported:', e.message);
+        _dbgWarn('[JS] Long task observer not supported:', e.message);
       }
     }
 
@@ -1452,7 +1457,7 @@
       const now = performance.now();
       const gap = now - _rafGapLast;
       if (gap > 50) {
-        console.warn(`[RAF-GAP] ${gap.toFixed(1)}ms between frames at ${now.toFixed(1)}`);
+        _dbgWarn(`[RAF-GAP] ${gap.toFixed(1)}ms between frames at ${now.toFixed(1)}`);
       }
       _rafGapLast = now;
       requestAnimationFrame(_rafGapCheck);
@@ -1523,7 +1528,7 @@
 
         // Fetch account data
         const accountData = await sdk.account();
-        console.log('Account data:', accountData);
+        _dbg('Account data:', accountData);
 
         // Fetch object count
         const objectsJson = await sdk.listObjects(null); // Get all objects
@@ -2527,7 +2532,7 @@
 
       // 1. Link navigation — navigate within the source tab
       if (d.type === 'SIA_NAVIGATE' && typeof d.url === 'string') {
-        console.log('🔗 Sia link clicked in iframe:', d.url);
+        _dbg('🔗 Sia link clicked in iframe:', d.url);
         if (sourceTab) {
           sourceTab.url = d.url;
           sourceTab.label = d.url.length > 30 ? d.url.substring(0, 30) + '...' : d.url;
@@ -2551,7 +2556,7 @@
 
       // 3. Video streaming request — route to source tab's iframe
       if (d.type === 'SIA_STREAM_REQUEST' && typeof d.url === 'string' && d.sessionId) {
-        console.log('[iframe-stream] Stream request:', d.url);
+        _dbg('[iframe-stream] Stream request:', d.url);
         handleSiaStreamRequest(d.url, d.sessionId, sourceTab);
       }
 
@@ -2560,7 +2565,7 @@
         // Find the tab that owns this stream
         const streamTab = sourceTab || tabs.find(t => t.iframeStreamAbort && t.iframeStreamAbort.sessionId === d.sessionId);
         if (streamTab && streamTab.iframeStreamAbort && streamTab.iframeStreamAbort.sessionId === d.sessionId && streamTab.iframeStreamAbort.seek) {
-          console.log('[iframe-stream] Seek request:', d.timeSec.toFixed(2) + 's');
+          _dbg('[iframe-stream] Seek request:', d.timeSec.toFixed(2) + 's');
           streamTab.iframeStreamAbort.seek(d.timeSec);
         }
       }
@@ -2777,7 +2782,7 @@
             byteOffset += msg.size;
             mp4box.appendBuffer(buf);
             const _dt = performance.now() - _t0;
-            if (_dt > 10) console.warn(`[iframe-perf] appendBuffer: ${_dt.toFixed(1)}ms (${msg.size} bytes, offset=${msg.offset})`);
+            if (_dt > 10) _dbgWarn(`[iframe-perf] appendBuffer: ${_dt.toFixed(1)}ms (${msg.size} bytes, offset=${msg.offset})`);
           } else if (msg.type === 'progress') {
             if (aborted) return;
             post({ type: 'SIA_STREAM_PROGRESS', sessionId, current: msg.current, total: msg.total });
@@ -2838,7 +2843,7 @@
         if (!aborted) {
           const _flushT0 = performance.now();
           mp4box.flush();
-          console.warn(`[iframe-perf] mp4box.flush() on main thread: ${(performance.now() - _flushT0).toFixed(1)}ms`);
+          _dbgWarn(`[iframe-perf] mp4box.flush() on main thread: ${(performance.now() - _flushT0).toFixed(1)}ms`);
           post({ type: 'SIA_STREAM_END', sessionId });
         }
       } catch (e) {
@@ -2866,7 +2871,7 @@
           const parsed = JSON.parse(saved);
           // Restore history items (blob URLs will be null after refresh)
           browserHistory.push(...parsed);
-          console.log(`📚 Restored ${browserHistory.length} history items from localStorage`);
+          _dbg(`📚 Restored ${browserHistory.length} history items from localStorage`);
           updateBrowserUI();
         }
       } catch (e) {
@@ -3061,7 +3066,7 @@
       a.click();
       document.body.removeChild(a);
 
-      console.log(`📥 Downloaded history item: ${filename}`);
+      _dbg(`📥 Downloaded history item: ${filename}`);
     }
 
     async function navigateToHistory(index) {
@@ -3080,7 +3085,7 @@
 
       // If blob URL is null (e.g., after page refresh or streaming video), re-download the file
       if (!item.blobUrl) {
-        console.log('🔄 Blob URL missing, re-downloading:', item.originalUrl);
+        _dbg('🔄 Blob URL missing, re-downloading:', item.originalUrl);
         await redownloadHistoryItem(item, index);
         return;
       }
@@ -3260,7 +3265,7 @@
     }
 
     function addToHistory(displayUrl, blobUrl, title = null, external = false, originalUrl = '', fileType = 'html') {
-      console.log('🔍 addToHistory called:', {
+      _dbg('🔍 addToHistory called:', {
         displayUrl,
         external,
         originalUrl,
@@ -3276,7 +3281,7 @@
 
       if (existingIndex !== -1) {
         // URL already exists - update it with the new blob URL
-        console.log(`📍 URL already exists at index ${existingIndex}, updating blob URL`);
+        _dbg(`📍 URL already exists at index ${existingIndex}, updating blob URL`);
         browserHistory[existingIndex].blobUrl = blobUrl;
         browserHistory[existingIndex].title = title || displayUrl;
         currentHistoryIndex = existingIndex;
@@ -3296,7 +3301,7 @@
       });
       currentHistoryIndex = browserHistory.length - 1;
 
-      console.log('✅ History updated:', {
+      _dbg('✅ History updated:', {
         newHistoryLength: browserHistory.length,
         newCurrentIndex: currentHistoryIndex,
         allTitles: browserHistory.map(h => h.title || h.displayUrl)
@@ -3317,7 +3322,7 @@
     // Auto-detect file type using MIME sniffing
     async function loadContentWithAutoDetect() {
       if (loadContentInProgress) {
-        console.log('[browser] loadContentWithAutoDetect already in progress, ignoring');
+        _dbg('[browser] loadContentWithAutoDetect already in progress, ignoring');
         return;
       }
       loadContentInProgress = true;
@@ -3404,7 +3409,7 @@
               addToHistory(displayUrl, null, displayUrl, false, url, 'video');
               if (!navInProgress) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
               status.innerHTML = `<span class="pass">${status.textContent}</span>`;
-              console.log(`[perf] caller continuation done in ${(performance.now() - _callerT0).toFixed(1)}ms`);
+              _dbg(`[perf] caller continuation done in ${(performance.now() - _callerT0).toFixed(1)}ms`);
               return;
             } catch (wcErr) {
               console.error('[browser] WebCodecs streaming failed:', wcErr);
@@ -3493,7 +3498,7 @@
           }
 
           status.textContent = `Detected: ${mimeType} (${detectedType.ext})`;
-          console.log('🔍 Type detected:', { mimeType, typeLabel, fileType, ext: detectedType.ext });
+          _dbg('🔍 Type detected:', { mimeType, typeLabel, fileType, ext: detectedType.ext });
         } else {
           // Fallback: try to detect text by checking if it's valid UTF-8
           try {
@@ -3623,7 +3628,7 @@
       if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
         const currentItem = browserHistory[currentHistoryIndex];
         if (currentItem.blobUrl) {
-          console.log('Reusing already-downloaded blob for external tab');
+          _dbg('Reusing already-downloaded blob for external tab');
           window.open(currentItem.blobUrl, '_blank');
           status.innerHTML = '<span class="pass">✓ Opened in external tab (reused downloaded file)!</span>';
           return;
@@ -3659,7 +3664,7 @@
 
         if (detectedType) {
           mimeType = detectedType.mime;
-          console.log('External tab - detected MIME type:', mimeType);
+          _dbg('External tab - detected MIME type:', mimeType);
 
           // Categorize for history
           if (mimeType.startsWith('image/')) fileType = 'image';
@@ -3682,7 +3687,7 @@
             }
           } catch {
             // Binary file, use default
-            console.log('External tab - could not detect type, using default');
+            _dbg('External tab - could not detect type, using default');
           }
         }
 

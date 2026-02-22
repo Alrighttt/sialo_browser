@@ -21,6 +21,11 @@ function fromHex(h) {
 // Module-level mp4box reference for seek access across message handlers
 let _mp4box = null;
 
+// Debug logging — gated by logLevel passed from main thread
+let _debugEnabled = false;
+function _dbg(...args) { if (_debugEnabled) console.log(...args); }
+function _dbgWarn(...args) { if (_debugEnabled) console.warn(...args); }
+
 self.onmessage = async (e) => {
   const { type } = e.data;
 
@@ -36,6 +41,7 @@ self.onmessage = async (e) => {
     try {
       // Initialize WASM module
       await init();
+      _debugEnabled = !!logLevel;
       if (logLevel) setLogLevel(logLevel);
 
       // Build SDK
@@ -77,7 +83,7 @@ self.onmessage = async (e) => {
         },
       );
 
-      console.log(`[worker-perf] downloadStreaming resolved (start mode) at ${performance.now().toFixed(1)}`);
+      _dbg(`[worker-perf] downloadStreaming resolved (start mode) at ${performance.now().toFixed(1)}`);
       self.postMessage({ type: 'complete' });
     } catch (err) {
       self.postMessage({ type: 'error', message: err.message || String(err) });
@@ -89,13 +95,14 @@ self.onmessage = async (e) => {
   // (rAF + VideoDecoder) is never blocked by MP4 parsing at slab boundaries.
   if (type === 'stream-demux') {
     const { indexerUrl, keyHex, maxDownloads, objectUrl, logLevel } = e.data;
-    console.log('[worker-demux] Starting stream-demux:', objectUrl);
+    _dbg('[worker-demux] Starting stream-demux:', objectUrl);
 
     try {
-      console.log('[worker-demux] Initializing WASM...');
+      _dbg('[worker-demux] Initializing WASM...');
       await init();
+      _debugEnabled = !!logLevel;
       if (logLevel) setLogLevel(logLevel);
-      console.log('[worker-demux] WASM initialized. Connecting SDK...');
+      _dbg('[worker-demux] WASM initialized. Connecting SDK...');
 
       const seed = fromHex(keyHex);
       const appKey = new AppKey(seed);
@@ -106,28 +113,28 @@ self.onmessage = async (e) => {
         self.postMessage({ type: 'stream-error', message: 'SDK connection failed — app key not recognized' });
         return;
       }
-      console.log('[worker-demux] SDK connected. Getting object...');
+      _dbg('[worker-demux] SDK connected. Getting object...');
 
       const obj = objectUrl.startsWith('sia://')
         ? await sdk.sharedObject(objectUrl)
         : await sdk.object(objectUrl);
 
       const totalSize = obj.size();
-      console.log('[worker-demux] Object ready, size:', totalSize, 'Starting download + demux...');
+      _dbg('[worker-demux] Object ready, size:', totalSize, 'Starting download + demux...');
 
-      console.log('[worker-demux] Creating mp4box instance...');
+      _dbg('[worker-demux] Creating mp4box instance...');
       const mp4box = createMP4Box();
       _mp4box = mp4box;
       let byteOffset = 0;
       let mp4boxReady = false;
       let audioMode = null;
-      console.log('[worker-demux] mp4box created. Setting up handlers...');
+      _dbg('[worker-demux] mp4box created. Setting up handlers...');
 
       // --- mp4box.onReady: extract codec config, set extraction options, post init ---
       // MUST be fully synchronous (mp4box calls it during appendBuffer).
       mp4box.onReady = (info) => {
         mp4boxReady = true;
-        console.log('[worker-demux] mp4box.onReady fired, tracks:', info.tracks.length);
+        _dbg('[worker-demux] mp4box.onReady fired, tracks:', info.tracks.length);
 
         const mediaTracks = info.tracks.filter(t => t.video || t.audio);
         if (mediaTracks.length === 0) {
@@ -269,7 +276,7 @@ self.onmessage = async (e) => {
       };
 
       // Download + demux
-      console.log('[worker-demux] Starting downloadStreaming...');
+      _dbg('[worker-demux] Starting downloadStreaming...');
       const opts = new DownloadOptions();
       opts.maxInflight = maxDownloads;
       await sdk.downloadStreaming(
@@ -285,7 +292,7 @@ self.onmessage = async (e) => {
           byteOffset += chunk.byteLength;
           mp4box.appendBuffer(buf);
           const _chunkDt = performance.now() - _chunkT0;
-          if (_chunkDt > 20) console.warn(`[worker-perf] chunk callback: ${_chunkDt.toFixed(1)}ms (${chunk.byteLength} bytes, offset=${byteOffset})`);
+          if (_chunkDt > 20) _dbgWarn(`[worker-perf] chunk callback: ${_chunkDt.toFixed(1)}ms (${chunk.byteLength} bytes, offset=${byteOffset})`);
 
           if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
             throw new Error(
@@ -299,10 +306,10 @@ self.onmessage = async (e) => {
         },
       );
 
-      console.log(`[worker-perf] downloadStreaming resolved at ${performance.now().toFixed(1)}`);
+      _dbg(`[worker-perf] downloadStreaming resolved at ${performance.now().toFixed(1)}`);
       const _flushT0 = performance.now();
       mp4box.flush();
-      console.log(`[worker-perf] mp4box.flush() took ${(performance.now() - _flushT0).toFixed(1)}ms`);
+      _dbg(`[worker-perf] mp4box.flush() took ${(performance.now() - _flushT0).toFixed(1)}ms`);
       self.postMessage({ type: 'stream-complete' });
     } catch (err) {
       self.postMessage({ type: 'stream-error', message: err.message || String(err) });

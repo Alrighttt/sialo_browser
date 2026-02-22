@@ -13,7 +13,7 @@
 // --- WebCodecs streaming pipeline (handles B-frames correctly) ---
 
 export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, helpers) {
-  const { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel } = helpers;
+  const { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, _dbg, _dbgWarn } = helpers;
 
   if (typeof VideoDecoder === 'undefined') {
     throw new Error('WebCodecs API not supported in this browser');
@@ -126,7 +126,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     const maxSeekable = downloadComplete ? mediaDuration : getBufferedDuration();
     timeSec = Math.max(0, Math.min(timeSec, maxSeekable - 0.1));
 
-    console.log(`[webcodec] seekTo: ${timeSec.toFixed(2)}s (buffered: ${maxSeekable.toFixed(2)}s)`);
+    _dbg(`[webcodec] seekTo: ${timeSec.toFixed(2)}s (buffered: ${maxSeekable.toFixed(2)}s)`);
 
     // 1. Tell worker to seek (mp4box.stop/seek/start happens in worker thread)
     seekPendingFlag = true;
@@ -137,7 +137,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       try {
         await videoDecoder.flush();
       } catch (e) {
-        console.warn('[webcodec] decoder flush on seek:', e);
+        _dbgWarn('[webcodec] decoder flush on seek:', e);
       }
     }
 
@@ -211,7 +211,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     if (lastRafTime > 0) {
       const gapMs = now - lastRafTime;
       if (gapMs > 50) {
-        console.warn(`[perf] rAF gap: ${gapMs.toFixed(1)}ms (missed ${Math.floor(gapMs/16.67)} frames) bufLen=${frameBuffer.length} pending=${pendingVideoSamples.length} audioQ=${audioAppendQueue.length} dlComplete=${downloadComplete}`);
+        _dbgWarn(`[perf] rAF gap: ${gapMs.toFixed(1)}ms (missed ${Math.floor(gapMs/16.67)} frames) bufLen=${frameBuffer.length} pending=${pendingVideoSamples.length} audioQ=${audioAppendQueue.length} dlComplete=${downloadComplete}`);
       }
     }
     if (lastRafTime > 0 && wallClockSynced && !hasAudio && !paused) {
@@ -250,7 +250,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       wallClockStart = performance.now();
       wallClockSynced = true;
       lastRafTime = wallClockStart; // reset so first real frame doesn't trigger stall detection
-      console.log(`[webcodec] timing synced: videoTimeBase=${videoTimeBase} bufLen=${frameBuffer.length}`);
+      _dbg(`[webcodec] timing synced: videoTimeBase=${videoTimeBase} bufLen=${frameBuffer.length}`);
     }
 
     const mediaTimeUs = getCurrentMediaTimeUs();
@@ -273,7 +273,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         canvasEl.width = frameToDraw.displayWidth;
         canvasEl.height = frameToDraw.displayHeight;
         canvasSized = true;
-        console.log(`[webcodec] canvas sized to native ${frameToDraw.displayWidth}x${frameToDraw.displayHeight}`);
+        _dbg(`[webcodec] canvas sized to native ${frameToDraw.displayWidth}x${frameToDraw.displayHeight}`);
       }
 
       ctx.drawImage(frameToDraw, 0, 0, canvasEl.width, canvasEl.height);
@@ -318,7 +318,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     if (aborted) { frame.close(); return; }
     framesReceived++;
     if (framesReceived <= 5) {
-      console.log(`[webcodec] bufferVideoFrame #${framesReceived}: ts=${frame.timestamp} bufLen=${frameBuffer.length}`);
+      _dbg(`[webcodec] bufferVideoFrame #${framesReceived}: ts=${frame.timestamp} bufLen=${frameBuffer.length}`);
     }
     // No eviction — feed rate is controlled to prevent overflow
     frameBuffer.push(frame);
@@ -344,7 +344,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       fed++;
       samplesFed++;
       if (samplesFed <= 10) {
-        console.log(`[webcodec] feed #${samplesFed}: cts=${s.cts} sync=${s.is_sync} pipeline=${pipelineDepth} pending=${pendingVideoSamples.length}`);
+        _dbg(`[webcodec] feed #${samplesFed}: cts=${s.cts} sync=${s.is_sync} pipeline=${pipelineDepth} pending=${pendingVideoSamples.length}`);
       }
       try {
         videoDecoder.decode(new EncodedVideoChunk({
@@ -378,14 +378,14 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
           }
         }
       } else {
-        console.warn('[webcodec] Audio appendBuffer error:', e);
+        _dbgWarn('[webcodec] Audio appendBuffer error:', e);
       }
     }
   }
 
   function maybeEndAudioStream() {
     if (!downloadComplete || audioAppendQueue.length > 0 || audioSbAppending) return;
-    console.log(`[perf] maybeEndAudioStream: calling endOfStream at ${performance.now().toFixed(1)}`);
+    _dbg(`[perf] maybeEndAudioStream: calling endOfStream at ${performance.now().toFixed(1)}`);
     if (audioMediaSource && audioMediaSource.readyState === 'open') {
       try { audioMediaSource.endOfStream(); } catch (e) {}
     }
@@ -415,7 +415,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
           maybeEndAudioStream();
         });
         audioSourceBuffer.addEventListener('error', (e) => {
-          console.warn('[webcodec] Audio SourceBuffer error:', e);
+          _dbgWarn('[webcodec] Audio SourceBuffer error:', e);
         });
         hasAudio = true;
 
@@ -425,9 +425,9 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         }
 
         audioEl.play().catch(() => {});
-        console.log(`[webcodec] Audio MSE ready: ${msg.audioConfig.mime} (${msg.audioConfig.mode})`);
+        _dbg(`[webcodec] Audio MSE ready: ${msg.audioConfig.mime} (${msg.audioConfig.mode})`);
       } catch (e) {
-        console.warn('[webcodec] Audio setup failed:', e);
+        _dbgWarn('[webcodec] Audio setup failed:', e);
         hasAudio = false;
       }
     }
@@ -455,7 +455,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       });
       videoDecoder.configure(config);
 
-      console.log(`[webcodec] VideoDecoder configured: ${msg.videoConfig.codec} ${msg.videoConfig.codedWidth}x${msg.videoConfig.codedHeight}`);
+      _dbg(`[webcodec] VideoDecoder configured: ${msg.videoConfig.codec} ${msg.videoConfig.codedWidth}x${msg.videoConfig.codedHeight}`);
     }
 
     if (!videoDecoder) {
@@ -621,7 +621,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       if (audioMediaSource.readyState === 'open') resolve();
       else audioMediaSource.addEventListener('sourceopen', resolve, { once: true });
     });
-    console.log('[webcodec] Audio MediaSource ready');
+    _dbg('[webcodec] Audio MediaSource ready');
   }
 
   // --- Stream data from SDK via Web Worker (demuxing in worker) ---
@@ -644,13 +644,13 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         if (aborted || seekPendingFlag) return;
         for (const s of msg.samples) pendingVideoSamples.push(s);
         const _dt = performance.now() - _msgT0;
-        if (_dt > 5) console.warn(`[perf] stream-video handler: ${_dt.toFixed(1)}ms (${msg.samples.length} samples, pendingTotal=${pendingVideoSamples.length})`);
+        if (_dt > 5) _dbgWarn(`[perf] stream-video handler: ${_dt.toFixed(1)}ms (${msg.samples.length} samples, pendingTotal=${pendingVideoSamples.length})`);
       } else if (msg.type === 'stream-audio') {
         if (aborted || seekPendingFlag) return;
         audioAppendQueue.push(msg.buffer);
         drainAudioQueue();
         const _dt = performance.now() - _msgT0;
-        if (_dt > 5) console.warn(`[perf] stream-audio handler: ${_dt.toFixed(1)}ms (queueLen=${audioAppendQueue.length})`);
+        if (_dt > 5) _dbgWarn(`[perf] stream-audio handler: ${_dt.toFixed(1)}ms (queueLen=${audioAppendQueue.length})`);
       } else if (msg.type === 'stream-progress') {
         if (aborted) return;
         progressEl.max = msg.total;
@@ -658,19 +658,19 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         byteOffset = msg.byteOffset;
         const pct = msg.total > 0 ? ((msg.current / msg.total) * 100).toFixed(0) : 0;
         statusEl.textContent = `Streaming: ${msg.current}/${msg.total} slabs (${pct}%) — ${formatSize(msg.byteOffset)} / ${formatSize(msg.totalSize)}`;
-        if (msg.current === msg.total) console.log(`[perf] last progress message received at ${_msgT0.toFixed(1)}`);
+        if (msg.current === msg.total) _dbg(`[perf] last progress message received at ${_msgT0.toFixed(1)}`);
       } else if (msg.type === 'stream-seek-flushed') {
         // Clear any stale samples that arrived between seek request and worker flush
         pendingVideoSamples.length = 0;
         while (frameBuffer.length > 0) frameBuffer.shift().close();
         seekPendingFlag = false;
       } else if (msg.type === 'stream-complete') {
-        console.log(`[perf] stream-complete received at ${performance.now().toFixed(1)}`);
+        _dbg(`[perf] stream-complete received at ${performance.now().toFixed(1)}`);
         // Defer resolution by one frame so the render loop can process
         // the burst of samples from mp4box.flush() before the completion
         // continuation (DOM updates, localStorage, etc.) blocks the thread.
         requestAnimationFrame(() => {
-          console.log(`[perf] stream-complete resolving at ${performance.now().toFixed(1)}`);
+          _dbg(`[perf] stream-complete resolving at ${performance.now().toFixed(1)}`);
           resolveStream();
         });
       } else if (msg.type === 'stream-error') {
@@ -705,7 +705,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 
   if (!aborted) {
     const _completionT0 = performance.now();
-    console.log(`[perf] completion continuation starting at ${_completionT0.toFixed(1)}`);
+    _dbg(`[perf] completion continuation starting at ${_completionT0.toFixed(1)}`);
     downloadComplete = true;
     progressEl.value = progressEl.max;
 
@@ -718,7 +718,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 
     const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
     statusEl.textContent = `Stream complete! ${formatSize(totalSize)} in ${elapsed}s.`;
-    console.log(`[perf] completion continuation done in ${(performance.now() - _completionT0).toFixed(1)}ms`);
+    _dbg(`[perf] completion continuation done in ${(performance.now() - _completionT0).toFixed(1)}ms`);
   }
 
   return {
@@ -743,7 +743,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 // --- MSE streaming pipeline (legacy fallback for browsers without WebCodecs) ---
 
 export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl, helpers) {
-  const { formatSize, getMaxDownloads, DownloadOptions, createMP4Box } = helpers;
+  const { formatSize, getMaxDownloads, DownloadOptions, createMP4Box, _dbg, _dbgWarn } = helpers;
 
   if (!window.MediaSource) {
     throw new Error('MediaSource Extensions not supported in this browser');
@@ -792,14 +792,14 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
 
   mp4box.onReady = (info) => {
     mp4boxReady = true;
-    console.log('[stream] onReady fired. All tracks:', info.tracks.map(t => ({
+    _dbg('[stream] onReady fired. All tracks:', info.tracks.map(t => ({
       id: t.id, codec: t.codec, video: !!t.video, audio: !!t.audio,
       type: t.type, name: t.name
     })));
 
     // Filter to only video and audio tracks (skip timecode, metadata, etc.)
     const mediaTracks = info.tracks.filter(t => t.video || t.audio);
-    console.log('[stream] Media tracks:', mediaTracks.map(t => ({
+    _dbg('[stream] Media tracks:', mediaTracks.map(t => ({
       id: t.id, codec: t.codec, video: !!t.video, audio: !!t.audio,
     })));
 
@@ -816,7 +816,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     // Build combined codec string from media tracks only
     const codecs = mediaTracks.map(t => t.codec).join(', ');
     const mime = `video/mp4; codecs="${codecs}"`;
-    console.log(`[stream] Combined MIME: ${mime}`);
+    _dbg(`[stream] Combined MIME: ${mime}`);
 
     if (!MediaSource.isTypeSupported(mime)) {
       console.error(`[stream] MIME not supported: ${mime}`);
@@ -856,7 +856,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
 
     // Get single combined init segment (mp4box v2 API)
     const initResult = mp4box.initializeSegmentation();
-    console.log('[stream] Init segment:', {
+    _dbg('[stream] Init segment:', {
       tracks: initResult.tracks,
       bufferSize: initResult.buffer?.byteLength
     });
@@ -867,7 +867,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     }
 
     mp4box.start();
-    videoEl.play().catch(e => console.log('[stream] autoplay blocked:', e.message));
+    videoEl.play().catch(e => _dbg('[stream] autoplay blocked:', e.message));
   };
 
   let needsEviction = false;
@@ -888,7 +888,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
 
     if (currentTime - bufferedStart > keepBehind) {
       const removeEnd = currentTime - keepBehind;
-      console.log(`[stream] Evicting buffer: ${bufferedStart.toFixed(1)}s → ${removeEnd.toFixed(1)}s (playhead at ${currentTime.toFixed(1)}s)`);
+      _dbg(`[stream] Evicting buffer: ${bufferedStart.toFixed(1)}s → ${removeEnd.toFixed(1)}s (playhead at ${currentTime.toFixed(1)}s)`);
       sbAppending = true;
       sourceBuffer.remove(bufferedStart, removeEnd);
       needsEviction = false;
@@ -914,7 +914,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       const currentTime = videoEl.currentTime;
       // If buffer exceeds 60 seconds ahead of playhead, evict old data first
       if (bufferedEnd - currentTime > 60 && currentTime - bufferedStart > 5) {
-        console.log(`[stream] Proactive eviction: ${(bufferedEnd - currentTime).toFixed(0)}s buffered ahead`);
+        _dbg(`[stream] Proactive eviction: ${(bufferedEnd - currentTime).toFixed(0)}s buffered ahead`);
         needsEviction = true;
         tryEvict();
         return;
@@ -929,7 +929,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       if (e.name === 'QuotaExceededError') {
         appendQueue.unshift(buf);
         if (!needsEviction) {
-          console.warn('[stream] QuotaExceededError, waiting for playback to advance...');
+          _dbgWarn('[stream] QuotaExceededError, waiting for playback to advance...');
         }
         needsEviction = true;
         tryEvict();
@@ -943,7 +943,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
   mp4box.onSegment = (trackId, user, buffer) => {
     segmentCount++;
     if (segmentCount <= 5 || segmentCount % 20 === 0) {
-      console.log(`[stream] onSegment #${segmentCount}: track=${trackId} size=${buffer.byteLength}`);
+      _dbg(`[stream] onSegment #${segmentCount}: track=${trackId} size=${buffer.byteLength}`);
     }
     appendQueue.push(buffer);
     if (!needsEviction) {
@@ -973,7 +973,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       );
       buf.fileStart = byteOffset;
       if (chunkCount <= 3) {
-        console.log(`[stream] chunk #${chunkCount}: size=${chunk.byteLength} fileStart=${byteOffset}`);
+        _dbg(`[stream] chunk #${chunkCount}: size=${chunk.byteLength} fileStart=${byteOffset}`);
       }
       byteOffset += chunk.byteLength;
       mp4box.appendBuffer(buf);

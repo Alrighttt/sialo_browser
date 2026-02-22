@@ -30,9 +30,10 @@ self.onmessage = async (e) => {
 
     try {
       maxUploads = maxUploadsInit || maxUploads;
-      console.log(`[upload-worker ${workerIndex}] init: numWorkers=${numWorkers}`);
       await init();
+      const _debugEnabled = !!logLevel;
       if (logLevel) setLogLevel(logLevel);
+      if (_debugEnabled) console.log(`[upload-worker ${workerIndex}] init: numWorkers=${numWorkers}`);
 
       const seed = fromHex(keyHex);
       const appKey = new AppKey(seed);
