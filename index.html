@@ -253,7 +253,7 @@
       border-radius: 3px;
     }
     .nav-btn:hover:not(:disabled) { color: #e0e0e0; background: #1a1a1a; }
-    .nav-btn:disabled { color: #333; cursor: default; }
+    .nav-btn:disabled { color: #555; cursor: default; opacity: 0.5; }
 
     #gear-menu {
       position: absolute;
@@ -640,7 +640,6 @@
         <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS Diagnostics</button>
       </div>
       <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
-      <button id="btn-forward" class="nav-btn" title="Go forward" disabled>&#8594;</button>
       <input type="text" id="chrome-address-bar" placeholder="Paste Sia share URL or object ID..."
         title="Press Enter or click Go to auto-detect file type">
       <button id="btn-go" title="Auto-detect file type and load content">Go</button>
@@ -1087,6 +1086,17 @@
     let nextTabId = 1;
     let streamingTabId = null; // ID of the tab currently using the shared video-container
 
+    // Auto-sync iframe-status changes to the active tab's statusHTML
+    {
+      const el = document.getElementById('iframe-status');
+      if (el) {
+        new MutationObserver(() => {
+          const tab = tabs.find(t => t.id === activeTabId);
+          if (tab) tab.statusHTML = el.innerHTML;
+        }).observe(el, { childList: true, characterData: true, subtree: true });
+      }
+    }
+
     function createTab({ type, panelName, url, label }) {
       const id = 'tab-' + (nextTabId++);
       const tab = {
@@ -1102,6 +1112,10 @@
         navHistory: [],    // per-tab navigation history: [{ url, blobUrl, label, fileType }]
         navIndex: -1,      // current position in navHistory
         contentLoaded: false, // true once content has been loaded into this tab
+        statusHTML: '',    // per-tab status bar text (saved/restored on tab switch)
+        progressValue: 0,  // per-tab progress bar state
+        progressMax: 100,
+        progressVisible: false,
       };
 
       if (type === 'browser') {
@@ -1125,8 +1139,20 @@
       if (!tab) return;
       if (activeTabId === tabId) return; // already active
 
-      // Hide previous tab's content
+      // Save previous tab's status and progress
+      const iframeStatus = document.getElementById('iframe-status');
+      const progressEl = document.getElementById('browser-progress');
       const prevTab = tabs.find(t => t.id === activeTabId);
+      if (prevTab) {
+        if (iframeStatus) prevTab.statusHTML = iframeStatus.innerHTML;
+        if (progressEl) {
+          prevTab.progressValue = progressEl.value;
+          prevTab.progressMax = progressEl.max;
+          prevTab.progressVisible = progressEl.style.display !== 'none' && progressEl.style.display !== '';
+        }
+      }
+
+      // Hide previous tab's content
       if (prevTab) {
         if (prevTab.type === 'browser') {
           if (prevTab.iframeEl) prevTab.iframeEl.style.display = 'none';
@@ -1165,6 +1191,14 @@
       highlightActiveMenuItem(tab.type === 'internal' ? tab.panelName : null);
       renderTabBar();
       updateNavButtons();
+
+      // Restore this tab's status text and progress bar
+      if (iframeStatus) iframeStatus.innerHTML = tab.statusHTML;
+      if (progressEl) {
+        progressEl.value = tab.progressValue;
+        progressEl.max = tab.progressMax;
+        progressEl.style.display = tab.progressVisible ? 'block' : 'none';
+      }
 
       // Auto-load browser tabs that have a URL but haven't loaded content yet
       if (tab.type === 'browser' && tab.url && !tab.contentLoaded) {
@@ -1329,15 +1363,8 @@
     function updateNavButtons() {
       const tab = getActiveTab();
       const back = document.getElementById('btn-back');
-      const fwd = document.getElementById('btn-forward');
-      if (!back || !fwd) return;
-      if (tab && tab.type === 'browser') {
-        back.disabled = tab.navIndex <= 0;
-        fwd.disabled = tab.navIndex >= tab.navHistory.length - 1;
-      } else {
-        back.disabled = true;
-        fwd.disabled = true;
-      }
+      if (!back) return;
+      back.disabled = !(tab && tab.type === 'browser' && tab.navIndex > 0);
     }
 
     let navInProgress = false; // guard to prevent pushTabNav during back/forward
@@ -1349,12 +1376,7 @@
       navigateTabNavEntry(tab);
     }
 
-    function goForward() {
-      const tab = getActiveTab();
-      if (!tab || tab.type !== 'browser' || tab.navIndex >= tab.navHistory.length - 1) return;
-      tab.navIndex++;
-      navigateTabNavEntry(tab);
-    }
+
 
     function navigateTabNavEntry(tab) {
       const entry = tab.navHistory[tab.navIndex];
@@ -1943,6 +1965,34 @@
 
     await init();
     console.log('[JS] WASM module initialized successfully');
+
+    // Long task detection: logs any task that blocks the main thread > 50ms
+    if (typeof PerformanceObserver !== 'undefined') {
+      try {
+        const longTaskObserver = new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            console.warn(`[LONG-TASK] ${entry.duration.toFixed(1)}ms at ${entry.startTime.toFixed(1)} (name: ${entry.name})`);
+          }
+        });
+        longTaskObserver.observe({ type: 'longtask', buffered: false });
+        console.log('[JS] Long task observer installed');
+      } catch (e) {
+        console.warn('[JS] Long task observer not supported:', e.message);
+      }
+    }
+
+    // rAF gap detector: logs when any animation frame takes > 50ms gap
+    let _rafGapLast = performance.now();
+    function _rafGapCheck() {
+      const now = performance.now();
+      const gap = now - _rafGapLast;
+      if (gap > 50) {
+        console.warn(`[RAF-GAP] ${gap.toFixed(1)}ms between frames at ${now.toFixed(1)}`);
+      }
+      _rafGapLast = now;
+      requestAnimationFrame(_rafGapCheck);
+    }
+    requestAnimationFrame(_rafGapCheck);
     if (debugLoggingCheckbox.checked) setLogLevel('debug');
     document.getElementById('loading').style.display = 'none';
     document.getElementById('app').style.display = 'flex';
@@ -3116,701 +3166,16 @@
     // loads it back into the iframe.
 
     // Script injected into every HTML page loaded in the iframe.
-    // Handles three things:
-    //  1. Intercepts clicks on <a href="sia://..."> and asks the parent to navigate
-    //  2. Finds <img>, <audio>, <source>, <link> with sia:// src and asks the
-    //     parent to download the resource (full download, sent back as ArrayBuffer)
-    //  3. Finds <video src="sia://..."> and requests WebCodecs streaming from the
-    //     parent (mp4box demux in parent, VideoDecoder + canvas in iframe)
-    const SIA_INJECTED_SCRIPT = `
-<script>
-(function() {
-  // --- 1. Link navigation ---
-  document.addEventListener('click', function(e) {
-    var a = e.target.closest('a');
-    if (!a) return;
-    var href = a.getAttribute('href');
-    if (href && href.indexOf('sia://') === 0) {
-      e.preventDefault();
-      window.parent.postMessage({ type: 'SIA_NAVIGATE', url: href }, '*');
-    }
-  });
-
-  // --- 2. Embedded resource loading (images, CSS, etc.) ---
-  var _reqId = 0;
-  var _pending = {};
-
-  function requestResource(el, attr) {
-    var url = el.getAttribute(attr);
-    if (!url || url.indexOf('sia://') !== 0) return;
-    var id = 'r' + (++_reqId);
-    _pending[id] = { el: el, attr: attr };
-    if (el.tagName === 'IMG') {
-      el.setAttribute('data-sia-loading', '1');
-      if (!el.style.minHeight) el.style.minHeight = '40px';
-      el.style.opacity = '0.3';
-    }
-    window.parent.postMessage({ type: 'SIA_RESOURCE', url: url, requestId: id }, '*');
-  }
-
-  // --- 3. Video streaming via WebCodecs ---
-  var _streamSessions = {};
-  var _streamIdCounter = 0;
-
-  function formatTime(sec) {
-    if (!sec || sec < 0) sec = 0;
-    var m = Math.floor(sec / 60);
-    var s = Math.floor(sec % 60);
-    return m + ':' + (s < 10 ? '0' : '') + s;
-  }
-
-  function drawPlayButton(canvas) {
-    var ctx0 = canvas.getContext('2d');
-    ctx0.fillStyle = '#000';
-    ctx0.fillRect(0, 0, canvas.width, canvas.height);
-    ctx0.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx0.beginPath();
-    var cx = canvas.width / 2;
-    var cy = canvas.height / 2;
-    var sz = Math.min(canvas.width, canvas.height) * 0.15;
-    ctx0.moveTo(cx - sz * 0.5, cy - sz);
-    ctx0.lineTo(cx - sz * 0.5, cy + sz);
-    ctx0.lineTo(cx + sz, cy);
-    ctx0.closePath();
-    ctx0.fill();
-  }
-
-  function togglePause(session) {
-    if (session.paused) {
-      session.paused = false;
-      if (session.wallClockSynced && !session.hasAudio) {
-        session.wallClockStart = performance.now() - ((session.pauseOffsetUs - session.videoTimeBase) / 1000);
-      }
-      if (session.audioEl && session.audioEl.paused) session.audioEl.play().catch(function(){});
-      if (session.playBtn) session.playBtn.innerHTML = '&#9646;&#9646;';
-    } else {
-      // Snapshot time BEFORE setting paused (getMediaTimeUs checks s.paused first)
-      var t = getMediaTimeUs(session);
-      session.paused = true;
-      session.pauseOffsetUs = t >= 0 ? t : 0;
-      if (session.audioEl && !session.audioEl.paused) session.audioEl.pause();
-      if (session.playBtn) session.playBtn.innerHTML = '&#9654;';
-    }
-  }
-
-  function requestVideoStream(videoEl) {
-    var url = videoEl.getAttribute('src');
-    if (!url || url.indexOf('sia://') !== 0) return;
-    if (typeof VideoDecoder === 'undefined') {
-      requestResource(videoEl, 'src');
-      return;
-    }
-
-    var sessionId = 's' + (++_streamIdCounter);
-
-    // Container (position:relative for controls overlay)
-    var container = document.createElement('div');
-    container.style.cssText = 'position:relative;overflow:hidden;background:#000;border-radius:4px;max-width:100%;';
-
-    var canvas = document.createElement('canvas');
-    canvas.style.cssText = 'width:100%;height:100%;object-fit:contain;display:block;cursor:pointer;background:#000;';
-    if (videoEl.width) canvas.width = videoEl.width;
-    else canvas.width = 640;
-    if (videoEl.height) canvas.height = videoEl.height;
-    else canvas.height = 360;
-    if (videoEl.className) canvas.className = videoEl.className;
-    container.appendChild(canvas);
-
-    // Controls overlay (matches main player design)
-    var controls = document.createElement('div');
-    controls.style.cssText = 'position:absolute;bottom:0;left:0;right:0;padding:8px 12px;background:linear-gradient(transparent,rgba(0,0,0,0.8));display:flex;align-items:center;gap:10px;opacity:0;transition:opacity 0.3s;';
-
-    var playBtn = document.createElement('button');
-    playBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:18px;cursor:pointer;padding:4px 8px;';
-    playBtn.innerHTML = '&#9654;';
-
-    var timeSpan = document.createElement('span');
-    timeSpan.style.cssText = 'color:#ccc;font-size:12px;font-family:monospace;min-width:60px;';
-    timeSpan.textContent = '0:00';
-
-    var seekbar = document.createElement('div');
-    seekbar.style.cssText = 'flex:1;height:20px;display:flex;align-items:center;cursor:pointer;position:relative;';
-    var seekTrack = document.createElement('div');
-    seekTrack.style.cssText = 'width:100%;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;position:relative;overflow:visible;transition:height 0.15s;';
-    var seekBuffered = document.createElement('div');
-    seekBuffered.style.cssText = 'position:absolute;top:0;left:0;height:100%;background:rgba(255,255,255,0.25);border-radius:2px;width:0%;';
-    var seekPlayed = document.createElement('div');
-    seekPlayed.style.cssText = 'position:absolute;top:0;left:0;height:100%;background:#10b981;border-radius:2px;width:0%;';
-    var seekThumb = document.createElement('div');
-    seekThumb.style.cssText = 'position:absolute;top:50%;width:12px;height:12px;border-radius:50%;background:#10b981;transform:translate(-50%,-50%);left:0%;opacity:0;transition:opacity 0.15s;';
-    seekTrack.appendChild(seekBuffered);
-    seekTrack.appendChild(seekPlayed);
-    seekTrack.appendChild(seekThumb);
-    seekbar.appendChild(seekTrack);
-    seekbar.addEventListener('mouseenter', function() { seekThumb.style.opacity = '1'; seekTrack.style.height = '6px'; });
-    seekbar.addEventListener('mouseleave', function() { seekThumb.style.opacity = '0'; seekTrack.style.height = '4px'; });
-
-    var volSlider = document.createElement('input');
-    volSlider.type = 'range'; volSlider.min = '0'; volSlider.max = '1'; volSlider.step = '0.01'; volSlider.value = '1';
-    volSlider.style.cssText = 'width:60px;cursor:pointer;accent-color:#10b981;';
-
-    var fsBtn = document.createElement('button');
-    fsBtn.style.cssText = 'background:none;border:none;color:#fff;font-size:16px;cursor:pointer;padding:4px 8px;';
-    fsBtn.innerHTML = '&#x26F6;';
-
-    controls.appendChild(playBtn);
-    controls.appendChild(timeSpan);
-    controls.appendChild(seekbar);
-    controls.appendChild(volSlider);
-    controls.appendChild(fsBtn);
-    container.appendChild(controls);
-
-    // Show/hide controls on hover
-    var hideTimeout;
-    function showControls() {
-      controls.style.opacity = '1';
-      clearTimeout(hideTimeout);
-      hideTimeout = setTimeout(function() { controls.style.opacity = '0'; }, 3000);
-    }
-    container.addEventListener('mousemove', showControls);
-    container.addEventListener('mouseenter', showControls);
-
-    // Status line
-    var statusDiv = document.createElement('div');
-    statusDiv.style.cssText = 'color:#888;font-size:0.8rem;padding:0.5rem 1.25rem;';
-
-    var autoplay = videoEl.hasAttribute('autoplay');
-    if (!autoplay) {
-      statusDiv.textContent = 'Click to play';
-      drawPlayButton(canvas);
-    } else {
-      statusDiv.textContent = 'Loading video...';
-    }
-
-    videoEl.style.display = 'none';
-    videoEl.parentNode.insertBefore(container, videoEl.nextSibling);
-    videoEl.parentNode.insertBefore(statusDiv, container.nextSibling);
-
-    var session = {
-      canvas: canvas,
-      ctx: canvas.getContext('2d'),
-      container: container,
-      controls: controls,
-      playBtn: playBtn,
-      timeSpan: timeSpan,
-      seekPlayed: seekPlayed,
-      seekBuffered: seekBuffered,
-      seekThumb: seekThumb,
-      statusDiv: statusDiv,
-      videoEl: videoEl,
-      decoder: null,
-      frameBuffer: [],
-      pendingSamples: [],
-      canvasSized: false,
-      paused: false,
-      pauseOffsetUs: 0,
-      wallClockStart: 0,
-      videoTimeBase: -1,
-      wallClockSynced: false,
-      lastRafTime: 0,
-      downloadComplete: false,
-      mediaDuration: 0,
-      hasAudio: false,
-      audioEl: null,
-      audioMediaSource: null,
-      audioSourceBuffer: null,
-      audioAppendQueue: [],
-      audioSbAppending: false,
-      renderRunning: false,
-      aborted: false,
-      started: false,
-      seeking: false,
-      decoderConfig: null,
-      audioMode: null,
-    };
-    _streamSessions[sessionId] = session;
-
-    // Play/pause via canvas click or play button
-    canvas.addEventListener('click', function() {
-      if (!session.started) {
-        session.started = true;
-        statusDiv.textContent = 'Loading video...';
-        playBtn.innerHTML = '&#9646;&#9646;';
-        window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
-        return;
-      }
-      togglePause(session);
-    });
-    playBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (!session.started) {
-        session.started = true;
-        statusDiv.textContent = 'Loading video...';
-        playBtn.innerHTML = '&#9646;&#9646;';
-        window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
-        return;
-      }
-      togglePause(session);
+    // Loaded from sia-injected.js at startup, then wrapped in <script> tags for injection.
+    let SIA_INJECTED_SCRIPT = '';
+    const siaInjectedReady = fetch('./sia-injected.js').then(r => r.text()).then(js => {
+      SIA_INJECTED_SCRIPT = '<script>' + js + '<\/script>';
     });
 
-    // Volume
-    volSlider.addEventListener('input', function() {
-      if (session.audioEl) session.audioEl.volume = parseFloat(volSlider.value);
-    });
-    volSlider.addEventListener('click', function(e) { e.stopPropagation(); });
-
-    // Fullscreen
-    fsBtn.addEventListener('click', function(e) {
-      e.stopPropagation();
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
-      } else {
-        container.requestFullscreen().catch(function() {});
-      }
-    });
-
-    // Seek bar: click + drag to seek
-    function seekFrac(e) {
-      var rect = seekbar.getBoundingClientRect();
-      return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    }
-    function updateSeekVisual(frac) {
-      var pct = (frac * 100) + '%';
-      if (session.seekPlayed) session.seekPlayed.style.width = pct;
-      if (session.seekThumb) session.seekThumb.style.left = pct;
-      if (session.timeSpan && session.mediaDuration > 0) {
-        session.timeSpan.textContent = formatTime(frac * session.mediaDuration) + ' / ' + formatTime(session.mediaDuration);
-      }
-    }
-    seekbar.addEventListener('click', function(e) { e.stopPropagation(); });
-    var dragging = false;
-    seekbar.addEventListener('mousedown', function(e) {
-      if (!session.started || session.mediaDuration <= 0) return;
-      e.preventDefault();
-      dragging = true;
-      session.seeking = true;
-      updateSeekVisual(seekFrac(e));
-    });
-    document.addEventListener('mousemove', function(e) {
-      if (!dragging) return;
-      updateSeekVisual(seekFrac(e));
-    });
-    document.addEventListener('mouseup', function(e) {
-      if (!dragging) return;
-      dragging = false;
-      session.seeking = false;
-      var frac = seekFrac(e);
-      var timeSec = frac * session.mediaDuration;
-      updateSeekVisual(frac);
-      window.parent.postMessage({ type: 'SIA_STREAM_SEEK', sessionId: sessionId, timeSec: timeSec }, '*');
-    });
-
-    if (autoplay) {
-      session.started = true;
-      statusDiv.textContent = 'Loading video...';
-      playBtn.innerHTML = '&#9646;&#9646;';
-      window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
-    }
-  }
-
-  function getMediaTimeUs(s) {
-    if (s.paused) return s.pauseOffsetUs;
-    if (s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3) {
-      // Audio is playing with data — use as master clock.
-      // Re-sync wall-clock baseline so fallback picks up seamlessly if audio stalls.
-      var t = s.audioEl.currentTime * 1e6;
-      s.videoTimeBase = t;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      return t;
-    }
-    // Audio not ready (buffering after seek, or no audio) — use wall-clock timing
-    if (!s.wallClockSynced) return -1;
-    return s.videoTimeBase + (performance.now() - s.wallClockStart) * 1000;
-  }
-
-  function feedSamples(s) {
-    if (!s.decoder || s.decoder.state !== 'configured') return;
-    var maxFeed = s.frameBuffer.length === 0 ? 8 : 2;
-    var fed = 0;
-    // After decoder reset, skip delta frames until a keyframe arrives
-    if (s._needsKeyframe) {
-      while (s.pendingSamples.length > 0 && !s.pendingSamples[0].is_sync) {
-        s.pendingSamples.shift();
-      }
-      if (s.pendingSamples.length > 0 && s.pendingSamples[0].is_sync) {
-        s._needsKeyframe = false;
-      } else {
-        return; // still waiting for keyframe
-      }
-    }
-    while (s.pendingSamples.length > 0 && fed < maxFeed) {
-      if (s.decoder.decodeQueueSize + s.frameBuffer.length >= 12) break;
-      var sample = s.pendingSamples.shift();
-      fed++;
-      var ts = (sample.cts * 1e6) / sample.timescale;
-      try {
-        s.decoder.decode(new EncodedVideoChunk({
-          type: sample.is_sync ? 'key' : 'delta',
-          timestamp: ts,
-          duration: (sample.duration * 1e6) / sample.timescale,
-          data: sample.data,
-        }));
-      } catch (e) {}
-    }
-  }
-
-  function drainAudioQueue(s) {
-    if (!s.audioSourceBuffer || s.audioSbAppending || s.audioSourceBuffer.updating || s.audioAppendQueue.length === 0) return;
-    if (s.audioMediaSource.readyState !== 'open') return;
-    var buf = s.audioAppendQueue.shift();
-    s.audioSbAppending = true;
-    try {
-      s.audioSourceBuffer.appendBuffer(buf);
-    } catch (e) {
-      s.audioSbAppending = false;
-      if (e.name === 'QuotaExceededError') {
-        s.audioAppendQueue.unshift(buf);
-        if (s.audioSourceBuffer.buffered.length > 0 && s.audioEl) {
-          var removeEnd = s.audioEl.currentTime - 5;
-          if (removeEnd > s.audioSourceBuffer.buffered.start(0)) {
-            s.audioSourceBuffer.remove(s.audioSourceBuffer.buffered.start(0), removeEnd);
-          }
-        }
-      }
-    }
-  }
-
-  function maybeEndAudio(s) {
-    if (!s.downloadComplete || s.audioAppendQueue.length > 0 || s.audioSbAppending) return;
-    if (s.audioMediaSource && s.audioMediaSource.readyState === 'open') {
-      try { s.audioMediaSource.endOfStream(); } catch (e) {}
-    }
-  }
-
-  function renderLoop(sessionId) {
-    var s = _streamSessions[sessionId];
-    if (!s || s.aborted) {
-      if (s) { while (s.frameBuffer.length > 0) s.frameBuffer.shift().close(); }
-      return;
-    }
-
-    // Stall compensation (when using wall-clock timing)
-    var now = performance.now();
-    var usingAudioClock = s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3;
-    if (s.lastRafTime > 0 && s.wallClockSynced && !usingAudioClock && !s.paused) {
-      var gapMs = now - s.lastRafTime;
-      if (gapMs > 50) s.wallClockStart += (gapMs - 16.67);
-    }
-    s.lastRafTime = now;
-
-    feedSamples(s);
-
-    if (s.paused) {
-      // Update time display while paused
-      var pausedSec = s.pauseOffsetUs / 1e6;
-      if (s.timeSpan && s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(pausedSec) + ' / ' + formatTime(s.mediaDuration);
-      }
-      requestAnimationFrame(function() { renderLoop(sessionId); });
-      return;
-    }
-
-    // Establish timing on first frame
-    if (!s.wallClockSynced && !s.hasAudio && s.frameBuffer.length > 0) {
-      s.videoTimeBase = s.frameBuffer[0].timestamp;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      s.lastRafTime = s.wallClockStart;
-    }
-
-    var mediaTimeUs = getMediaTimeUs(s);
-    if (mediaTimeUs < 0) {
-      requestAnimationFrame(function() { renderLoop(sessionId); });
-      return;
-    }
-
-    // Draw the latest frame whose time has arrived
-    var frameToDraw = null;
-    while (s.frameBuffer.length > 0 && s.frameBuffer[0].timestamp <= mediaTimeUs) {
-      if (frameToDraw) frameToDraw.close();
-      frameToDraw = s.frameBuffer.shift();
-    }
-    if (frameToDraw) {
-      if (!s.canvasSized) {
-        s.canvas.width = frameToDraw.displayWidth;
-        s.canvas.height = frameToDraw.displayHeight;
-        s.canvasSized = true;
-      }
-      s.ctx.drawImage(frameToDraw, 0, 0, s.canvas.width, s.canvas.height);
-      frameToDraw.close();
-    }
-
-    // Update controls
-    var mediaTimeSec = mediaTimeUs / 1e6;
-    if (s.timeSpan) {
-      if (s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(mediaTimeSec) + ' / ' + formatTime(s.mediaDuration);
-      } else {
-        s.timeSpan.textContent = formatTime(mediaTimeSec);
-      }
-    }
-    if (s.mediaDuration > 0 && !s.seeking) {
-      var playedPct = Math.min(100, (mediaTimeSec / s.mediaDuration) * 100);
-      if (s.seekPlayed) s.seekPlayed.style.width = playedPct + '%';
-      if (s.seekThumb) s.seekThumb.style.left = playedPct + '%';
-    }
-
-    requestAnimationFrame(function() { renderLoop(sessionId); });
-  }
-
-  function handleStreamInit(sessionId, d) {
-    var s = _streamSessions[sessionId];
-    if (!s) return;
-
-    // Set up audio MSE if audio config provided
-    if (d.audioConfig && typeof MediaSource !== 'undefined') {
-      var audioEl = document.createElement('audio');
-      audioEl.style.display = 'none';
-      document.body.appendChild(audioEl);
-      var ms = new MediaSource();
-      audioEl.src = URL.createObjectURL(ms);
-      s.audioEl = audioEl;
-      s.audioMediaSource = ms;
-
-      ms.addEventListener('sourceopen', function() {
-        try {
-          s.audioSourceBuffer = ms.addSourceBuffer(d.audioConfig.mime);
-          s.audioSourceBuffer.addEventListener('updateend', function() {
-            s.audioSbAppending = false;
-            drainAudioQueue(s);
-            maybeEndAudio(s);
-          });
-          s.hasAudio = true;
-          if (d.audioConfig.initSegment) {
-            s.audioInitSegment = d.audioConfig.initSegment.slice(0); // keep a copy for seek recovery
-            s.audioAppendQueue.push(d.audioConfig.initSegment);
-            drainAudioQueue(s);
-          }
-          audioEl.play().catch(function(){});
-        } catch (e) {
-          console.warn('Audio setup failed:', e);
-        }
-      }, { once: true });
-    }
-
-    // Set up VideoDecoder
-    if (d.videoConfig) {
-      var config = {
-        codec: d.videoConfig.codec,
-        codedWidth: d.videoConfig.codedWidth,
-        codedHeight: d.videoConfig.codedHeight,
-      };
-      if (d.videoConfig.description) {
-        config.description = new Uint8Array(d.videoConfig.description);
-      }
-
-      s.decoder = new VideoDecoder({
-        output: function(frame) {
-          if (s.aborted) { frame.close(); return; }
-          s.frameBuffer.push(frame);
-        },
-        error: function(e) {
-          console.error('VideoDecoder error:', e);
-        }
-      });
-      s.decoderConfig = config;
-      s.decoder.configure(config);
-
-      if (!s.renderRunning) {
-        s.renderRunning = true;
-        requestAnimationFrame(function() { renderLoop(sessionId); });
-      }
-    }
-
-    s.mediaDuration = d.duration || 0;
-    if (d.audioConfig && d.audioConfig.mode) s.audioMode = d.audioConfig.mode;
-    if (s.mediaDuration > 0) {
-      s.timeSpan.textContent = '0:00 / ' + formatTime(s.mediaDuration);
-      s.statusDiv.textContent = 'Streaming video (' + formatTime(s.mediaDuration) + ')...';
-    } else {
-      s.statusDiv.textContent = 'Streaming video...';
-    }
-  }
-
-  // --- 4. Message dispatcher ---
-  window.addEventListener('message', function(e) {
-    var d = e.data;
-    if (!d) return;
-
-    // Resource response (images, etc.)
-    if (d.type === 'SIA_RESOURCE_RESPONSE') {
-      var req = _pending[d.requestId];
-      if (!req) return;
-      delete _pending[d.requestId];
-      if (d.error) { console.error('sia:// resource failed:', d.error); return; }
-      var blob = new Blob([d.data], { type: d.mimeType || 'application/octet-stream' });
-      var blobUrl = URL.createObjectURL(blob);
-      req.el.setAttribute(req.attr, blobUrl);
-      if (req.el.tagName === 'IMG') {
-        req.el.style.opacity = '';
-        req.el.removeAttribute('data-sia-loading');
-        req.el.style.minHeight = '';
-      }
-      return;
-    }
-
-    // Stream messages
-    var sid = d.sessionId;
-    var s = sid ? _streamSessions[sid] : null;
-
-    if (d.type === 'SIA_STREAM_INIT' && s) {
-      handleStreamInit(sid, d);
-      return;
-    }
-    if (d.type === 'SIA_STREAM_VIDEO' && s && d.samples) {
-      for (var i = 0; i < d.samples.length; i++) {
-        s.pendingSamples.push(d.samples[i]);
-      }
-      return;
-    }
-    if (d.type === 'SIA_STREAM_AUDIO' && s && d.buffer) {
-      s.audioAppendQueue.push(d.buffer);
-      drainAudioQueue(s);
-      return;
-    }
-    if (d.type === 'SIA_STREAM_PROGRESS' && s) {
-      var pct = d.total > 0 ? Math.round((d.current / d.total) * 100) : 0;
-      s.statusDiv.textContent = 'Streaming: slab ' + d.current + '/' + d.total + ' (' + pct + '%)';
-      if (s.mediaDuration > 0 && d.total > 0 && s.seekBuffered) {
-        var bufPct = Math.min(100, (d.current / d.total) * 100);
-        s.seekBuffered.style.width = bufPct + '%';
-      }
-      return;
-    }
-    if (d.type === 'SIA_STREAM_SEEK_FLUSH' && s) {
-      var timeSec = d.timeSec;
-      var seekTimeUs = timeSec * 1e6;
-      // Reset decoder (immediately stops pending work, no stale frames)
-      if (s.decoder) {
-        if (s.decoder.state === 'configured') s.decoder.reset();
-        if (s.decoderConfig) s.decoder.configure(s.decoderConfig);
-        s._needsKeyframe = true;
-      }
-
-      // Clear buffers
-      s.pendingSamples.length = 0;
-      while (s.frameBuffer.length > 0) s.frameBuffer.shift().close();
-
-      // Reset timing
-      s.pauseOffsetUs = seekTimeUs;
-      s.videoTimeBase = seekTimeUs;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      s.lastRafTime = s.wallClockStart;
-
-      // Handle audio — clear SourceBuffer entirely, let re-extracted audio fill fresh.
-      // Previous approach of suppressing duplicate audio on the parent side was unreliable.
-      s.audioAppendQueue.length = 0;
-      if (s.audioSourceBuffer) {
-        if (s.audioSourceBuffer.updating) {
-          try { s.audioSourceBuffer.abort(); } catch (ex) {}
-        }
-        s.audioSbAppending = false;
-        // Set timestampOffset for raw-mse before remove (must be while updating=false)
-        if (s.audioMode === 'raw-mse') {
-          try { s.audioSourceBuffer.timestampOffset = timeSec; } catch (ex) {}
-        }
-        // Re-queue init segment for fMP4 (SourceBuffer stays configured after remove,
-        // but re-appending init segment ensures clean segment boundary)
-        if (s.audioMode === 'fmp4-mse' && s.audioInitSegment) {
-          s.audioAppendQueue.push(s.audioInitSegment.slice(0));
-        }
-        // Clear all buffered audio — re-extracted + new audio fills from seek point
-        try { s.audioSourceBuffer.remove(0, Infinity); } catch (ex) {}
-      }
-      if (s.audioEl) {
-        s.audioEl.pause();
-        s.audioEl.currentTime = timeSec;
-        if (!s.paused) {
-          s.audioEl.play().catch(function(){});
-        }
-      }
-
-      // Update visual
-      if (s.mediaDuration > 0) {
-        var pct = Math.min(100, (timeSec / s.mediaDuration) * 100);
-        if (s.seekPlayed) s.seekPlayed.style.width = pct + '%';
-        if (s.seekThumb) s.seekThumb.style.left = pct + '%';
-      }
-      if (s.timeSpan && s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(timeSec) + ' / ' + formatTime(s.mediaDuration);
-      }
-      return;
-    }
-    if (d.type === 'SIA_STREAM_END' && s) {
-      s.downloadComplete = true;
-      if (s.seekBuffered) s.seekBuffered.style.width = '100%';
-      if (s.decoder && s.decoder.state === 'configured') {
-        s.decoder.flush().catch(function(){});
-      }
-      maybeEndAudio(s);
-      s.statusDiv.textContent = 'Download complete.';
-      return;
-    }
-    if (d.type === 'SIA_STREAM_ERROR' && s) {
-      s.statusDiv.textContent = 'Stream error: ' + d.error;
-      s.statusDiv.style.color = '#f87171';
-      return;
-    }
-  });
-
-  // --- 5. Scan + MutationObserver ---
-  function scan(root) {
-    var selectors = [
-      'img[src^=\"sia://\"]',
-      'video[src^=\"sia://\"]',
-      'video[poster^=\"sia://\"]',
-      'audio[src^=\"sia://\"]',
-      'source[src^=\"sia://\"]',
-      'link[href^=\"sia://\"]'
-    ];
-    var els = root.querySelectorAll(selectors.join(','));
-    for (var i = 0; i < els.length; i++) {
-      var el = els[i];
-      // Video elements: use streaming path
-      if ((el.tagName === 'VIDEO') && el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0) {
-        requestVideoStream(el);
-        continue;
-      }
-      if (el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0)
-        requestResource(el, 'src');
-      if (el.hasAttribute('href') && el.getAttribute('href').indexOf('sia://') === 0)
-        requestResource(el, 'href');
-      if (el.hasAttribute('poster') && el.getAttribute('poster').indexOf('sia://') === 0)
-        requestResource(el, 'poster');
-    }
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { scan(document); });
-  } else {
-    scan(document);
-  }
-
-  new MutationObserver(function(muts) {
-    for (var i = 0; i < muts.length; i++) {
-      var nodes = muts[i].addedNodes;
-      for (var j = 0; j < nodes.length; j++) {
-        if (nodes[j].nodeType === 1) scan(nodes[j]);
-      }
-    }
-  }).observe(document.documentElement, { childList: true, subtree: true });
-})();
-<\/script>`;
-
+    // (original inline script moved to sia-injected.js)
     // Inject the interceptor script into HTML before loading into the iframe.
-    function createHtmlBlobUrl(htmlString) {
+    async function createHtmlBlobUrl(htmlString) {
+      await siaInjectedReady; // ensure sia-injected.js has been fetched
       let injected;
       const bodyClose = htmlString.lastIndexOf('</body>');
       if (bodyClose !== -1) {
@@ -4076,10 +3441,13 @@
           const msg = e.data;
           if (msg.type === 'chunk') {
             if (aborted) return;
+            const _t0 = performance.now();
             const buf = msg.data;
             buf.fileStart = msg.offset;
             byteOffset += msg.size;
             mp4box.appendBuffer(buf);
+            const _dt = performance.now() - _t0;
+            if (_dt > 10) console.warn(`[iframe-perf] appendBuffer: ${_dt.toFixed(1)}ms (${msg.size} bytes, offset=${msg.offset})`);
           } else if (msg.type === 'progress') {
             if (aborted) return;
             post({ type: 'SIA_STREAM_PROGRESS', sessionId, current: msg.current, total: msg.total });
@@ -4138,7 +3506,9 @@
       try {
         await streamPromise;
         if (!aborted) {
+          const _flushT0 = performance.now();
           mp4box.flush();
+          console.warn(`[iframe-perf] mp4box.flush() on main thread: ${(performance.now() - _flushT0).toFixed(1)}ms`);
           post({ type: 'SIA_STREAM_END', sessionId });
         }
       } catch (e) {
@@ -4515,7 +3885,7 @@
         } else if (item.fileType === 'html') {
           // HTML: rewrite sia:// links for in-page navigation
           const htmlText = new TextDecoder().decode(data);
-          blobUrl = createHtmlBlobUrl(htmlText);
+          blobUrl = await createHtmlBlobUrl(htmlText);
         } else if (item.fileType === 'image') {
           const imgBlob = new Blob([data], { type: mimeType });
           let html;
@@ -4694,6 +4064,7 @@
               video.style.display = 'none';
 
               const result = await webcodecStream(sdk, obj, canvas, status, progress, url);
+              const _callerT0 = performance.now();
               tab.streamAbort = result;
               tab.contentLoaded = true;
 
@@ -4704,6 +4075,7 @@
               addToHistory(displayUrl, null, displayUrl, false, url, 'video');
               if (!navInProgress) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
               status.innerHTML = `<span class="pass">${status.textContent}</span>`;
+              console.log(`[perf] caller continuation done in ${(performance.now() - _callerT0).toFixed(1)}ms`);
               return;
             } catch (wcErr) {
               console.error('[browser] WebCodecs streaming failed:', wcErr);
@@ -4858,7 +4230,7 @@
         } else if (fileType === 'html') {
           // HTML: rewrite sia:// links so they work as in-page navigations
           const htmlText = new TextDecoder().decode(new Uint8Array(await downloadedBlob.arrayBuffer()));
-          blobUrl = createHtmlBlobUrl(htmlText);
+          blobUrl = await createHtmlBlobUrl(htmlText);
         } else if (fileType === 'image') {
           // Convert image to PNG via canvas so it works inside the sandboxed iframe.
           // Falls back to an error message for formats the browser can't decode (e.g. HEIC on Chrome).
@@ -4908,7 +4280,6 @@
 
     // Back/Forward buttons
     document.getElementById('btn-back').addEventListener('click', goBack);
-    document.getElementById('btn-forward').addEventListener('click', goForward);
 
     // Open in external tab (with warning)
     document.getElementById('btn-external-tab').addEventListener('click', async () => {
@@ -5027,7 +4398,7 @@
 
           // Rewrite sia:// links in HTML content before loading
           const htmlText = await blob.text();
-          const blobUrl = createHtmlBlobUrl(htmlText);
+          const blobUrl = await createHtmlBlobUrl(htmlText);
           if (iframe) iframe.src = blobUrl;
           tab.contentLoaded = true;
 
@@ -5079,10 +4450,10 @@
       const totalSize = obj.size();
       statusEl.textContent = `File size: ${formatSize(totalSize)}. Initializing WebCodecs...`;
 
-      const mp4box = createMP4Box();
-
       // State
       let byteOffset = 0;
+      let demuxWorker = null;   // worker handle (needed by seekTo before worker is created)
+      let seekPendingFlag = false; // true between seek request and worker flush
       let downloadComplete = false;
       let mp4boxReady = false;
       let aborted = false;
@@ -5127,9 +4498,7 @@
       const NORMAL_FRAME_MS = 16.67; // expected rAF interval at 60Hz
 
       // Controls state
-      let mediaDuration = 0; // from mp4box info, seconds
-      let videoTrackId = null;
-      let audioTrackId = null;
+      let mediaDuration = 0; // from worker stream-init, seconds
 
       // Seek state
       let isSeeking = false;        // true while user is dragging the scrub bar
@@ -5155,20 +4524,13 @@
         return videoTimeBase + elapsedUs;
       }
 
-      // Returns the duration (seconds) up to which video data has been downloaded.
+      // Approximate buffered duration from download progress (mp4box is in worker)
       function getBufferedDuration() {
-        if (!mp4boxReady || videoTrackId === null) return 0;
-        try {
-          const samples = mp4box.getTrackSamplesInfo(videoTrackId);
-          if (!samples || samples.length === 0) return 0;
-          for (let i = samples.length - 1; i >= 0; i--) {
-            if (samples[i].alreadyRead === samples[i].size) {
-              const s = samples[i];
-              return (s.cts + s.duration) / s.timescale;
-            }
-          }
-        } catch (e) {}
-        return 0;
+        if (mediaDuration <= 0) return 0;
+        if (downloadComplete) return mediaDuration;
+        const max = progressEl.max || 1;
+        const current = progressEl.value || 0;
+        return (current / max) * mediaDuration;
       }
 
       function getBufferedDurationThrottled() {
@@ -5194,8 +4556,9 @@
 
         console.log(`[webcodec] seekTo: ${timeSec.toFixed(2)}s (buffered: ${maxSeekable.toFixed(2)}s)`);
 
-        // 1. Stop mp4box sample extraction
-        mp4box.stop();
+        // 1. Tell worker to seek (mp4box.stop/seek/start happens in worker thread)
+        seekPendingFlag = true;
+        if (demuxWorker) demuxWorker.postMessage({ type: 'seek', timeSec });
 
         // 2. Flush VideoDecoder — drains in-flight decodes
         if (videoDecoder && videoDecoder.state === 'configured') {
@@ -5210,10 +4573,7 @@
         pendingVideoSamples.length = 0;
         while (frameBuffer.length > 0) frameBuffer.shift().close();
 
-        // 4. Seek mp4box to nearest keyframe
-        mp4box.seek(timeSec, true);
-
-        // 5. Reset timing
+        // 4. Reset timing
         const seekTimeUs = timeSec * 1e6;
         pauseOffsetUs = seekTimeUs;
         videoTimeBase = seekTimeUs;
@@ -5221,7 +4581,7 @@
         wallClockSynced = true;
         lastRafTime = wallClockStart;
 
-        // 6. Handle audio seek
+        // 5. Handle audio seek
         if (hasAudio && audioEl) {
           audioAppendQueue.length = 0;
 
@@ -5244,16 +4604,13 @@
           }
         }
 
-        // 7. Re-anchor wall clock for non-audio case
+        // 6. Re-anchor wall clock for non-audio case
         if (!hasAudio && !paused) {
           wallClockStart = performance.now();
           videoTimeBase = seekTimeUs;
         }
 
-        // 8. Restart mp4box extraction from new position
         seekPendingDraw = true;
-        mp4box.start();
-
         seekInProgress = false;
 
         // If another seek was requested during this one, execute it
@@ -5279,6 +4636,12 @@
         // mp4box parsing), absorb the excess time so the clock doesn't jump forward.
         // This makes the video "pause" during stalls instead of skipping frames.
         const now = performance.now();
+        if (lastRafTime > 0) {
+          const gapMs = now - lastRafTime;
+          if (gapMs > 50) {
+            console.warn(`[perf] rAF gap: ${gapMs.toFixed(1)}ms (missed ${Math.floor(gapMs/16.67)} frames) bufLen=${frameBuffer.length} pending=${pendingVideoSamples.length} audioQ=${audioAppendQueue.length} dlComplete=${downloadComplete}`);
+          }
+        }
         if (lastRafTime > 0 && wallClockSynced && !hasAudio && !paused) {
           const gapMs = now - lastRafTime;
           if (gapMs > STALL_THRESHOLD_MS) {
@@ -5450,199 +4813,77 @@
 
       function maybeEndAudioStream() {
         if (!downloadComplete || audioAppendQueue.length > 0 || audioSbAppending) return;
+        console.log(`[perf] maybeEndAudioStream: calling endOfStream at ${performance.now().toFixed(1)}`);
         if (audioMediaSource && audioMediaSource.readyState === 'open') {
           try { audioMediaSource.endOfStream(); } catch (e) {}
         }
       }
 
-      // --- Codec description extraction (W3C WebCodecs pattern) ---
-      function getCodecDescription(box) {
-        const stream = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
-        box.write(stream);
-        return new Uint8Array(stream.buffer, 8); // Skip 8-byte box header (size + type)
-      }
-
-      // --- mp4box onReady: configure WebCodecs decoders ---
-      // IMPORTANT: This handler MUST be fully synchronous. mp4box calls onReady
-      // synchronously during appendBuffer(). If we use async/await, the handler
-      // yields and mp4box continues processing samples without extraction options
-      // set, losing all samples from the current and subsequent buffers until
-      // the async handler resumes. setExtractionOptions + start() must happen
-      // before this function returns.
-      mp4box.onReady = (info) => {
+      // --- Handle stream-init from worker: configure VideoDecoder + audio MSE ---
+      function handleStreamInit(msg) {
         mp4boxReady = true;
-        console.log('[webcodec] onReady. Tracks:', info.tracks.map(t => ({
-          id: t.id, codec: t.codec, video: !!t.video, audio: !!t.audio,
-          type: t.type, name: t.name
-        })));
 
-        // Duration from mp4box (in timescale units)
-        if (info.duration && info.timescale) {
-          mediaDuration = info.duration / info.timescale;
+        if (msg.duration && msg.duration > 0) {
+          mediaDuration = msg.duration;
         }
 
-        const mediaTracks = info.tracks.filter(t => t.video || t.audio);
-        if (mediaTracks.length === 0) {
-          rejectAbort(new Error('No video or audio tracks found'));
-          return;
-        }
+        const trackDescs = [];
+        if (msg.videoConfig) trackDescs.push(`video (${msg.videoConfig.codec})`);
+        if (msg.audioConfig) trackDescs.push(`audio (${msg.audioConfig.mime})`);
+        statusEl.textContent = `Tracks: ${trackDescs.join(', ')}. Configuring decoders...`;
 
-        const trackDescs = mediaTracks.map(t =>
-          `${t.video ? 'video' : 'audio'} (${t.codec})`
-        ).join(', ');
-        statusEl.textContent = `Tracks: ${trackDescs}. Configuring decoders...`;
+        // --- Audio setup (via MSE) ---
+        if (msg.audioConfig && audioMediaSource && audioMediaSource.readyState === 'open') {
+          try {
+            audioMode = msg.audioConfig.mode;
+            audioSourceBuffer = audioMediaSource.addSourceBuffer(msg.audioConfig.mime);
+            audioSourceBuffer.addEventListener('updateend', () => {
+              audioSbAppending = false;
+              drainAudioQueue();
+              maybeEndAudioStream();
+            });
+            audioSourceBuffer.addEventListener('error', (e) => {
+              console.warn('[webcodec] Audio SourceBuffer error:', e);
+            });
+            hasAudio = true;
 
-        // FIRST: set extraction options and start SYNCHRONOUSLY so mp4box
-        // begins extracting samples immediately from this appendBuffer call.
-        // We configure decoders below; onSamples will queue samples until ready.
-        videoTrackId = null;
-        audioTrackId = null;
-
-        for (const track of mediaTracks) {
-          if (track.video && videoTrackId === null) {
-            videoTrackId = track.id;
-          }
-        }
-
-        // Pick first audio track whose codec is supported by MSE.
-        // Pass 1: try fMP4 MSE (setSegmentOptions → onSegment → SourceBuffer with video/mp4 MIME)
-        // Pass 2: try raw MSE (setExtractionOptions → onSamples → SourceBuffer with audio/mpeg MIME)
-        let audioTrack = null;
-        if (audioMediaSource && audioMediaSource.readyState === 'open') {
-          // Pass 1: fMP4 MSE
-          for (const track of mediaTracks) {
-            if (!track.audio) continue;
-            const mime = `video/mp4; codecs="${track.codec}"`;
-            if (MediaSource.isTypeSupported(mime)) {
-              audioTrackId = track.id;
-              audioTrack = track;
-              audioMode = 'fmp4-mse';
-              console.log(`[webcodec] Selected audio track ${track.id}: ${track.codec} via fMP4 MSE (${mime})`);
-              break;
-            } else {
-              console.log(`[webcodec] Skipping audio track ${track.id}: ${track.codec} (${mime} not supported for fMP4 MSE)`);
+            if (msg.audioConfig.initSegment) {
+              audioAppendQueue.push(msg.audioConfig.initSegment);
+              drainAudioQueue();
             }
+
+            audioEl.play().catch(() => {});
+            console.log(`[webcodec] Audio MSE ready: ${msg.audioConfig.mime} (${msg.audioConfig.mode})`);
+          } catch (e) {
+            console.warn('[webcodec] Audio setup failed:', e);
+            hasAudio = false;
+          }
+        }
+
+        // --- Video decoder setup ---
+        if (msg.videoConfig) {
+          const config = {
+            codec: msg.videoConfig.codec,
+            codedWidth: msg.videoConfig.codedWidth,
+            codedHeight: msg.videoConfig.codedHeight,
+          };
+          if (msg.videoConfig.description) {
+            config.description = new Uint8Array(msg.videoConfig.description);
           }
 
-          // Pass 2: raw MSE — for codecs stored as raw frames (e.g. MP3 in MP4 container)
-          if (!audioTrack) {
-            const rawMimeMap = {
-              'mp4a.6b': 'audio/mpeg', // MP3 (MPEG-1 Layer 3, OTI 0x6B)
-              'mp4a.69': 'audio/mpeg', // MP3 (MPEG-2 Layer 3, OTI 0x69)
-            };
-            for (const track of mediaTracks) {
-              if (!track.audio) continue;
-              const rawMime = rawMimeMap[track.codec];
-              if (rawMime && MediaSource.isTypeSupported(rawMime)) {
-                audioTrackId = track.id;
-                audioTrack = track;
-                audioMode = 'raw-mse';
-                console.log(`[webcodec] Selected audio track ${track.id}: ${track.codec} via raw MSE (${rawMime})`);
-                break;
-              } else if (rawMime) {
-                console.log(`[webcodec] Skipping audio track ${track.id}: ${track.codec} (${rawMime} not supported for raw MSE)`);
+          videoDecoder = new VideoDecoder({
+            output: bufferVideoFrame,
+            error: (e) => {
+              console.error('[webcodec] VideoDecoder error:', e);
+              if (!aborted) {
+                aborted = true;
+                rejectAbort(new Error(`Video decoder error: ${e.message}`));
               }
             }
-          }
-        }
-
-        // Video: raw samples via setExtractionOptions → onSamples → WebCodecs VideoDecoder
-        if (videoTrackId !== null) {
-          mp4box.setExtractionOptions(videoTrackId, 'video', { nbSamples: 200 });
-        }
-
-        // Audio setup: two paths depending on audioMode
-        if (audioTrack !== null && audioMode === 'fmp4-mse') {
-          // fMP4 MSE: setSegmentOptions → onSegment → SourceBuffer (video/mp4 MIME)
-          const audioMime = `video/mp4; codecs="${audioTrack.codec}"`;
-          mp4box.setSegmentOptions(audioTrackId, 'audio', { nbSamples: 100, rapAlignment: true });
-          const initResult = mp4box.initializeSegmentation();
-          console.log(`[webcodec] Audio fMP4 MSE: ${audioMime}, init segment: ${initResult.buffer?.byteLength} bytes`);
-
-          audioSourceBuffer = audioMediaSource.addSourceBuffer(audioMime);
-          audioSourceBuffer.addEventListener('updateend', () => {
-            audioSbAppending = false;
-            drainAudioQueue();
-            maybeEndAudioStream();
           });
-          audioSourceBuffer.addEventListener('error', (e) => {
-            console.warn('[webcodec] Audio SourceBuffer error:', e);
-            hasAudio = false;
-          });
+          videoDecoder.configure(config);
 
-          // Queue init segment
-          if (initResult.buffer) {
-            audioAppendQueue.push(initResult.buffer);
-            drainAudioQueue();
-          }
-
-          hasAudio = true;
-          audioEl.play().catch(e => console.warn('[webcodec] Audio autoplay blocked:', e.message));
-          console.log(`[webcodec] Audio via fMP4 MSE: ${audioTrack.codec} ${audioTrack.audio.sample_rate}Hz ${audioTrack.audio.channel_count}ch`);
-        } else if (audioTrack !== null && audioMode === 'raw-mse') {
-          // Raw MSE: setExtractionOptions → onSamples → SourceBuffer (audio/mpeg MIME)
-          const rawMimeMap = { 'mp4a.6b': 'audio/mpeg', 'mp4a.69': 'audio/mpeg' };
-          const rawMime = rawMimeMap[audioTrack.codec];
-          mp4box.setExtractionOptions(audioTrackId, 'audio', { nbSamples: 200 });
-          console.log(`[webcodec] Audio raw MSE: ${rawMime} (codec: ${audioTrack.codec})`);
-
-          audioSourceBuffer = audioMediaSource.addSourceBuffer(rawMime);
-          audioSourceBuffer.addEventListener('updateend', () => {
-            audioSbAppending = false;
-            drainAudioQueue();
-            maybeEndAudioStream();
-          });
-          audioSourceBuffer.addEventListener('error', (e) => {
-            console.warn('[webcodec] Audio SourceBuffer error:', e);
-            hasAudio = false;
-          });
-
-          // No init segment for raw audio streams
-          hasAudio = true;
-          audioEl.play().catch(e => console.warn('[webcodec] Audio autoplay blocked:', e.message));
-          console.log(`[webcodec] Audio via raw MSE: ${audioTrack.codec} ${audioTrack.audio.sample_rate}Hz ${audioTrack.audio.channel_count}ch`);
-        }
-
-        mp4box.start();
-
-        // Configure video decoder synchronously (no await).
-        for (const track of mediaTracks) {
-          if (track.video && !videoDecoder && track.id === videoTrackId) {
-            try {
-              const trak = mp4box.getTrackById(track.id);
-              const entry = trak.mdia.minf.stbl.stsd.entries[0];
-              const descBox = entry.avcC || entry.hvcC || entry.vpcC || entry.av1C;
-
-              let description;
-              if (descBox) {
-                description = getCodecDescription(descBox);
-              }
-
-              const config = {
-                codec: track.codec,
-                codedWidth: track.video.width,
-                codedHeight: track.video.height,
-                description: description,
-              };
-
-              videoDecoder = new VideoDecoder({
-                output: bufferVideoFrame,
-                error: (e) => {
-                  console.error('[webcodec] VideoDecoder error:', e);
-                  if (!aborted) {
-                    aborted = true;
-                    rejectAbort(new Error(`Video decoder error: ${e.message}`));
-                  }
-                }
-              });
-              videoDecoder.configure(config);
-
-              console.log(`[webcodec] VideoDecoder configured: ${track.codec} ${track.video.width}x${track.video.height}`);
-            } catch (e) {
-              console.warn(`[webcodec] Failed to configure video track ${track.id}:`, e);
-              videoDecoder = null;
-            }
-          }
+          console.log(`[webcodec] VideoDecoder configured: ${msg.videoConfig.codec} ${msg.videoConfig.codedWidth}x${msg.videoConfig.codedHeight}`);
         }
 
         if (!videoDecoder) {
@@ -5650,64 +4891,12 @@
           return;
         }
 
-        // Start render loop (timing is established when the first frame is displayed)
+        // Start render loop
         renderLoopRunning = true;
         requestAnimationFrame(renderLoop);
 
-        statusEl.textContent = `Streaming: ${trackDescs}`;
-      };
-
-      // --- mp4box onSamples: queue raw video samples for rate-controlled feeding ---
-      // Audio is handled here only in raw-mse mode; fmp4-mse audio uses onSegment instead.
-      let videoSampleCount = 0;
-      mp4box.onSamples = (trackId, user, samples) => {
-        if (aborted) return;
-
-        if (user === 'audio' && audioMode === 'raw-mse') {
-          // Raw MSE: push raw MP3 frames directly to SourceBuffer
-          for (const sample of samples) {
-            if (aborted) break;
-            // sample.data is a Uint8Array; copy to a standalone ArrayBuffer for the queue
-            const buf = sample.data.buffer.slice(
-              sample.data.byteOffset,
-              sample.data.byteOffset + sample.data.byteLength
-            );
-            audioAppendQueue.push(buf);
-          }
-          drainAudioQueue();
-          return;
-        }
-
-        if (user !== 'video') return;
-
-        if (videoSampleCount === 0) {
-          console.log(`[webcodec] First video samples batch: ${samples.length} samples`);
-        }
-
-        for (const sample of samples) {
-          if (aborted) break;
-          videoSampleCount++;
-          pendingVideoSamples.push(sample);
-        }
-      };
-
-      // --- mp4box onSegment: feed audio fMP4 segments to MSE SourceBuffer ---
-      let audioSegmentCount = 0;
-      mp4box.onSegment = (trackId, user, buffer) => {
-        if (aborted) return;
-        if (user === 'audio') {
-          audioSegmentCount++;
-          if (audioSegmentCount <= 3) {
-            console.log(`[webcodec] Audio segment #${audioSegmentCount}: size=${buffer.byteLength}`);
-          }
-          audioAppendQueue.push(buffer);
-          drainAudioQueue();
-        }
-      };
-
-      mp4box.onError = (e) => {
-        console.error('[webcodec] mp4box error:', e);
-      };
+        statusEl.textContent = `Streaming: ${trackDescs.join(', ')}`;
+      }
 
       // --- Controls wiring (set up before download starts so controls work during streaming) ---
       const container = document.getElementById('video-container');
@@ -5863,45 +5052,56 @@
         console.log('[webcodec] Audio MediaSource ready');
       }
 
-      // --- Stream data from SDK via Web Worker ---
+      // --- Stream data from SDK via Web Worker (demuxing in worker) ---
+      // mp4box.appendBuffer() runs in the worker thread, so the main thread
+      // is never blocked by MP4 parsing at slab boundaries.
       progressEl.style.display = 'block';
       const downloadStart = performance.now();
 
-      let chunkCount = 0;
       const worker = new Worker('./worker.js', { type: 'module' });
+      demuxWorker = worker;
 
       const streamPromise = new Promise((resolveStream, rejectStream) => {
         worker.onmessage = (e) => {
           const msg = e.data;
 
-          if (msg.type === 'chunk') {
-            if (aborted) return;
-            chunkCount++;
-            const buf = msg.data; // Transferred ArrayBuffer (zero-copy)
-            buf.fileStart = msg.offset;
-            if (chunkCount <= 3) {
-              console.log(`[webcodec] chunk #${chunkCount}: size=${msg.size} fileStart=${msg.offset}`);
-            }
-            byteOffset += msg.size;
-            mp4box.appendBuffer(buf);
-          } else if (msg.type === 'progress') {
+          const _msgT0 = performance.now();
+          if (msg.type === 'stream-init') {
+            handleStreamInit(msg);
+          } else if (msg.type === 'stream-video') {
+            if (aborted || seekPendingFlag) return;
+            for (const s of msg.samples) pendingVideoSamples.push(s);
+            const _dt = performance.now() - _msgT0;
+            if (_dt > 5) console.warn(`[perf] stream-video handler: ${_dt.toFixed(1)}ms (${msg.samples.length} samples, pendingTotal=${pendingVideoSamples.length})`);
+          } else if (msg.type === 'stream-audio') {
+            if (aborted || seekPendingFlag) return;
+            audioAppendQueue.push(msg.buffer);
+            drainAudioQueue();
+            const _dt = performance.now() - _msgT0;
+            if (_dt > 5) console.warn(`[perf] stream-audio handler: ${_dt.toFixed(1)}ms (queueLen=${audioAppendQueue.length})`);
+          } else if (msg.type === 'stream-progress') {
             if (aborted) return;
             progressEl.max = msg.total;
             progressEl.value = msg.current;
+            byteOffset = msg.byteOffset;
             const pct = msg.total > 0 ? ((msg.current / msg.total) * 100).toFixed(0) : 0;
-            statusEl.textContent = `Streaming: ${msg.current}/${msg.total} slabs (${pct}%) — ${formatSize(byteOffset)} / ${formatSize(totalSize)}`;
-
-            if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
-              aborted = true;
-              worker.terminate();
-              rejectStream(new Error(
-                'No moov atom found after 50 MB. The file may have moov at the end. ' +
-                'Re-encode with "ffmpeg -i input.mp4 -movflags +faststart output.mp4" to fix.'
-              ));
-            }
-          } else if (msg.type === 'complete') {
-            resolveStream();
-          } else if (msg.type === 'error') {
+            statusEl.textContent = `Streaming: ${msg.current}/${msg.total} slabs (${pct}%) — ${formatSize(msg.byteOffset)} / ${formatSize(msg.totalSize)}`;
+            if (msg.current === msg.total) console.log(`[perf] last progress message received at ${_msgT0.toFixed(1)}`);
+          } else if (msg.type === 'stream-seek-flushed') {
+            // Clear any stale samples that arrived between seek request and worker flush
+            pendingVideoSamples.length = 0;
+            while (frameBuffer.length > 0) frameBuffer.shift().close();
+            seekPendingFlag = false;
+          } else if (msg.type === 'stream-complete') {
+            console.log(`[perf] stream-complete received at ${performance.now().toFixed(1)}`);
+            // Defer resolution by one frame so the render loop can process
+            // the burst of samples from mp4box.flush() before the completion
+            // continuation (DOM updates, localStorage, etc.) blocks the thread.
+            requestAnimationFrame(() => {
+              console.log(`[perf] stream-complete resolving at ${performance.now().toFixed(1)}`);
+              resolveStream();
+            });
+          } else if (msg.type === 'stream-error') {
             rejectStream(new Error(msg.message));
           }
         };
@@ -5911,9 +5111,9 @@
         };
       });
 
-      // Start the download worker
+      // Start the download + demux worker
       worker.postMessage({
-        type: 'start',
+        type: 'stream-demux',
         indexerUrl: getUrl(),
         keyHex: getKeyHex(),
         maxDownloads: getMaxDownloads(),
@@ -5928,32 +5128,31 @@
         worker.terminate();
         throw e;
       }
-      worker.terminate();
+      // Do NOT terminate worker here — it's still needed for post-download seeking.
+      // Worker is terminated by the abort handler when the stream is cleaned up.
 
       if (!aborted) {
+        const _completionT0 = performance.now();
+        console.log(`[perf] completion continuation starting at ${_completionT0.toFixed(1)}`);
         downloadComplete = true;
-        mp4box.flush();
         progressEl.value = progressEl.max;
 
-        // Wait for video decoder to finish processing queued samples
-        try {
-          if (videoDecoder && videoDecoder.state === 'configured') await videoDecoder.flush();
-        } catch (e) {
-          console.warn('[webcodec] Decoder flush error:', e);
-        }
-
-        // Signal end of audio stream to MSE
-        maybeEndAudioStream();
+        // Don't flush the VideoDecoder here — flushing forces all queued chunks
+        // through immediately and puts the decoder in "key frame required" state,
+        // which causes a visible stutter. Instead, let the normal feedSamples() →
+        // renderLoop() pipeline drain remaining samples smoothly.
+        // Audio MSE will be ended by maybeEndAudioStream() once its queue drains
+        // naturally via the drainAudioQueue() callback chain.
 
         const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
         statusEl.textContent = `Stream complete! ${formatSize(totalSize)} in ${elapsed}s.`;
+        console.log(`[perf] completion continuation done in ${(performance.now() - _completionT0).toFixed(1)}ms`);
       }
 
       return {
         abort: () => {
           aborted = true;
           worker.terminate();
-          try { mp4box.flush(); } catch (e) {}
           if (videoDecoder) try { videoDecoder.close(); } catch (e) {}
           if (audioEl) {
             try { audioEl.pause(); } catch (e) {}
