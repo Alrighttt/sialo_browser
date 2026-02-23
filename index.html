@@ -2508,6 +2508,65 @@
       SIA_INJECTED_SCRIPT = '<script>' + js + '<\/script>';
     });
 
+    // Render a text string as styled markdown HTML and return a blob URL.
+    function renderMarkdownHtml(text) {
+      // Escape HTML entities first
+      let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // Fenced code blocks
+      s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
+        `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
+      // Inline code
+      s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+      // Headings
+      s = s.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+      s = s.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+      s = s.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+      s = s.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+      s = s.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+      s = s.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+      // Horizontal rules
+      s = s.replace(/^---+$/gm, '<hr>');
+      // Bold + italic
+      s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+      s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // Images (before links)
+      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;">');
+      // Links
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      // Blockquotes
+      s = s.replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+      // Unordered lists
+      s = s.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
+      s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+      // Paragraphs: wrap remaining loose lines separated by blank lines
+      s = s.split(/\n{2,}/).map(block => {
+        const trimmed = block.trim();
+        if (!trimmed) return '';
+        if (/^<(h[1-6]|pre|ul|ol|li|blockquote|hr|img)/.test(trimmed)) return trimmed;
+        return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
+      }).join('\n');
+
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+body{font-family:system-ui,-apple-system,sans-serif;padding:2rem;background:#0a0a0a;color:#e0e0e0;margin:0;max-width:800px;margin:0 auto;line-height:1.7;}
+h1,h2,h3,h4,h5,h6{color:#f0f0f0;margin:1.5em 0 0.5em;}
+h1{font-size:2em;border-bottom:1px solid #333;padding-bottom:0.3em;}
+h2{font-size:1.5em;border-bottom:1px solid #333;padding-bottom:0.2em;}
+a{color:#58a6ff;}
+pre{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:1rem;overflow-x:auto;}
+code{background:#161b22;padding:0.2em 0.4em;border-radius:3px;font-size:0.9em;font-family:'Courier New',monospace;}
+pre code{background:none;padding:0;}
+blockquote{border-left:4px solid #3b82f6;margin:1rem 0;padding:0.5rem 1rem;color:#999;background:#111;}
+ul{padding-left:1.5rem;}
+li{margin:0.3em 0;}
+hr{border:none;border-top:1px solid #333;margin:2rem 0;}
+img{border-radius:6px;margin:1rem 0;}
+p{margin:0.8em 0;}
+</style></head><body>${s}</body></html>`;
+      const blob = new Blob([html], { type: 'text/html' });
+      return URL.createObjectURL(blob);
+    }
+
     // (original inline script moved to sia-injected.js)
     // Inject the interceptor script into HTML before loading into the iframe.
     async function createHtmlBlobUrl(htmlString) {
@@ -3205,12 +3264,9 @@
         // Create blob with appropriate wrapper for better display
         let blobUrl;
         if (item.fileType === 'text') {
-          // Wrap text in styled HTML for better readability
+          // Render text as markdown
           const text = new TextDecoder().decode(data);
-          const escapedText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:'Courier New',monospace;padding:1.5rem;background:#0a0a0a;color:#e0e0e0;margin:0;}pre{white-space:pre-wrap;word-wrap:break-word;margin:0;line-height:1.5;}</style></head><body><pre>${escapedText}</pre></body></html>`;
-          const blob = new Blob([html], { type: 'text/html' });
-          blobUrl = URL.createObjectURL(blob);
+          blobUrl = renderMarkdownHtml(text);
         } else if (item.fileType === 'audio') {
           // Wrap audio in HTML with styled player
           const audioBlob = new Blob([data], { type: mimeType });
@@ -3535,12 +3591,9 @@
           blobUrl = URL.createObjectURL(blob);
 
         } else if (fileType === 'text') {
-          // Decode text from the already-downloaded blob
+          // Render text as markdown
           const text = new TextDecoder().decode(new Uint8Array(await downloadedBlob.arrayBuffer()));
-          const escapedText = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:'Courier New',monospace;padding:1.5rem;background:#0a0a0a;color:#e0e0e0;margin:0;}pre{white-space:pre-wrap;word-wrap:break-word;margin:0;line-height:1.5;}</style></head><body><pre>${escapedText}</pre></body></html>`;
-          const blob = new Blob([html], { type: 'text/html' });
-          blobUrl = URL.createObjectURL(blob);
+          blobUrl = renderMarkdownHtml(text);
 
         } else if (fileType === 'audio') {
           const audioBlob = new Blob([downloadedBlob], { type: mimeType });
