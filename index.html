@@ -935,6 +935,7 @@
       browserTab.url = url;
       browserTab.label = url.length > 30 ? url.substring(0, 30) + '...' : url;
       lastBrowserUrl = url;
+      bar.value = url; // restore after activateTab may have cleared it
       renderTabBar();
       loadContentWithAutoDetect();
     }
@@ -3368,12 +3369,6 @@ p{margin:0.8em 0;}
       saveHistoryToStorage();
     }
 
-    // Address bar navigation (Enter key) - checks pseudo-URLs first, then auto-detects
-    document.getElementById('chrome-address-bar').addEventListener('keypress', async (e) => {
-      if (e.key === 'Enter') {
-        handleChromeBarNavigation();
-      }
-    });
 
 
     // Auto-detect file type using MIME sniffing
