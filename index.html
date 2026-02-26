@@ -538,6 +538,30 @@
     let streamingTabId = null; // ID of the tab currently using the shared video-container
     let loadContentInProgress = false;
 
+    function saveTabState() {
+      try {
+        const activeIdx = tabs.findIndex(t => t.id === activeTabId);
+        const serializable = tabs.map(t => ({
+          type: t.type,
+          panelName: t.panelName,
+          url: t.url,
+          label: t.label,
+        }));
+        localStorage.setItem('tab-state', JSON.stringify({
+          tabs: serializable,
+          activeIndex: activeIdx,
+        }));
+      } catch (e) { /* ignore quota errors */ }
+    }
+
+    function loadTabState() {
+      try {
+        const raw = localStorage.getItem('tab-state');
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch { return null; }
+    }
+
     // Auto-sync iframe-status changes to the active tab's statusHTML
     {
       const el = document.getElementById('iframe-status');
@@ -583,6 +607,7 @@
 
       tabs.push(tab);
       renderTabBar();
+      saveTabState();
       return tab;
     }
 
@@ -652,6 +677,8 @@
         progressEl.style.display = tab.progressVisible ? 'block' : 'none';
       }
 
+      saveTabState();
+
       // Auto-load browser tabs that have a URL but haven't loaded content yet
       if (tab.type === 'browser' && tab.url && !tab.contentLoaded) {
         loadContentWithAutoDetect();
@@ -692,6 +719,7 @@
         }
       }
       renderTabBar();
+      saveTabState();
     }
 
     function renderTabBar() {
@@ -1484,7 +1512,21 @@
     const homepageUrl = 'sia://app.sia.storage/objects/a7653b7c62bf0653f1c0ec025ee2857f1d8eb52cb29498b23693e434de73692a/shared?sv=2376599154&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=Jd7rlRzhEspDkp7Tn0ADdCs3yoyi5tCo5PBdkOQyBjcuyJ6OrifL7OXSnF5Dob2yUCTW6QGVV_2NFCW3d_yRAA%3D%3D#encryption_key=__jJLf9TDtrcZx7XlS1o32YK2n4RqaXa6xANJXjRkd4=';
     const isFirstRun = !localStorage.getItem('app-key');
 
-    if (isFirstRun) {
+    const savedState = loadTabState();
+    if (savedState && savedState.tabs && savedState.tabs.length > 0 && !isFirstRun) {
+      // Restore tabs from previous session
+      for (const saved of savedState.tabs) {
+        if (saved.type === 'internal') {
+          openOrActivateInternalTab(saved.panelName);
+        } else {
+          createTab({ type: 'browser', url: saved.url, label: saved.label });
+        }
+      }
+      // Activate the previously active tab
+      const idx = savedState.activeIndex >= 0 && savedState.activeIndex < tabs.length
+        ? savedState.activeIndex : tabs.length - 1;
+      if (tabs[idx]) activateTab(tabs[idx].id);
+    } else if (isFirstRun) {
       // First run: show registration wizard, Homepage tab in background
       initRegistrationWizard({
         Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
@@ -1494,7 +1536,7 @@
       openOrActivateInternalTab('register');
       createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
     } else {
-      // Returning user: go straight to Homepage
+      // Returning user, no saved tabs: go straight to Homepage
       const hpTab = createTab({ type: 'browser', label: 'Homepage', url: homepageUrl });
       activateTab(hpTab.id);
     }
@@ -3515,6 +3557,7 @@ p{margin:0.8em 0;}
         status.textContent = 'Downloading...';
         const result = await parallelDownload(url, status, progress, 'Downloading');
         const downloadedBlob = result.blob;
+        const downloadElapsed = result.elapsed;
 
         // Detect type from the full file
         status.textContent = 'Detecting file type...';
@@ -3575,7 +3618,6 @@ p{margin:0.8em 0;}
 
         // Create blob with appropriate wrapper for better display
         let blobUrl;
-        const downloadStart = performance.now();
 
         if (fileType === 'video') {
           // Video that was too small to stream or streaming failed — use iframe player
@@ -3606,8 +3648,7 @@ p{margin:0.8em 0;}
           addToHistory(displayUrl, blobUrl, displayUrl, true, url, 'pdf');
           if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: displayUrl, fileType: 'pdf' });
 
-          const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
-          status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${elapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
+          status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${downloadElapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
           return;
 
         } else if (fileType === 'html') {
@@ -3644,13 +3685,13 @@ p{margin:0.8em 0;}
         // Update tab metadata
         tab.label = typeLabel + ': ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
         renderTabBar();
+        saveTabState();
 
         const displayUrl = `${typeLabel}: ${url}`;
         addToHistory(displayUrl, blobUrl, displayUrl, false, url, fileType);
         if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: tab.label, fileType });
 
-        const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
-        status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${elapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
+        status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${downloadElapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
       } catch (e) {
         status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
       } finally {
