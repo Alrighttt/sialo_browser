@@ -73,14 +73,6 @@ export function initRegistrationWizard(helpers) {
     const btn = document.getElementById('wiz-btn-request');
     const status = document.getElementById('wiz-status-request');
     const url = document.getElementById('wiz-url').value.trim();
-    const name = document.getElementById('wiz-name').value.trim();
-    const desc = document.getElementById('wiz-desc').value.trim();
-    const serviceUrl = document.getElementById('wiz-service-url').value.trim();
-
-    if (!name || !desc || !serviceUrl) {
-      status.innerHTML = '<span class="fail">All fields are required.</span>';
-      return;
-    }
 
     try {
       btn.disabled = true;
@@ -92,9 +84,9 @@ export function initRegistrationWizard(helpers) {
 
       const appMetadata = JSON.stringify({
         appID: regAppId,
-        name,
-        description: desc,
-        serviceURL: serviceUrl,
+        name: 'Sialo',
+        description: 'Sialo - a decentralized browser for the Sia network',
+        serviceURL: 'https://sialo.io',
       });
 
       await regBuilder.requestConnection(appMetadata);
