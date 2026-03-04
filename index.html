@@ -2023,15 +2023,15 @@
         const hasFileSystemAPI = !!window.showSaveFilePicker;
         const sizeMB = size / (1024 * 1024);
 
-        if (!hasFileSystemAPI) {
-          const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
-          const browserName = isFirefox ? 'Firefox' : 'Your browser';
-
-          status.innerHTML = `<span style="color:#ef4444; font-weight:bold;">❌ ${browserName} doesn't support streaming to disk</span>\n\n` +
+        if (!hasFileSystemAPI && sizeMB > 500) {
+          const proceed = confirm(
+            `Your browser doesn't support streaming to disk (File System Access API).\n\n` +
             `File size: ${formatSize(size)}\n\n` +
-            `<strong>This will crash your browser!</strong> Files over ~500MB cannot be downloaded in Firefox because it lacks File System Access API support.\n\n` +
-            `<span style="color:#10b981; font-weight:bold;">✓ Solution: Use Chrome or Edge</span>`;
-          return;
+            `The file will be downloaded into memory first. Files over ~500MB may cause browser instability.\n\n` +
+            `For large files, use Chrome or Edge.\n\n` +
+            `Download anyway?`
+          );
+          if (!proceed) return;
         }
 
         progress.style.display = 'block';
