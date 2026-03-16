@@ -17,8 +17,6 @@ export function initRegistrationWizard(helpers) {
     generateRecoveryPhrase,
     hex,
     fromHex,
-    randomHex,
-    AppKey,
     closeTab,
     activateTab,
     tabs,
@@ -79,13 +77,13 @@ export function initRegistrationWizard(helpers) {
       btn.textContent = 'Requesting connection...';
       status.textContent = 'Requesting connection from indexer...';
 
-      regAppId = randomHex(32);
+      regAppId = 'c0000000000000000000000000000000000000000000000000000000000000de';
       regBuilder = new Builder(url);
 
       const appMetadata = JSON.stringify({
         appID: regAppId,
         name: 'Sialo',
-        description: 'Sialo - a decentralized browser for the Sia network',
+        description: 'Sialo - a decentralized browser and CLI tool for the Sia network',
         serviceURL: 'https://sialo.io',
       });
 
