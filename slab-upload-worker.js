@@ -68,6 +68,9 @@ self.onmessage = async (e) => {
         (current, total) => {
           self.postMessage({ type: 'shard-progress', slabIndex, current, total });
         },
+        (host) => {
+          self.postMessage({ type: 'host-active', slabIndex, host });
+        },
       );
 
       self.postMessage({ type: 'slab-uploaded', slabIndex, slabJson });

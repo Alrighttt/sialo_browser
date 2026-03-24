@@ -26,6 +26,7 @@
         <button class="gear-menu-item" data-panel="upload-file"><span class="gear-menu-icon">&#128228;</span> Upload File</button>
         <button class="gear-menu-item" data-panel="upload-text"><span class="gear-menu-icon">&#128221;</span> Upload Text</button>
         <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span> Download</button>
+        <button class="gear-menu-item" data-panel="benchmark"><span class="gear-menu-icon">&#9201;</span> Benchmark</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Share</div>
         <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share Object</button>
@@ -386,17 +387,64 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Upload File</h2>
-            <div class="dropzone" id="uf-dropzone">
-              Drop a file here or click to select
-              <input type="file" id="uf-file" style="display:none" />
-              <div class="file-info" id="uf-file-info"></div>
+
+            <!-- File selection + info card -->
+            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+              <div class="dropzone" id="uf-dropzone" style="flex:0 0 200px; min-height:120px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                <div style="font-size:2rem; margin-bottom:0.5rem; opacity:0.4;">&#x2191;</div>
+                <div style="font-size:0.8rem; color:#666;">Drop a file here or click to select</div>
+                <input type="file" id="uf-file" style="display:none" />
+              </div>
+              <div id="uf-info-card" style="flex:1; display:none; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; padding:1rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                  <span style="color:#4ade80; font-size:1.1rem;">&#x2191;</span>
+                  <span id="uf-card-filename" style="font-weight:600; font-size:1rem;"></span>
+                  <span id="uf-card-size" style="color:#888; font-size:0.85rem;"></span>
+                </div>
+                <progress id="uf-progress" max="100" value="0" style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
+                <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.25rem;">
+                  <span id="uf-card-speed" style="font-size:0.85rem; color:#4ade80;">0 MB/s</span>
+                  <span style="color:#444;">&#x2022;</span>
+                  <span id="uf-card-detail" style="font-size:0.8rem; color:#888;"></span>
+                </div>
+                <div style="display:flex; gap:2rem; margin-top:0.5rem;">
+                  <div style="text-align:center;">
+                    <div id="uf-card-elapsed" style="font-size:1.8rem; font-weight:700; color:#e2e8f0;">0s</div>
+                    <div style="font-size:0.7rem; color:#666;">Elapsed</div>
+                    <div id="uf-card-shards-done" style="font-size:0.65rem; color:#555;"></div>
+                  </div>
+                  <div style="text-align:center;">
+                    <div id="uf-card-eta" style="font-size:1.8rem; font-weight:700; color:#e2e8f0;">--</div>
+                    <div style="font-size:0.7rem; color:#666;">Remaining</div>
+                    <div id="uf-card-hosts-active" style="font-size:0.65rem; color:#555;"></div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div class="row" style="margin-top:0.5rem">
+
+            <div id="uf-file-info" style="font-size:0.85rem; color:#888; margin-bottom:0.5rem;"></div>
+
+            <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
               <button id="btn-upload-file">Upload ( web workers )</button>
               <button id="btn-upload-file-simple">Upload ( single-threaded )</button>
+              <button id="btn-upload-file-encode">Upload ( encode workers )</button>
             </div>
-            <progress id="uf-progress" max="100" value="0" style="display:none"></progress>
-            <div class="output" id="uf-status"></div>
+
+            <!-- Host table -->
+            <div id="uf-host-table" style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+              <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                <thead>
+                  <tr style="border-bottom:1px solid #222; color:#888;">
+                    <th style="text-align:left; padding:0.6rem 0.75rem; font-weight:500;">Host</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500; width:90px;">Speed</th>
+                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500; width:100px;">Shard</th>
+                  </tr>
+                </thead>
+                <tbody id="uf-host-tbody"></tbody>
+              </table>
+            </div>
+
+            <div class="output" id="uf-status" style="margin-top:0.75rem;"></div>
           </div><!-- /panel-section: Upload File -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-file -->
@@ -412,12 +460,142 @@
             <div class="row">
               <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
               <button id="btn-download">Download</button>
+              <button id="btn-download-simple">Download ( single-threaded )</button>
             </div>
             <progress id="dl-progress" max="100" value="0" style="display:none"></progress>
             <div class="output" id="dl-status"></div>
           </div><!-- /panel-section: Download -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-download -->
+
+      <!-- Panel: Benchmark -->
+      <div id="panel-benchmark" class="viewport-panel internal-page" data-panel="benchmark">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Upload Benchmark</h2>
+            <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
+              Upload dummy data of various sizes using different methods and concurrency settings. Results are displayed in a comparison table.
+            </p>
+
+            <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
+              <div>
+                <div class="label">File Sizes</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-10" checked> 10 MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-50" checked> 50 MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-100"> 100 MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-500"> 500 MB</label>
+              </div>
+              <div>
+                <div class="label">Methods</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-single" checked> Single-threaded</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-workers" checked> Web Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encode" checked> Encode Workers</label>
+              </div>
+              <div>
+                <div class="label">Max Inflight</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-4" checked> 4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-8" checked> 8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-16"> 16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-24"> 24</label>
+              </div>
+              <div>
+                <div class="label">Workers (web/encode only)</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-4" checked> 4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-8" checked> 8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-16"> 16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-24"> 24</label>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
+              <button id="btn-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Benchmark</button>
+              <button id="btn-bench-stop" style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
+              <button id="btn-bench-clear" style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear Results</button>
+            </div>
+
+            <div id="bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
+            <progress id="bench-progress" max="100" value="0" style="width:100%; display:none; margin-bottom:1rem;"></progress>
+
+            <!-- Results Table -->
+            <div id="bench-results" style="display:none;">
+              <table style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+                <thead>
+                  <tr style="border-bottom:1px solid #222; color:#888;">
+                    <th style="text-align:left; padding:0.6rem 0.75rem; font-weight:500;">Size</th>
+                    <th style="text-align:left; padding:0.6rem 0.5rem; font-weight:500;">Method</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Inflight</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Workers</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Time</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Speed</th>
+                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500;">Wire Speed</th>
+                  </tr>
+                </thead>
+                <tbody id="bench-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Download Benchmark -->
+          <div class="panel-section" style="margin-top:2rem; border-top:1px solid var(--border-subtle,#1a1a1a); padding-top:1.5rem;">
+            <h2>Download Benchmark</h2>
+            <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
+              Download an existing object using different methods and concurrency settings. Provide an object ID or share URL.
+            </p>
+
+            <div style="margin-bottom:1rem;">
+              <div class="label">Object ID or Share URL</div>
+              <input type="text" id="dl-bench-url" placeholder="Object ID (hex) or sia:// share URL" style="width:100%; padding:0.5rem; font-size:0.85rem; background:var(--bg-card,#151515); border:1px solid var(--border-default,#2a2a2a); color:var(--text-primary,#e2e8f0); border-radius:4px;" />
+            </div>
+
+            <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
+              <div>
+                <div class="label">Methods</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-workers" checked> Web Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-single" checked> Single Worker</label>
+              </div>
+              <div>
+                <div class="label">Max Inflight</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-4" checked> 4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-8" checked> 8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-16"> 16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-24"> 24</label>
+              </div>
+              <div>
+                <div class="label">Workers (web workers only)</div>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-4" checked> 4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-8" checked> 8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-16"> 16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-24"> 24</label>
+              </div>
+            </div>
+
+            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
+              <button id="btn-dl-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Download Benchmark</button>
+              <button id="btn-dl-bench-stop" style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
+              <button id="btn-dl-bench-clear" style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear Results</button>
+            </div>
+
+            <div id="dl-bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
+            <progress id="dl-bench-progress" max="100" value="0" style="width:100%; display:none; margin-bottom:1rem;"></progress>
+
+            <div id="dl-bench-results" style="display:none;">
+              <table style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+                <thead>
+                  <tr style="border-bottom:1px solid #222; color:#888;">
+                    <th style="text-align:left; padding:0.6rem 0.5rem; font-weight:500;">Method</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Inflight</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Workers</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Size</th>
+                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Time</th>
+                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500;">Speed</th>
+                  </tr>
+                </thead>
+                <tbody id="dl-bench-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div><!-- /panel-benchmark -->
 
       <!-- Panel: My Objects -->
       <div id="panel-objects" class="viewport-panel internal-page" data-panel="objects">
@@ -2451,6 +2629,84 @@
       const slabShards = new Array(slabCount).fill(0);
       let nextSlab = 0;
       let completedSlabs = 0;
+      const hostStats = new Map();
+      const SECTOR_SIZE = 4 * 1024 * 1024;
+      const HOST_STALE_MS = 15000;
+      const speedSamples = [];
+      const SPEED_WINDOW_MS = 5000;
+      let shardsUploaded = 0;
+
+      const countryFlag = (cc) => {
+        if (!cc || cc.length !== 2) return '';
+        return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
+      };
+      const fmtHost = (host) => {
+        if (!host) return '';
+        const flag = host.countryCode ? countryFlag(host.countryCode) + ' ' : '';
+        const addr = host.addresses && host.addresses.length > 0
+          ? host.addresses[0].address : host.publicKey.slice(0, 16) + '\u2026';
+        let h = addr.replace(/^https?:\/\//, '').replace(/\/sia\/rhp\/v4$/, '');
+        if (h.includes('.sia.host')) {
+          const colIdx = h.lastIndexOf(':');
+          const name = colIdx > 0 ? h.slice(0, colIdx) : h;
+          const port = colIdx > 0 ? h.slice(colIdx) : '';
+          const prefix = name.slice(0, name.indexOf('.sia.host'));
+          h = prefix.slice(0, 8) + '\u2026sia.host' + port;
+        }
+        return flag + h;
+      };
+      const formatTime = (seconds) => {
+        if (seconds < 60) return `${seconds.toFixed(0)}s`;
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      };
+
+      const updateUploadProgress = () => {
+        const now = performance.now();
+        const elapsed = (now - uploadStart) / 1000;
+        const bytesUploaded = shardsUploaded * SECTOR_SIZE;
+
+        speedSamples.push({ time: now, bytes: bytesUploaded });
+        const cutoff = now - SPEED_WINDOW_MS;
+        while (speedSamples.length > 1 && speedSamples[0].time < cutoff) speedSamples.shift();
+        const oldest = speedSamples[0];
+        const dt = (now - oldest.time) / 1000;
+        const speed = dt > 0.5 ? (bytesUploaded - oldest.bytes) / dt : 0;
+        const totalBytes = fileSize * 3; // rough: 10-of-30 = 3x redundancy
+        const remaining = totalBytes - bytesUploaded;
+        const eta = speed > 0 ? remaining / speed : 0;
+
+        const active = Array.from(hostStats.entries())
+          .map(([key, s]) => {
+            const stale = (now - s.lastSeen) > HOST_STALE_MS;
+            const shardElapsed = (now - s.shardStart) / 1000;
+            const hostElapsed = (now - s.firstSeen) / 1000;
+            const times = s.shardTimes || [];
+            const avgMs = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+            const expectedSec = avgMs > 0 ? avgMs / 1000 : 10; // default 10s estimate
+            const pct = Math.min(shardElapsed / expectedSec, 1.0);
+            return { host: s.host, stale, shardElapsed, pct, completed: times.length };
+          })
+          .filter(h => !h.stale)
+          .sort((a, b) => b.shardElapsed - a.shardElapsed);
+
+        const hostLines = active.slice(0, 10)
+          .map(h => {
+            const barLen = 16;
+            const filled = Math.round(h.pct * barLen);
+            const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(barLen - filled);
+            return `  ${fmtHost(h.host)} ${bar}`;
+          })
+          .join('\n');
+
+        const pct = totalShards > 0 ? ((shardsUploaded / totalShards) * 100).toFixed(1) : '0';
+        const speedStr = (speed / 1e6).toFixed(2);
+        const line1 = `Uploading ${file.name}... ${shardsUploaded}/${totalShards} shards (${pct}%) \u2022 ${actualWorkers} workers`;
+        const line2 = `${speedStr} MB/s \u2022 ${formatTime(elapsed)} elapsed` + (eta > 0 ? ` \u2022 ~${formatTime(eta)} remaining` : '');
+        status.textContent = hostLines ? `${line1}\n${line2}\n${hostLines}` : `${line1}\n${line2}`;
+      };
+      const progressInterval = setInterval(updateUploadProgress, 200);
 
       return new Promise((resolve, reject) => {
         let rejected = false;
@@ -2482,18 +2738,30 @@
 
             if (e.data.type === 'shard-progress') {
               slabShards[e.data.slabIndex] = e.data.current;
-              const shardsDone = slabShards.reduce((a, b) => a + b, 0);
+              shardsUploaded = slabShards.reduce((a, b) => a + b, 0);
               progress.max = totalShards;
-              progress.value = shardsDone;
-              status.textContent = `Uploading ${file.name}... ${shardsDone}/${totalShards} shards (${actualWorkers} workers)`;
+              progress.value = shardsUploaded;
+            }
+
+            if (e.data.type === 'host-active') {
+              const host = e.data.host;
+              const key = host.publicKey;
+              const t = performance.now();
+              if (!hostStats.has(key)) {
+                hostStats.set(key, { host, firstSeen: t, lastSeen: t, shardStart: t });
+              } else {
+                const hs = hostStats.get(key);
+                hs.lastSeen = t;
+                hs.shardStart = t;
+              }
             }
 
             if (e.data.type === 'slab-uploaded') {
               slabJsons[e.data.slabIndex] = e.data.slabJson;
               completedSlabs++;
-              status.textContent = `Uploading ${file.name}... ${completedSlabs}/${slabCount} slabs (${actualWorkers} workers)`;
 
               if (completedSlabs === slabCount) {
+                clearInterval(progressInterval);
                 workers.forEach(w => w.terminate());
 
                 // Assemble the object on the main thread
@@ -2513,8 +2781,330 @@
 
             if (e.data.type === 'slab-error') {
               rejected = true;
+              clearInterval(progressInterval);
               workers.forEach(w => w.terminate());
               reject(new Error(`Slab ${e.data.slabIndex}: ${e.data.message}`));
+            }
+          };
+          assignWork(w);
+        }
+      });
+    }
+
+    // ── Compute-worker upload: encode in workers, upload from main thread ──
+    async function parallelEncodeUpload(file, status, progress, numWorkers) {
+      numWorkers = numWorkers || getUploadWorkers();
+      progress.style.display = 'block';
+
+      // 1. Connect SDK on main thread (single connection pool)
+      const sdk = await connectSdk(status);
+      if (!sdk) return null;
+
+      const fileSize = file.size;
+      const SLAB_DATA_SIZE = sdk.slabDataSize();
+      const slabCount = fileSize === 0 ? 0 : Math.ceil(fileSize / SLAB_DATA_SIZE);
+      const dataShards = 10;
+      const parityShards = 20;
+      const totalShards = slabCount * (dataShards + parityShards);
+
+      // 2. Generate shared data key
+      const dataKey = sdk.generateDataKey();
+      const dataKeyBuf = dataKey.buffer.slice(dataKey.byteOffset, dataKey.byteOffset + dataKey.byteLength);
+
+      // 3. Spawn encode-only workers
+      const actualWorkers = Math.min(numWorkers, slabCount || 1);
+      status.textContent = `Starting ${actualWorkers} encode workers...`;
+      const workers = [];
+      const readyPromises = [];
+
+      for (let i = 0; i < actualWorkers; i++) {
+        const w = new Worker('./slab-encode-worker.js', { type: 'module' });
+        const ready = new Promise((resolve, reject) => {
+          const handler = (e) => {
+            if (e.data.type === 'ready') { w.removeEventListener('message', handler); resolve(); }
+            if (e.data.type === 'error') { w.removeEventListener('message', handler); reject(new Error(e.data.message)); }
+          };
+          w.addEventListener('message', handler);
+        });
+        w.postMessage({ type: 'init', workerIndex: i, logLevel: getLogLevel() });
+        workers.push(w);
+        readyPromises.push(ready);
+      }
+      await Promise.all(readyPromises);
+
+      // 4. Orchestrate: encode in workers, upload from main thread
+      const uploadStart = performance.now();
+      const slabJsons = new Array(slabCount);
+      let nextSlab = 0;
+      let completedSlabs = 0;
+      let shardsUploaded = 0;
+      const hostStats = new Map();
+      const SECTOR_SIZE = 4 * 1024 * 1024;
+      const HOST_STALE_MS = 15000;
+      const speedSamples = [];
+      const SPEED_WINDOW_MS = 5000;
+
+      const countryFlag = (cc) => {
+        if (!cc || cc.length !== 2) return '';
+        return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
+      };
+      const fmtHost = (host) => {
+        if (!host) return '';
+        const flag = host.countryCode ? countryFlag(host.countryCode) + ' ' : '';
+        const addr = host.addresses && host.addresses.length > 0
+          ? host.addresses[0].address : host.publicKey.slice(0, 16) + '\u2026';
+        let h = addr.replace(/^https?:\/\//, '').replace(/\/sia\/rhp\/v4$/, '');
+        if (h.includes('.sia.host')) {
+          const colIdx = h.lastIndexOf(':');
+          const name = colIdx > 0 ? h.slice(0, colIdx) : h;
+          const port = colIdx > 0 ? h.slice(colIdx) : '';
+          const prefix = name.slice(0, name.indexOf('.sia.host'));
+          h = prefix.slice(0, 8) + '\u2026sia.host' + port;
+        }
+        return flag + h;
+      };
+      const formatTime = (seconds) => {
+        if (seconds < 60) return `${seconds.toFixed(0)}s`;
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      };
+
+      // Show the info card
+      const infoCard = document.getElementById('uf-info-card');
+      infoCard.style.display = '';
+      document.getElementById('uf-card-filename').textContent = file.name;
+      document.getElementById('uf-card-size').textContent = `(${formatSize(fileSize)})`;
+      const hostTable = document.getElementById('uf-host-table');
+      hostTable.style.display = '';
+      const hostTbody = document.getElementById('uf-host-tbody');
+
+      const fmtHostAddr = (host) => {
+        if (!host) return '';
+        const addr = host.addresses && host.addresses.length > 0
+          ? host.addresses[0].address : host.publicKey.slice(0, 16) + '\u2026';
+        let h = addr.replace(/^https?:\/\//, '').replace(/\/sia\/rhp\/v4$/, '');
+        if (h.includes('.sia.host')) {
+          const colIdx = h.lastIndexOf(':');
+          const name = colIdx > 0 ? h.slice(0, colIdx) : h;
+          const port = colIdx > 0 ? h.slice(colIdx) : '';
+          const prefix = name.slice(0, name.indexOf('.sia.host'));
+          h = prefix.slice(0, 8) + '\u2026sia.host' + port;
+        }
+        return h;
+      };
+
+      const updateProgress = () => {
+        const now = performance.now();
+        const elapsed = (now - uploadStart) / 1000;
+        const bytesUploaded = shardsUploaded * SECTOR_SIZE;
+
+        speedSamples.push({ time: now, bytes: bytesUploaded });
+        const cutoff = now - SPEED_WINDOW_MS;
+        while (speedSamples.length > 1 && speedSamples[0].time < cutoff) speedSamples.shift();
+        const oldest = speedSamples[0];
+        const dt = (now - oldest.time) / 1000;
+        const speed = dt > 0.5 ? (bytesUploaded - oldest.bytes) / dt : 0;
+        const totalBytes = fileSize * 3;
+        const remaining = totalBytes - bytesUploaded;
+        const eta = speed > 0 ? remaining / speed : 0;
+
+        // Update info card
+        progress.max = totalShards;
+        progress.value = shardsUploaded;
+        document.getElementById('uf-card-speed').textContent = `${(speed / 1e6).toFixed(1)} MB/s`;
+        document.getElementById('uf-card-detail').textContent = `${shardsUploaded}/${totalShards} shards \u2022 ${completedSlabs}/${slabCount} slabs`;
+        document.getElementById('uf-card-elapsed').textContent = formatTime(elapsed);
+        document.getElementById('uf-card-shards-done').textContent = `${shardsUploaded} shards`;
+        document.getElementById('uf-card-eta').textContent = eta > 0 ? formatTime(eta) : '--';
+        document.getElementById('uf-card-hosts-active').textContent = `${hostStats.size} hosts`;
+
+        // Update host table
+        const active = Array.from(hostStats.entries())
+          .map(([key, s]) => {
+            const stale = (now - s.lastSeen) > HOST_STALE_MS;
+            const shardElapsed = (now - s.shardStart) / 1000;
+            const times = s.shardTimes || [];
+            const avgMs = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : 0;
+            const hostSpeed = avgMs > 100 ? (SECTOR_SIZE / (avgMs / 1000)) : 0;
+            const expectedSec = avgMs > 0 ? avgMs / 1000 : 10;
+            const pct = Math.min(shardElapsed / expectedSec, 1.0);
+            return { host: s.host, stale, shardElapsed, hostSpeed, pct, completed: times.length };
+          })
+          .filter(h => !h.stale)
+          .sort((a, b) => b.shardElapsed - a.shardElapsed);
+
+        hostTbody.innerHTML = '';
+        for (const h of active.slice(0, 15)) {
+          const tr = document.createElement('tr');
+          tr.style.cssText = 'border-bottom:1px solid #1a1a1a;';
+
+          // Host cell: flag + address + location
+          const tdHost = document.createElement('td');
+          tdHost.style.cssText = 'padding:0.5rem 0.75rem;';
+          const cc = h.host.countryCode;
+          const flag = cc && cc.length === 2 ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0))) + ' ' : '';
+          tdHost.textContent = flag + fmtHostAddr(h.host);
+          tr.appendChild(tdHost);
+
+          // Speed cell
+          const tdSpeed = document.createElement('td');
+          tdSpeed.style.cssText = 'padding:0.5rem 0.5rem; text-align:right; color:#888;';
+          tdSpeed.textContent = h.hostSpeed > 0 ? `${(h.hostSpeed / 1e6).toFixed(1)} MB/s` : '--';
+          tr.appendChild(tdSpeed);
+
+          // Shard progress cell
+          const tdProg = document.createElement('td');
+          tdProg.style.cssText = 'padding:0.5rem 0.75rem; text-align:right; white-space:nowrap;';
+          const countSpan = document.createElement('span');
+          countSpan.style.cssText = 'font-size:0.75rem; color:#666; margin-right:0.4rem; vertical-align:middle;';
+          countSpan.textContent = `${h.completed}`;
+          tdProg.appendChild(countSpan);
+          const barOuter = document.createElement('div');
+          barOuter.style.cssText = 'width:60px; height:6px; background:#222; border-radius:3px; display:inline-block; vertical-align:middle;';
+          const barInner = document.createElement('div');
+          barInner.style.cssText = `width:${(h.pct * 100).toFixed(0)}%; height:100%; background:#4ade80; border-radius:3px; transition:width 0.2s;`;
+          barOuter.appendChild(barInner);
+          tdProg.appendChild(barOuter);
+          tr.appendChild(tdProg);
+
+          hostTbody.appendChild(tr);
+        }
+      };
+      const progressInterval = setInterval(updateProgress, 200);
+
+      // Upload queue: encoded slabs waiting to be uploaded
+      const uploadQueue = [];
+      let uploading = false;
+
+      async function processUploadQueue() {
+        if (uploading) return;
+        uploading = true;
+        while (uploadQueue.length > 0) {
+          const { slabIndex, slabKey, shards, length, minShards, streamOffset } = uploadQueue.shift();
+
+          const shardsArray = [];
+          for (let i = 0; i < shards.length; i++) {
+            shardsArray.push(new Uint8Array(shards[i]));
+          }
+
+          try {
+            const opts = new UploadOptions();
+            opts.maxInflight = getMaxUploads();
+            const slabJson = await sdk.uploadEncodedShards(
+              shardsArray,
+              new Uint8Array(slabKey),
+              length,
+              streamOffset,
+              minShards,
+              opts,
+              (current, total) => {
+                shardsUploaded = completedSlabs * (dataShards + parityShards) + current;
+                progress.max = totalShards;
+                progress.value = shardsUploaded;
+              },
+              (host) => {
+                const key = host.publicKey;
+                const t = performance.now();
+                if (!hostStats.has(key)) {
+                  hostStats.set(key, { host, firstSeen: t, lastSeen: t, shardStart: t, shardTimes: [] });
+                } else {
+                  const hs = hostStats.get(key);
+                  hs.lastSeen = t;
+                  hs.shardStart = t;
+                }
+              },
+              (sc) => {
+                const key = sc.hostKey;
+                if (hostStats.has(key)) {
+                  const hs = hostStats.get(key);
+                  hs.shardTimes.push(sc.elapsedMs);
+                }
+              },
+            );
+            slabJsons[slabIndex] = slabJson;
+            completedSlabs++;
+          } catch (e) {
+            clearInterval(progressInterval);
+            workers.forEach(w => w.terminate());
+            throw e;
+          }
+        }
+        uploading = false;
+      }
+
+      return new Promise((resolve, reject) => {
+        let rejected = false;
+        let encodedCount = 0;
+
+        function sendSlabToWorker(worker, idx) {
+          const slabOffset = idx * SLAB_DATA_SIZE;
+          const slabEnd = Math.min(slabOffset + SLAB_DATA_SIZE, fileSize);
+          const blob = file.slice(slabOffset, slabEnd);
+          blob.arrayBuffer().then((buf) => {
+            worker.postMessage({
+              type: 'encode-slab',
+              slabIndex: idx,
+              data: buf,
+              dataKey: dataKeyBuf,
+              streamOffset: slabOffset,
+              dataShards,
+              parityShards,
+            }, [buf]);
+          });
+        }
+
+        function assignWork(worker) {
+          if (nextSlab >= slabCount || rejected) return;
+          const idx = nextSlab++;
+          sendSlabToWorker(worker, idx);
+        }
+
+        for (const w of workers) {
+          w.onmessage = (e) => {
+            if (rejected) return;
+
+            if (e.data.type === 'slab-encoded') {
+              encodedCount++;
+              // Queue for upload on main thread
+              uploadQueue.push({
+                slabIndex: e.data.slabIndex,
+                slabKey: e.data.slabKey,
+                shards: e.data.shards,
+                length: e.data.length,
+                minShards: e.data.minShards,
+                streamOffset: e.data.slabIndex * SLAB_DATA_SIZE,
+              });
+              processUploadQueue().then(() => {
+                if (completedSlabs === slabCount) {
+                  clearInterval(progressInterval);
+                  workers.forEach(w => w.terminate());
+                  try {
+                    const combinedSlabs = '[' + slabJsons.join(',') + ']';
+                    const obj = sdk.assembleObject(dataKey, combinedSlabs);
+                    const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
+                    progress.value = progress.max;
+                    resolve({ obj, elapsed, size: fileSize });
+                  } catch (err) {
+                    reject(err);
+                  }
+                }
+              }).catch((err) => {
+                rejected = true;
+                clearInterval(progressInterval);
+                workers.forEach(w => w.terminate());
+                reject(err);
+              });
+
+              // Assign next slab to this worker
+              assignWork(w);
+            }
+
+            if (e.data.type === 'encode-error') {
+              rejected = true;
+              clearInterval(progressInterval);
+              workers.forEach(w => w.terminate());
+              reject(new Error(`Encode slab ${e.data.slabIndex}: ${e.data.message}`));
             }
           };
           assignWork(w);
@@ -3444,6 +4034,20 @@
     function setFile(file) {
       selectedFile = file;
       fileInfo.textContent = `${file.name} (${formatSize(file.size)})`;
+      // Show info card with file details
+      const card = document.getElementById('uf-info-card');
+      card.style.display = '';
+      document.getElementById('uf-card-filename').textContent = file.name;
+      document.getElementById('uf-card-size').textContent = `(${formatSize(file.size)})`;
+      document.getElementById('uf-card-speed').textContent = 'Ready';
+      document.getElementById('uf-card-detail').textContent = '';
+      document.getElementById('uf-card-elapsed').textContent = '0s';
+      document.getElementById('uf-card-eta').textContent = '--';
+      document.getElementById('uf-card-shards-done').textContent = '';
+      document.getElementById('uf-card-hosts-active').textContent = '';
+      document.getElementById('uf-progress').value = 0;
+      document.getElementById('uf-host-table').style.display = 'none';
+      document.getElementById('uf-host-tbody').innerHTML = '';
     }
 
     dropzone.addEventListener('click', () => fileInput.click());
@@ -3493,6 +4097,40 @@
         status.innerHTML = `File: ${selectedFile.name}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
       } catch (e) {
         status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+      }
+    });
+
+    // -- Encode-worker File Upload (compute in workers, upload from main thread) --
+    document.getElementById('btn-upload-file-encode').addEventListener('click', async () => {
+      const status = document.getElementById('uf-status');
+      const progress = document.getElementById('uf-progress');
+
+      if (!selectedFile) {
+        status.innerHTML = '<span class="fail">Select a file first</span>';
+        return;
+      }
+
+      progress.style.display = 'none';
+      progress.value = 0;
+
+      try {
+        status.innerHTML = `Uploading ${selectedFile.name} (${formatSize(selectedFile.size)}) via encode workers...\n`;
+
+        const result = await parallelEncodeUpload(selectedFile, status, progress);
+        if (!result) return;
+
+        const { obj, elapsed, size } = result;
+        const objectId = obj.id();
+
+        progress.value = progress.max;
+        status.innerHTML = `Upload complete (${formatSize(size)}) in ${elapsed}s. Pinning to indexer...`;
+
+        const sdk = await connectSdk(status);
+        await sdk.pinObject(obj);
+
+        status.innerHTML = `File: ${selectedFile.name}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+      } catch (e) {
+        status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
       }
     });
 
@@ -3551,7 +4189,12 @@
     });
 
     // -- Download File --
+    let _downloadInProgress = false;
     document.getElementById('btn-download').addEventListener('click', async () => {
+      if (_downloadInProgress) return;
+      _downloadInProgress = true;
+      document.getElementById('btn-download').disabled = true;
+      document.getElementById('btn-download-simple').disabled = true;
       const status = document.getElementById('dl-status');
       const progress = document.getElementById('dl-progress');
       const input = document.getElementById('dl-url').value.trim();
@@ -3758,8 +4401,612 @@
       } catch (e) {
         if (progressInterval) clearInterval(progressInterval);
         status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+      } finally {
+        _downloadInProgress = false;
+        document.getElementById('btn-download').disabled = false;
+        document.getElementById('btn-download-simple').disabled = false;
       }
     });
+
+    // -- Single-worker Download (one SDK instance in a dedicated worker) --
+    document.getElementById('btn-download-simple').addEventListener('click', async () => {
+      if (_downloadInProgress) return;
+      _downloadInProgress = true;
+      document.getElementById('btn-download').disabled = true;
+      document.getElementById('btn-download-simple').disabled = true;
+      const status = document.getElementById('dl-status');
+      const progress = document.getElementById('dl-progress');
+      const input = document.getElementById('dl-url').value.trim();
+      const filename = document.getElementById('dl-filename').value.trim() || 'download';
+
+      progress.style.display = 'none';
+      progress.value = 0;
+
+      if (!input) {
+        status.innerHTML = '<span class="fail">Enter an Object ID or Share URL</span>';
+        return;
+      }
+
+      const url = getUrl();
+      const keyHex = getKeyHex();
+      if (!url || !keyHex) {
+        status.innerHTML = '<span class="fail">Set Indexer URL and App Key in Settings first</span>';
+        return;
+      }
+
+      const HOST_STALE_MS = 15000;
+      const hostStats = new Map();
+      const blobParts = [];
+      let bytesDownloaded = 0;
+      let size = 0;
+      let downloadStart = performance.now();
+      const speedSamples = [];
+
+      const countryFlag = (cc) => {
+        if (!cc || cc.length !== 2) return '';
+        return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
+      };
+      const fmtHostAddr = (host) => {
+        if (!host) return '';
+        const addr = host.addresses && host.addresses.length > 0
+          ? host.addresses[0].address : host.publicKey.slice(0, 16) + '\u2026';
+        let h = addr.replace(/^https?:\/\//, '').replace(/\/sia\/rhp\/v4$/, '');
+        if (h.includes('.sia.host')) {
+          const colIdx = h.lastIndexOf(':');
+          const name = colIdx > 0 ? h.slice(0, colIdx) : h;
+          const port = colIdx > 0 ? h.slice(colIdx) : '';
+          const prefix = name.slice(0, name.indexOf('.sia.host'));
+          h = prefix.slice(0, 8) + '\u2026sia.host' + port;
+        }
+        return h;
+      };
+      const formatTime = (seconds) => {
+        if (seconds < 60) return `${seconds.toFixed(0)}s`;
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+      };
+
+      try {
+        // Spawn single download worker
+        status.textContent = 'Starting download worker...';
+        const worker = new Worker('./single-download-worker.js', { type: 'module' });
+
+        const workerReady = new Promise((resolve, reject) => {
+          const handler = (e) => {
+            if (e.data.type === 'ready') { worker.removeEventListener('message', handler); resolve(); }
+            if (e.data.type === 'error') { worker.removeEventListener('message', handler); reject(new Error(e.data.message)); }
+          };
+          worker.addEventListener('message', handler);
+        });
+        worker.postMessage({
+          type: 'init',
+          indexerUrl: url,
+          keyHex,
+          maxDownloads: getMaxDownloads(),
+          logLevel: getLogLevel(),
+        });
+        await workerReady;
+
+        // Update display periodically (main thread is free!)
+        const progressInterval = setInterval(() => {
+          if (size === 0) return;
+          const now = performance.now();
+          const elapsed = (now - downloadStart) / 1000;
+          speedSamples.push({ time: now, bytes: bytesDownloaded });
+          const cutoff = now - 5000;
+          while (speedSamples.length > 1 && speedSamples[0].time < cutoff) speedSamples.shift();
+          const oldest = speedSamples[0];
+          const dt = (now - oldest.time) / 1000;
+          const speed = dt > 0.5 ? (bytesDownloaded - oldest.bytes) / dt : 0;
+          const eta = speed > 0 ? (size - bytesDownloaded) / speed : 0;
+
+          const pct = size > 0 ? ((bytesDownloaded / size) * 100).toFixed(1) : '0';
+          const line1 = `Downloading... ${formatSize(bytesDownloaded)} / ${formatSize(size)} (${pct}%)`;
+          const line2 = `${(speed / 1e6).toFixed(2)} MB/s \u2022 ${formatTime(elapsed)} elapsed` + (eta > 0 ? ` \u2022 ~${formatTime(eta)} remaining` : '');
+
+          const active = Array.from(hostStats.entries())
+            .map(([key, s]) => {
+              const stale = (now - s.lastSeen) > HOST_STALE_MS;
+              return { host: s.host, stale, sectors: s.sectors };
+            })
+            .filter(h => !h.stale)
+            .sort((a, b) => b.sectors - a.sectors);
+          const hostLines = active.slice(0, 10)
+            .map(h => {
+              const cc = h.host.countryCode;
+              const flag = cc && cc.length === 2 ? countryFlag(cc) + ' ' : '';
+              return `  ${flag}${fmtHostAddr(h.host)} \u2014 ${h.sectors} sectors`;
+            })
+            .join('\n');
+          status.textContent = hostLines ? `${line1}\n${line2}\n${hostLines}` : `${line1}\n${line2}`;
+          progress.value = bytesDownloaded;
+          progress.max = size;
+        }, 200);
+
+        // Start download
+        await new Promise((resolve, reject) => {
+          worker.onmessage = (e) => {
+            if (e.data.type === 'metadata') {
+              size = e.data.size;
+              progress.style.display = 'block';
+              progress.max = size;
+              downloadStart = performance.now();
+              status.textContent = `Object found: ${formatSize(size)}. Downloading...`;
+            }
+            if (e.data.type === 'chunk') {
+              blobParts.push(new Uint8Array(e.data.data));
+              bytesDownloaded += e.data.length;
+            }
+            if (e.data.type === 'host-active') {
+              const host = e.data.host;
+              const key = host.publicKey;
+              const t = performance.now();
+              if (!hostStats.has(key)) {
+                hostStats.set(key, { host, firstSeen: t, lastSeen: t, sectors: 1 });
+              } else {
+                const hs = hostStats.get(key);
+                hs.sectors++;
+                hs.lastSeen = t;
+              }
+            }
+            if (e.data.type === 'done') {
+              worker.terminate();
+              resolve();
+            }
+            if (e.data.type === 'error') {
+              worker.terminate();
+              reject(new Error(e.data.message));
+            }
+          };
+          worker.postMessage({ type: 'download', input, maxDownloads: getMaxDownloads() });
+        });
+
+        clearInterval(progressInterval);
+        const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
+        progress.value = progress.max;
+
+        // Save to disk
+        const blob = new Blob(blobParts);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(a.href);
+
+        status.innerHTML = `File: ${filename}\nSize: ${formatSize(bytesDownloaded)}\nDownloaded in ${elapsed}s (single worker, 1 SDK)\n<span class="pass">Saved to disk!</span>`;
+      } catch (e) {
+        status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
+      } finally {
+        _downloadInProgress = false;
+        document.getElementById('btn-download').disabled = false;
+        document.getElementById('btn-download-simple').disabled = false;
+      }
+    });
+
+    // -- Benchmark --
+    (() => {
+      let benchStopped = false;
+      const statusEl = () => document.getElementById('bench-status');
+      const progressEl = () => document.getElementById('bench-progress');
+      const resultsEl = () => document.getElementById('bench-results');
+      const tbodyEl = () => document.getElementById('bench-tbody');
+
+      function generateDummyData(sizeMB) {
+        const size = sizeMB * 1024 * 1024;
+        const data = new Uint8Array(size);
+        // Fill with pseudo-random data (compressible data would skew results)
+        for (let i = 0; i < size; i += 4) {
+          const v = (i * 2654435761) >>> 0; // simple hash
+          data[i] = v & 0xff;
+          if (i + 1 < size) data[i + 1] = (v >> 8) & 0xff;
+          if (i + 2 < size) data[i + 2] = (v >> 16) & 0xff;
+          if (i + 3 < size) data[i + 3] = (v >> 24) & 0xff;
+        }
+        return new File([data], `bench_${sizeMB}mb.dat`, { type: 'application/octet-stream' });
+      }
+
+      function benchResultToRow(r) {
+        const tr = document.createElement('tr');
+        tr.style.cssText = 'border-bottom:1px solid #1a1a1a;';
+        tr.innerHTML = `
+          <td style="padding:0.5rem 0.75rem;">${r.sizeMB} MB</td>
+          <td style="padding:0.5rem 0.5rem;">${r.method}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.inflight}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.workers || '\u2014'}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.elapsed.toFixed(1)}s</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${(r.speed / 1e6).toFixed(2)} MB/s</td>
+          <td style="padding:0.5rem 0.75rem; text-align:right;">${(r.wireSpeed / 1e6).toFixed(2)} MB/s</td>
+        `;
+        return tr;
+      }
+
+      function saveBenchResults(results) {
+        localStorage.setItem('bench-results', JSON.stringify(results));
+      }
+
+      function loadBenchResults() {
+        try {
+          return JSON.parse(localStorage.getItem('bench-results') || '[]');
+        } catch { return []; }
+      }
+
+      function renderBenchResults(results) {
+        tbodyEl().innerHTML = '';
+        resultsEl().style.display = results.length ? '' : 'none';
+        for (const r of [...results].reverse()) tbodyEl().appendChild(benchResultToRow(r));
+      }
+
+      function addResult(sizeMB, method, inflight, workers, elapsed, fileSizeBytes) {
+        const speed = fileSizeBytes / elapsed;
+        const SECTOR_SIZE = 4 * 1024 * 1024;
+        const dataShards = 10;
+        const totalShards = 30;
+        const slabCount = Math.ceil(fileSizeBytes / (dataShards * SECTOR_SIZE));
+        const wireBytes = slabCount * totalShards * SECTOR_SIZE;
+        const wireSpeed = wireBytes / elapsed;
+        const r = { sizeMB, method, inflight, workers, elapsed, speed, wireSpeed, timestamp: Date.now() };
+        const results = loadBenchResults();
+        results.push(r);
+        saveBenchResults(results);
+        tbodyEl().prepend(benchResultToRow(r));
+        resultsEl().style.display = '';
+      }
+
+      // Restore saved results on page load
+      { const saved = loadBenchResults(); if (saved.length) renderBenchResults(saved); }
+
+      document.getElementById('btn-bench-run').addEventListener('click', async () => {
+        benchStopped = false;
+        document.getElementById('btn-bench-run').disabled = true;
+        document.getElementById('btn-bench-stop').style.display = '';
+
+        const sizes = [];
+        if (document.getElementById('bench-size-10').checked) sizes.push(10);
+        if (document.getElementById('bench-size-50').checked) sizes.push(50);
+        if (document.getElementById('bench-size-100').checked) sizes.push(100);
+        if (document.getElementById('bench-size-500').checked) sizes.push(500);
+
+        const methods = [];
+        if (document.getElementById('bench-method-single').checked) methods.push('single');
+        if (document.getElementById('bench-method-workers').checked) methods.push('workers');
+        if (document.getElementById('bench-method-encode').checked) methods.push('encode');
+
+        const inflights = [];
+        if (document.getElementById('bench-inflight-4').checked) inflights.push(4);
+        if (document.getElementById('bench-inflight-8').checked) inflights.push(8);
+        if (document.getElementById('bench-inflight-16').checked) inflights.push(16);
+        if (document.getElementById('bench-inflight-24').checked) inflights.push(24);
+
+        const workerCounts = [];
+        if (document.getElementById('bench-workers-4').checked) workerCounts.push(4);
+        if (document.getElementById('bench-workers-8').checked) workerCounts.push(8);
+        if (document.getElementById('bench-workers-16').checked) workerCounts.push(16);
+        if (document.getElementById('bench-workers-24').checked) workerCounts.push(24);
+
+        if (sizes.length === 0 || methods.length === 0 || inflights.length === 0) {
+          statusEl().textContent = 'Select at least one size, method, and inflight setting.';
+          document.getElementById('btn-bench-run').disabled = false;
+          document.getElementById('btn-bench-stop').style.display = 'none';
+          return;
+        }
+
+        // Build test matrix
+        const tests = [];
+        for (const size of sizes) {
+          for (const method of methods) {
+            for (const inflight of inflights) {
+              if (method === 'single') {
+                // Single-threaded doesn't use workers
+                tests.push({ size, method, inflight, workers: null });
+              } else {
+                // Web workers and encode workers vary worker count
+                const wCounts = workerCounts.length > 0 ? workerCounts : [8];
+                for (const workers of wCounts) {
+                  tests.push({ size, method, inflight, workers });
+                }
+              }
+            }
+          }
+        }
+
+        resultsEl().style.display = '';
+        progressEl().style.display = 'block';
+        progressEl().max = tests.length;
+        progressEl().value = 0;
+
+        for (let i = 0; i < tests.length; i++) {
+          if (benchStopped) break;
+          const { size, method, inflight, workers } = tests[i];
+          const methodLabel = method === 'single' ? 'Single-threaded' : method === 'workers' ? 'Web Workers' : 'Encode Workers';
+          const workerLabel = workers ? ` \u2022 workers=${workers}` : '';
+          statusEl().textContent = `[${i + 1}/${tests.length}] ${size} MB \u2022 ${methodLabel} \u2022 inflight=${inflight}${workerLabel}`;
+          statusEl().style.color = '#60a5fa';
+
+          try {
+            // Generate dummy file
+            const file = generateDummyData(size);
+            const dummyStatus = document.createElement('div');
+            const dummyProgress = document.createElement('div');
+            dummyProgress.style = { display: 'none' };
+
+            // Override max uploads for this test
+            const origMaxUploads = document.getElementById('cfg-max-uploads').value;
+            const origUploadWorkers = document.getElementById('cfg-upload-workers').value;
+            document.getElementById('cfg-max-uploads').value = inflight;
+
+            const start = performance.now();
+            let result;
+
+            if (method === 'single') {
+              // Single-threaded upload via main thread SDK
+              const sdk = await connectSdk(statusEl());
+              if (!sdk) continue;
+              const ulOpts = new UploadOptions();
+              ulOpts.maxInflight = inflight;
+              const upload = sdk.streamingUpload(file.size, ulOpts, () => {});
+              const CHUNK_SIZE = 128 * 1024 * 1024;
+              const data = new Uint8Array(await file.arrayBuffer());
+              (async () => {
+                for (let off = 0; off < data.length; off += CHUNK_SIZE) {
+                  upload.pushChunk(data.subarray(off, off + CHUNK_SIZE));
+                }
+                upload.pushChunk(null);
+              })();
+              const obj = await upload.promise;
+              result = { obj, size: file.size };
+            } else if (method === 'workers') {
+              document.getElementById('cfg-upload-workers').value = workers;
+              result = await parallelUpload(file, dummyStatus, dummyProgress);
+            } else if (method === 'encode') {
+              document.getElementById('cfg-upload-workers').value = workers;
+              result = await parallelEncodeUpload(file, dummyStatus, dummyProgress);
+            }
+
+            const elapsed = (performance.now() - start) / 1000;
+
+            // Restore settings
+            document.getElementById('cfg-max-uploads').value = origMaxUploads;
+            document.getElementById('cfg-upload-workers').value = origUploadWorkers;
+
+            if (result) {
+              addResult(size, methodLabel, inflight, workers, elapsed, file.size);
+            }
+          } catch (e) {
+            const tr = document.createElement('tr');
+            tr.style.cssText = 'border-bottom:1px solid #1a1a1a; color:#f87171;';
+            tr.innerHTML = `
+              <td style="padding:0.5rem 0.75rem;">${size} MB</td>
+              <td style="padding:0.5rem 0.5rem;">${method}</td>
+              <td style="padding:0.5rem 0.5rem; text-align:right;">${inflight}</td>
+              <td colspan="3" style="padding:0.5rem 0.5rem;">Error: ${e.message || e}</td>
+            `;
+            tbodyEl().appendChild(tr);
+          }
+
+          progressEl().value = i + 1;
+        }
+
+        statusEl().textContent = benchStopped ? 'Benchmark stopped.' : 'Benchmark complete.';
+        statusEl().style.color = benchStopped ? '#f59e0b' : '#4ade80';
+        progressEl().style.display = 'none';
+        document.getElementById('btn-bench-run').disabled = false;
+        document.getElementById('btn-bench-stop').style.display = 'none';
+      });
+
+      document.getElementById('btn-bench-stop').addEventListener('click', () => {
+        benchStopped = true;
+        statusEl().textContent = 'Stopping after current test...';
+        statusEl().style.color = '#f59e0b';
+      });
+
+      document.getElementById('btn-bench-clear').addEventListener('click', () => {
+        localStorage.removeItem('bench-results');
+        tbodyEl().innerHTML = '';
+        resultsEl().style.display = 'none';
+        statusEl().textContent = 'Results cleared.';
+        statusEl().style.color = '#888';
+      });
+    })();
+
+    // -- Download Benchmark --
+    (() => {
+      const statusEl = () => document.getElementById('dl-bench-status');
+      const tbodyEl = () => document.getElementById('dl-bench-tbody');
+      const resultsEl = () => document.getElementById('dl-bench-results');
+      const progressEl = () => document.getElementById('dl-bench-progress');
+      let dlBenchStopped = false;
+
+      function dlBenchResultToRow(r) {
+        const tr = document.createElement('tr');
+        tr.style.cssText = 'border-bottom:1px solid #1a1a1a;';
+        tr.innerHTML = `
+          <td style="padding:0.5rem 0.5rem;">${r.method}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.inflight}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.workers || '\u2014'}</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${(r.sizeBytes / 1e6).toFixed(1)} MB</td>
+          <td style="padding:0.5rem 0.5rem; text-align:right;">${r.elapsed.toFixed(1)}s</td>
+          <td style="padding:0.5rem 0.75rem; text-align:right;">${(r.speed / 1e6).toFixed(2)} MB/s</td>
+        `;
+        return tr;
+      }
+
+      function saveDlBenchResults(results) {
+        localStorage.setItem('dl-bench-results', JSON.stringify(results));
+      }
+
+      function loadDlBenchResults() {
+        try { return JSON.parse(localStorage.getItem('dl-bench-results') || '[]'); }
+        catch { return []; }
+      }
+
+      function renderDlBenchResults(results) {
+        tbodyEl().innerHTML = '';
+        resultsEl().style.display = results.length ? '' : 'none';
+        for (const r of [...results].reverse()) tbodyEl().appendChild(dlBenchResultToRow(r));
+      }
+
+      function addDlResult(method, inflight, workers, sizeBytes, elapsed) {
+        const speed = sizeBytes / elapsed;
+        const r = { method, inflight, workers, sizeBytes, elapsed, speed, timestamp: Date.now() };
+        const results = loadDlBenchResults();
+        results.push(r);
+        saveDlBenchResults(results);
+        tbodyEl().prepend(dlBenchResultToRow(r));
+        resultsEl().style.display = '';
+      }
+
+      // Restore saved results on load
+      { const saved = loadDlBenchResults(); if (saved.length) renderDlBenchResults(saved); }
+
+      document.getElementById('btn-dl-bench-run').addEventListener('click', async () => {
+        dlBenchStopped = false;
+        document.getElementById('btn-dl-bench-run').disabled = true;
+        document.getElementById('btn-dl-bench-stop').style.display = '';
+
+        const urlInput = document.getElementById('dl-bench-url').value.trim();
+        if (!urlInput) {
+          statusEl().textContent = 'Enter an object ID or share URL.';
+          statusEl().style.color = '#f87171';
+          document.getElementById('btn-dl-bench-run').disabled = false;
+          document.getElementById('btn-dl-bench-stop').style.display = 'none';
+          return;
+        }
+
+        const methods = [];
+        if (document.getElementById('dl-bench-method-workers').checked) methods.push('workers');
+        if (document.getElementById('dl-bench-method-single').checked) methods.push('single');
+
+        const inflights = [];
+        if (document.getElementById('dl-bench-inflight-4').checked) inflights.push(4);
+        if (document.getElementById('dl-bench-inflight-8').checked) inflights.push(8);
+        if (document.getElementById('dl-bench-inflight-16').checked) inflights.push(16);
+        if (document.getElementById('dl-bench-inflight-24').checked) inflights.push(24);
+
+        const workerCounts = [];
+        if (document.getElementById('dl-bench-workers-4').checked) workerCounts.push(4);
+        if (document.getElementById('dl-bench-workers-8').checked) workerCounts.push(8);
+        if (document.getElementById('dl-bench-workers-16').checked) workerCounts.push(16);
+        if (document.getElementById('dl-bench-workers-24').checked) workerCounts.push(24);
+
+        if (methods.length === 0 || inflights.length === 0) {
+          statusEl().textContent = 'Select at least one method and inflight setting.';
+          statusEl().style.color = '#f87171';
+          document.getElementById('btn-dl-bench-run').disabled = false;
+          document.getElementById('btn-dl-bench-stop').style.display = 'none';
+          return;
+        }
+
+        // Determine if input is a share URL or object ID
+        const isShareUrl = urlInput.startsWith('sia://') || urlInput.startsWith('https://');
+
+        // Build test matrix
+        const tests = [];
+        for (const method of methods) {
+          for (const inflight of inflights) {
+            if (method === 'single') {
+              tests.push({ method, inflight, workers: null });
+            } else {
+              const wCounts = workerCounts.length > 0 ? workerCounts : [8];
+              for (const workers of wCounts) {
+                tests.push({ method, inflight, workers });
+              }
+            }
+          }
+        }
+
+        progressEl().style.display = 'block';
+        progressEl().max = tests.length;
+        progressEl().value = 0;
+
+        for (let i = 0; i < tests.length; i++) {
+          if (dlBenchStopped) break;
+          const { method, inflight, workers } = tests[i];
+          const methodLabel = method === 'workers' ? 'Web Workers' : 'Single Worker';
+          const workerLabel = workers ? ` \u2022 workers=${workers}` : '';
+          statusEl().textContent = `[${i + 1}/${tests.length}] ${methodLabel} \u2022 inflight=${inflight}${workerLabel}`;
+          statusEl().style.color = '#60a5fa';
+
+          try {
+            const origMaxDownloads = document.getElementById('cfg-max-downloads').value;
+            const origDownloadWorkers = document.getElementById('cfg-download-workers').value;
+            document.getElementById('cfg-max-downloads').value = inflight;
+
+            const start = performance.now();
+            let totalBytes = 0;
+
+            if (method === 'single') {
+              // Single worker download via dedicated worker
+              document.getElementById('cfg-max-downloads').value = inflight;
+              const url = getUrl();
+              const keyHex = getKeyHex();
+              if (!url || !keyHex) { statusEl().textContent = 'Set Indexer URL and App Key first'; continue; }
+
+              totalBytes = await new Promise((resolve, reject) => {
+                const worker = new Worker('./single-download-worker.js', { type: 'module' });
+                let bytes = 0;
+                const readyP = new Promise((res, rej) => {
+                  const h = (e) => {
+                    if (e.data.type === 'ready') { worker.removeEventListener('message', h); res(); }
+                    if (e.data.type === 'error') { worker.removeEventListener('message', h); rej(new Error(e.data.message)); }
+                  };
+                  worker.addEventListener('message', h);
+                });
+                worker.postMessage({ type: 'init', indexerUrl: url, keyHex, maxDownloads: inflight, logLevel: getLogLevel() });
+                readyP.then(() => {
+                  worker.postMessage({ type: 'download', input: urlInput, maxDownloads: inflight });
+                  worker.onmessage = (e) => {
+                    if (e.data.type === 'chunk') bytes += e.data.length;
+                    if (e.data.type === 'done') { worker.terminate(); resolve(bytes); }
+                    if (e.data.type === 'error') { worker.terminate(); reject(new Error(e.data.message)); }
+                  };
+                }).catch(reject);
+              });
+            } else if (method === 'workers') {
+              document.getElementById('cfg-download-workers').value = workers;
+              const dummyStatus = { set textContent(_) {}, set innerHTML(_) {} };
+              const dummyProgress = document.createElement('progress');
+              dummyProgress.style.display = 'none';
+              const result = await parallelDownload(urlInput, dummyStatus, dummyProgress, null, workers);
+              if (result && result.blob) totalBytes = result.blob.size;
+              else if (result && result.size) totalBytes = result.size;
+            }
+
+            const elapsed = (performance.now() - start) / 1000;
+
+            document.getElementById('cfg-max-downloads').value = origMaxDownloads;
+            document.getElementById('cfg-download-workers').value = origDownloadWorkers;
+
+            addDlResult(methodLabel, inflight, workers, totalBytes, elapsed);
+          } catch (e) {
+            console.error('Download benchmark error:', e);
+            addDlResult(methodLabel + ' (ERROR)', inflight, workers, 0, 0);
+          }
+
+          progressEl().value = i + 1;
+        }
+
+        statusEl().textContent = dlBenchStopped ? 'Benchmark stopped.' : 'Download benchmark complete.';
+        statusEl().style.color = dlBenchStopped ? '#f59e0b' : '#4ade80';
+        progressEl().style.display = 'none';
+        document.getElementById('btn-dl-bench-run').disabled = false;
+        document.getElementById('btn-dl-bench-stop').style.display = 'none';
+      });
+
+      document.getElementById('btn-dl-bench-stop').addEventListener('click', () => {
+        dlBenchStopped = true;
+        statusEl().textContent = 'Stopping after current test...';
+        statusEl().style.color = '#f59e0b';
+      });
+
+      document.getElementById('btn-dl-bench-clear').addEventListener('click', () => {
+        localStorage.removeItem('dl-bench-results');
+        tbodyEl().innerHTML = '';
+        resultsEl().style.display = 'none';
+        statusEl().textContent = 'Results cleared.';
+        statusEl().style.color = '#888';
+      });
+    })();
 
     // -- List Objects --
     document.getElementById('btn-list-objects').addEventListener('click', async () => {

@@ -521,13 +521,14 @@ export class SDK {
      * @param {DownloadOptions} options
      * @param {Function} on_chunk
      * @param {Function} on_progress
+     * @param {Function | null} [on_host_active]
      * @returns {Promise<void>}
      */
-    downloadStreaming(object, options, on_chunk, on_progress) {
+    downloadStreaming(object, options, on_chunk, on_progress, on_host_active) {
         _assertClass(object, PinnedObject);
         _assertClass(options, DownloadOptions);
         var ptr0 = options.__destroy_into_raw();
-        const ret = wasm.sdk_downloadStreaming(this.__wbg_ptr, object.__wbg_ptr, ptr0, on_chunk, on_progress);
+        const ret = wasm.sdk_downloadStreaming(this.__wbg_ptr, object.__wbg_ptr, ptr0, on_chunk, on_progress, isLikeNone(on_host_active) ? 0 : addToExternrefTable0(on_host_active));
         return ret;
     }
     /**
@@ -772,6 +773,28 @@ export class SDK {
         return ret[0];
     }
     /**
+     * Uploads pre-encoded, pre-encrypted shards to hosts. Use with `encodeSlab()`
+     * for the compute-worker upload architecture.
+     * @param {Array<any>} shards_js
+     * @param {Uint8Array} slab_key
+     * @param {number} data_length
+     * @param {number} stream_offset
+     * @param {number} min_shards
+     * @param {UploadOptions} options
+     * @param {Function | null} [on_progress]
+     * @param {Function | null} [on_host_active]
+     * @param {Function | null} [on_shard_complete]
+     * @returns {Promise<string>}
+     */
+    uploadEncodedShards(shards_js, slab_key, data_length, stream_offset, min_shards, options, on_progress, on_host_active, on_shard_complete) {
+        const ptr0 = passArray8ToWasm0(slab_key, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        _assertClass(options, UploadOptions);
+        var ptr1 = options.__destroy_into_raw();
+        const ret = wasm.sdk_uploadEncodedShards(this.__wbg_ptr, shards_js, ptr0, len0, data_length, stream_offset, min_shards, ptr1, isLikeNone(on_progress) ? 0 : addToExternrefTable0(on_progress), isLikeNone(on_host_active) ? 0 : addToExternrefTable0(on_host_active), isLikeNone(on_shard_complete) ? 0 : addToExternrefTable0(on_shard_complete));
+        return ret;
+    }
+    /**
      * Uploads a single slab's worth of raw data with object-level encryption
      * at the given stream offset. Returns the slab metadata as JSON.
      *
@@ -785,16 +808,17 @@ export class SDK {
      * @param {number} stream_offset
      * @param {UploadOptions} options
      * @param {Function} on_progress
+     * @param {Function | null} [on_host_active]
      * @returns {Promise<string>}
      */
-    uploadSlab(data, data_key, stream_offset, options, on_progress) {
+    uploadSlab(data, data_key, stream_offset, options, on_progress, on_host_active) {
         const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
         const ptr1 = passArray8ToWasm0(data_key, wasm.__wbindgen_malloc);
         const len1 = WASM_VECTOR_LEN;
         _assertClass(options, UploadOptions);
         var ptr2 = options.__destroy_into_raw();
-        const ret = wasm.sdk_uploadSlab(this.__wbg_ptr, ptr0, len0, ptr1, len1, stream_offset, ptr2, on_progress);
+        const ret = wasm.sdk_uploadSlab(this.__wbg_ptr, ptr0, len0, ptr1, len1, stream_offset, ptr2, on_progress, isLikeNone(on_host_active) ? 0 : addToExternrefTable0(on_host_active));
         return ret;
     }
 }
@@ -945,6 +969,31 @@ export class UploadOptions {
     }
 }
 if (Symbol.dispose) UploadOptions.prototype[Symbol.dispose] = UploadOptions.prototype.free;
+
+/**
+ * Encode and encrypt a slab without uploading. Runs pure computation
+ * (object encryption, erasure coding, slab encryption) with no networking.
+ * Suitable for running in a Web Worker without an SDK instance.
+ *
+ * Returns a JSON object: `{ slabKey: base64, shards: [base64, ...], length: u32, minShards: u8 }`
+ * @param {Uint8Array} data
+ * @param {Uint8Array} data_key
+ * @param {number} stream_offset
+ * @param {number} data_shards
+ * @param {number} parity_shards
+ * @returns {any}
+ */
+export function encodeSlab(data, data_key, stream_offset, data_shards, parity_shards) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(data_key, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.encodeSlab(ptr0, len0, ptr1, len1, stream_offset, data_shards, parity_shards);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
 
 /**
  * Connects to a host via WebTransport and fetches its settings/prices.
@@ -1163,6 +1212,10 @@ function __wbg_get_imports() {
             const ret = Reflect.get(arg0, arg1);
             return ret;
         }, arguments); },
+        __wbg_get_a8ee5c45dabc1b3b: function(arg0, arg1) {
+            const ret = arg0[arg1 >>> 0];
+            return ret;
+        },
         __wbg_has_926ef2ff40b308cf: function() { return handleError(function (arg0, arg1) {
             const ret = Reflect.has(arg0, arg1);
             return ret;
@@ -1196,6 +1249,10 @@ function __wbg_get_imports() {
         },
         __wbg_iterator_d8f549ec8fb061b1: function() {
             const ret = Symbol.iterator;
+            return ret;
+        },
+        __wbg_length_b3416cf66a5452c8: function(arg0) {
+            const ret = arg0.length;
             return ret;
         },
         __wbg_length_ea16607d7b61445b: function(arg0) {
@@ -1280,6 +1337,10 @@ function __wbg_get_imports() {
             } finally {
                 state0.a = state0.b = 0;
             }
+        },
+        __wbg_new_with_length_3259a525196bd8cc: function(arg0) {
+            const ret = new Array(arg0 >>> 0);
+            return ret;
         },
         __wbg_new_with_length_825018a1616e9e55: function(arg0) {
             const ret = new Uint8Array(arg0 >>> 0);
@@ -1479,22 +1540,22 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 653, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 654, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5df41059abe562b3, wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 675, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 676, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 653, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 654, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5df41059abe562b3, wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46_1);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 675, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 676, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 678, function: Function { arguments: [], shim_idx: 679, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 759, function: Function { arguments: [], shim_idx: 760, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha994e4b6d1719794, wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 708, function: Function { arguments: [Externref], shim_idx: 709, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 789, function: Function { arguments: [Externref], shim_idx: 790, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h22885050db612fd4, wasm_bindgen__convert__closures_____invoke__ha7b459d57f5990ae);
             return ret;
         },
@@ -1543,15 +1604,15 @@ function wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104(arg0, arg
     wasm.wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46_1(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h06225f5640e02f46_1(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }

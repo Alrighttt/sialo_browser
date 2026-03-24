@@ -426,6 +426,7 @@ export async function clearAllData(net) {
     syncerDbDelete(keys.headers),
     syncerDbDelete(keys.attestationindex),
   ]);
+  if (n === _activeNetwork) await loadFilters();
 }
 
 // Clear filters+txindex then re-sync from scratch
