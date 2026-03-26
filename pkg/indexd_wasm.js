@@ -859,9 +859,9 @@ export class StreamingUpload {
      * Pushes a chunk of data to the upload.
      * Pass data as Uint8Array. Call with `null` or `undefined` to signal EOF.
      *
-     * **Backpressure**: This method applies backpressure to prevent memory exhaustion.
-     * It returns a Promise that resolves when the chunk has been queued.
-     * If the queue is full, it waits until space becomes available.
+     * **Backpressure**: The underlying channel has a bounded buffer. This method
+     * returns a Promise that resolves when the chunk has been accepted. If the
+     * buffer is full, the Promise awaits until space is available.
      *
      * **IMPORTANT**: JavaScript MUST await this Promise before pushing the next chunk:
      * ```javascript
@@ -1540,22 +1540,22 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 675, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 676, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 696, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 697, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 675, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 676, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 696, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 697, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 759, function: Function { arguments: [], shim_idx: 760, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 755, function: Function { arguments: [], shim_idx: 756, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha994e4b6d1719794, wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 789, function: Function { arguments: [Externref], shim_idx: 790, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 785, function: Function { arguments: [Externref], shim_idx: 786, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h22885050db612fd4, wasm_bindgen__convert__closures_____invoke__ha7b459d57f5990ae);
             return ret;
         },

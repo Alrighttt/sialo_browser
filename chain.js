@@ -12,7 +12,7 @@ const GENESIS_IDS = {
 const DEFAULT_URLS = {
   mainnet: 'https://localhost:9984/sia/syncer',
   mainnet_v2: 'https://localhost:9984/sia/syncer',
-  zen: 'https://8d8l2oblq0ql4eis0hu71fk8443af5cmcd1r5ej0ndcdb1lgfktg.sia.host:9985/sia/syncer',
+  zen: 'https://localhost:9985/sia/syncer',
 };
 
 const V2_REQUIRE_HEIGHTS = { mainnet: 530000, mainnet_v2: 530000, zen: 50 };

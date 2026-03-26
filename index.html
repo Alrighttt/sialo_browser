@@ -102,7 +102,7 @@
               <p class="wizard-subtext">Connect to an indexer to get started. You'll need the URL of the indexer you want to register with.</p>
               <p class="wizard-subtext" style="margin-top: 0.75rem; font-size: 0.85rem; opacity: 0.7;">Already have an app key? Skip registration &mdash; open <strong>Settings</strong> from the gear menu and paste your key directly.</p>
               <div class="wizard-field">
-                <div class="label">Indexer URL</div>
+                <label class="label" for="wiz-url">Indexer URL</label>
                 <input id="wiz-url" type="text" placeholder="https://indexer.example.com" />
               </div>
               <button id="wiz-btn-next" class="wizard-btn">Next</button>
@@ -133,7 +133,7 @@
               <h1 class="wizard-heading">Recovery Phrase</h1>
               <p class="wizard-subtext">Generate a new recovery phrase or enter an existing one. This phrase is used to derive your cryptographic keys — save it securely.</p>
               <div class="wizard-field">
-                <div class="label">Recovery Phrase</div>
+                <label class="label" for="wiz-mnemonic">Recovery Phrase</label>
                 <div class="row">
                   <input id="wiz-mnemonic" type="text" placeholder="enter or generate a recovery phrase" />
                   <button id="wiz-btn-generate" class="wizard-btn-secondary">Generate</button>
@@ -164,9 +164,9 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Configuration</h2>
-      <div class="label">Indexer URL</div>
+      <label class="label" for="cfg-url">Indexer URL</label>
       <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
-      <div class="label">App Key (hex seed)</div>
+      <label class="label" for="cfg-key">App Key (hex seed)</label>
       <input id="cfg-key" type="text" placeholder="e.g. ab12cd34..." style="margin-bottom:0.5rem" />
           </div><!-- /panel-section: Configuration -->
 
@@ -651,7 +651,16 @@
       <div id="panel-explorer" class="viewport-panel internal-page has-net-bar" data-panel="explorer">
         <div class="internal-page-scroll">
         <div class="net-bar"></div>
-        <div class="internal-page-content" style="max-width:900px;">
+        <!-- Shown when no coin networks are active -->
+        <div id="exp-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+            <h2 style="color:var(--text-secondary,#888);">Explorer Unavailable</h2>
+            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+              Enable at least one coin network in the <strong>Syncer</strong> page to use the Explorer.
+            </p>
+          </div>
+        </div>
+        <div id="exp-main-content" class="internal-page-content" style="max-width:900px;">
 
           <!-- Explorer -->
           <div class="panel-section">
@@ -785,7 +794,7 @@
             <div id="exp-log" class="output" style="margin-top:0.5rem; max-height:300px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
           </div>
 
-        </div>
+        </div><!-- /exp-main-content -->
         </div>
       </div><!-- /panel-explorer -->
 
@@ -3380,6 +3389,22 @@
     updateNetBars();
     chainOnChange(updateNetBars);
 
+    // Toggle explorer disabled state based on active networks
+    function updateExplorerAvailability() {
+      const enabled = getEnabledNetworks();
+      const overlay = document.getElementById('exp-disabled-overlay');
+      const content = document.getElementById('exp-main-content');
+      if (enabled.length === 0) {
+        overlay.style.display = '';
+        content.style.display = 'none';
+      } else {
+        overlay.style.display = 'none';
+        content.style.display = '';
+      }
+    }
+    updateExplorerAvailability();
+    chainOnChange(updateExplorerAvailability);
+
     // Sync indicator in chrome bar + status bar height display
     const syncHeightEl = document.getElementById('sync-height-indicator');
     const syncHeightSep = document.getElementById('sync-height-sep');
@@ -3513,6 +3538,13 @@
       // Restore tabs from previous session
       for (const saved of savedState.tabs) {
         if (saved.type === 'internal') {
+          if (saved.panelName === 'register' && !window._wizardInitialized) {
+            initRegistrationWizard({
+              Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+              closeTab, activateTab, tabs,
+            });
+            window._wizardInitialized = true;
+          }
           openOrActivateInternalTab(saved.panelName);
         } else {
           createTab({ type: 'browser', url: saved.url, label: saved.label });
