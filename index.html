@@ -802,7 +802,16 @@
       <div id="panel-wallet" class="viewport-panel internal-page has-net-bar" data-panel="wallet">
         <div class="internal-page-scroll">
         <div class="net-bar"></div>
-        <div class="internal-page-content" style="max-width:900px;">
+        <!-- Shown when no coin networks are active -->
+        <div id="wallet-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+            <h2 style="color:var(--text-secondary,#888);">Wallet Unavailable</h2>
+            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+              Enable at least one coin network in the <strong>Syncer</strong> page to use the Wallet.
+            </p>
+          </div>
+        </div>
+        <div id="wallet-main-content" class="internal-page-content" style="max-width:900px;">
 
           <!-- Wallet Status + Seed Management -->
           <div class="panel-section">
@@ -1013,7 +1022,7 @@
             <div id="wallet-scan-log" class="output" style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
           </div>
 
-        </div>
+        </div><!-- /wallet-main-content -->
         </div>
       </div><!-- /panel-wallet -->
 
@@ -1021,7 +1030,16 @@
       <div id="panel-manifest" class="viewport-panel internal-page has-net-bar" data-panel="manifest">
         <div class="internal-page-scroll">
         <div class="net-bar"></div>
-        <div class="internal-page-content" style="max-width:900px;">
+        <!-- Shown when no coin networks are active -->
+        <div id="manifest-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+            <h2 style="color:var(--text-secondary,#888);">Manifest Unavailable</h2>
+            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+              Enable at least one coin network in the <strong>Syncer</strong> page to use Manifests.
+            </p>
+          </div>
+        </div>
+        <div id="manifest-main-content" class="internal-page-content" style="max-width:900px;">
 
           <!-- Wallet Status -->
           <div class="panel-section">
@@ -1184,7 +1202,7 @@
             <div id="mfst-log" class="output" style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
           </div>
 
-        </div>
+        </div><!-- /manifest-main-content -->
         </div>
       </div><!-- /panel-manifest -->
 
@@ -3389,21 +3407,20 @@
     updateNetBars();
     chainOnChange(updateNetBars);
 
-    // Toggle explorer disabled state based on active networks
-    function updateExplorerAvailability() {
-      const enabled = getEnabledNetworks();
-      const overlay = document.getElementById('exp-disabled-overlay');
-      const content = document.getElementById('exp-main-content');
-      if (enabled.length === 0) {
-        overlay.style.display = '';
-        content.style.display = 'none';
-      } else {
-        overlay.style.display = 'none';
-        content.style.display = '';
+    // Toggle chain-dependent pages based on active networks
+    function updateChainPageAvailability() {
+      const hasNetworks = getEnabledNetworks().length > 0;
+      for (const prefix of ['exp', 'wallet', 'manifest']) {
+        const overlay = document.getElementById(`${prefix}-disabled-overlay`);
+        const content = document.getElementById(`${prefix}-main-content`);
+        if (overlay && content) {
+          overlay.style.display = hasNetworks ? 'none' : '';
+          content.style.display = hasNetworks ? '' : 'none';
+        }
       }
     }
-    updateExplorerAvailability();
-    chainOnChange(updateExplorerAvailability);
+    updateChainPageAvailability();
+    chainOnChange(updateChainPageAvailability);
 
     // Sync indicator in chrome bar + status bar height display
     const syncHeightEl = document.getElementById('sync-height-indicator');
