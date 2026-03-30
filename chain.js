@@ -108,6 +108,136 @@ function syncerDbSave(key, data) {
   });
 }
 
+// --- OPFS (Origin Private File System) for large binary data ---
+// IndexedDB reads fail for large values in Chrome ("Failed to read large IndexedDB value").
+// OPFS is designed for large file storage and doesn't have this limitation.
+
+async function opfsSave(key, data) {
+  const root = await navigator.storage.getDirectory();
+  const fileHandle = await root.getFileHandle(key, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(data);
+  await writable.close();
+}
+
+async function opfsLoad(key) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const fileHandle = await root.getFileHandle(key);
+    const file = await fileHandle.getFile();
+    const buffer = await file.arrayBuffer();
+    return new Uint8Array(buffer);
+  } catch (e) {
+    // NotFoundError means no cached file
+    return null;
+  }
+}
+
+async function opfsDelete(key) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(key);
+  } catch (e) {
+    // Ignore if not found
+  }
+}
+
+// Chunked storage for large blobs — splits data into 2MB pieces to avoid
+// Chrome's "Failed to read large IndexedDB value" error in workers.
+const CHUNK_MAX = 2 * 1024 * 1024; // 2MB per chunk
+
+async function syncerDbSaveChunked(key, data) {
+  const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (arr.byteLength <= CHUNK_MAX) {
+    // Small enough — save directly
+    await syncerDbSave(key, arr);
+    return;
+  }
+  const numChunks = Math.ceil(arr.byteLength / CHUNK_MAX);
+  // Use a single DB connection for all chunks
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('sia_syncer', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('cache');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  try {
+    // Save metadata
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('cache', 'readwrite');
+      tx.objectStore('cache').put({ chunked: true, totalSize: arr.byteLength, numChunks }, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    // Save all chunks in a single transaction
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('cache', 'readwrite');
+      const store = tx.objectStore('cache');
+      for (let i = 0; i < numChunks; i++) {
+        const start = i * CHUNK_MAX;
+        const end = Math.min(start + CHUNK_MAX, arr.byteLength);
+        store.put(arr.slice(start, end), key + ':chunk:' + i);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+async function syncerDbLoadChunked(key) {
+  const meta = await syncerDbLoad(key);
+  if (!meta) return null;
+  // Handle non-chunked legacy data
+  if (!(meta.chunked)) return meta;
+  const { numChunks } = meta;
+  // Read all chunks in a single transaction, assemble via Blob
+  const db = await new Promise((resolve, reject) => {
+    const req = indexedDB.open('sia_syncer', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('cache');
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  try {
+    const chunkParts = await new Promise((resolve, reject) => {
+      const tx = db.transaction('cache', 'readonly');
+      const store = tx.objectStore('cache');
+      const parts = new Array(numChunks);
+      let loaded = 0;
+      for (let i = 0; i < numChunks; i++) {
+        const get = store.get(key + ':chunk:' + i);
+        get.onsuccess = () => {
+          parts[i] = get.result ? (get.result instanceof Uint8Array ? get.result : new Uint8Array(get.result)) : null;
+          loaded++;
+          if (loaded === numChunks) resolve(parts);
+        };
+        get.onerror = () => reject(get.error);
+      }
+      if (numChunks === 0) resolve([]);
+    });
+    // Check for missing chunks
+    for (let i = 0; i < numChunks; i++) {
+      if (!chunkParts[i]) throw new Error(`Missing chunk ${i} for key ${key}`);
+    }
+    const blob = new Blob(chunkParts, { type: 'application/octet-stream' });
+    const buffer = await blob.arrayBuffer();
+    return new Uint8Array(buffer);
+  } finally {
+    db.close();
+  }
+}
+
+async function syncerDbDeleteChunked(key) {
+  const meta = await syncerDbLoad(key);
+  if (meta && meta.chunked) {
+    for (let i = 0; i < meta.numChunks; i++) {
+      await syncerDbDelete(key + ':chunk:' + i);
+    }
+  }
+  await syncerDbDelete(key);
+}
+
 function syncerDbDelete(key) {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open('sia_syncer', 1);
@@ -358,6 +488,7 @@ function getDbEntrySize(dbName, storeName, key) {
         req.result.close();
         const val = get.result;
         if (!val) { resolve(0); return; }
+        if (val.chunked && val.totalSize) { resolve(val.totalSize); return; }
         if (val.byteLength !== undefined) { resolve(val.byteLength); return; }
         if (val.length !== undefined) { resolve(val.length); return; }
         resolve(0);
@@ -368,24 +499,45 @@ function getDbEntrySize(dbName, storeName, key) {
   });
 }
 
+async function getOpfsFileSize(key) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const fh = await root.getFileHandle(key);
+    const file = await fh.getFile();
+    return file.size;
+  } catch (e) {
+    return 0;
+  }
+}
+
 export async function getStorageSizes(net) {
   const keys = networkDataKeys(net);
-  const [headers, filters, filtersLegacy, txindex, txindexLegacy, utxoindex, attestationindex] = await Promise.all([
-    getDbEntrySize('sia_syncer', 'cache', keys.headers),
+  const headerKey = net + ':header_ids';
+  const [headers, filters, filtersOpfs, filtersLegacy, txindex, txindexOpfs, txindexLegacy, utxoindex, utxoindexOpfs, attestationindex, attestationindexOpfs] = await Promise.all([
+    getOpfsFileSize(headerKey),
     getDbEntrySize('sia_syncer', 'cache', keys.filter),
+    getOpfsFileSize(keys.filter),
     keys.filterLegacy ? getDbEntrySize('sia_filters', 'files', keys.filterLegacy) : 0,
     getDbEntrySize('sia_syncer', 'cache', keys.txindex),
+    getOpfsFileSize(keys.txindex),
     keys.txindexLegacy ? getDbEntrySize('sia_filters', 'files', keys.txindexLegacy) : 0,
     getDbEntrySize('sia_syncer', 'cache', keys.utxoindex),
+    getOpfsFileSize(keys.utxoindex),
     getDbEntrySize('sia_syncer', 'cache', keys.attestationindex),
+    getOpfsFileSize(keys.attestationindex),
   ]);
+  // Use the larger of IndexedDB or OPFS size (data may be in either location)
+  const fTotal = Math.max(filters, filtersOpfs) + filtersLegacy;
+  const tTotal = Math.max(txindex, txindexOpfs) + (txindexLegacy || 0);
+  const uTotal = Math.max(utxoindex, utxoindexOpfs);
+  const aTotal = Math.max(attestationindex, attestationindexOpfs);
   return {
     headers,
-    filters: filters + filtersLegacy,
-    txindex: txindex + (txindexLegacy || 0),
-    utxoindex,
-    attestationindex,
-    total: headers + filters + filtersLegacy + txindex + (txindexLegacy || 0) + utxoindex + attestationindex,
+    filters: fTotal,
+    txindex: tTotal,
+    utxoindex: uTotal,
+    attestationindex: aTotal,
+    total: headers + fTotal + tTotal + uTotal + aTotal,
   };
 }
 
@@ -394,7 +546,7 @@ export async function getStorageSizes(net) {
 export async function clearFilters(net) {
   const n = net || _activeNetwork;
   const keys = networkDataKeys(n);
-  const deletes = [syncerDbDelete(keys.filter)];
+  const deletes = [syncerDbDeleteChunked(keys.filter), opfsDelete(keys.filter)];
   if (keys.filterLegacy) deletes.push(filterDbDelete(keys.filterLegacy));
   await Promise.all(deletes);
   if (n === _activeNetwork) await loadFilters();
@@ -403,7 +555,7 @@ export async function clearFilters(net) {
 export async function clearTxindex(net) {
   const n = net || _activeNetwork;
   const keys = networkDataKeys(n);
-  const deletes = [syncerDbDelete(keys.txindex)];
+  const deletes = [syncerDbDeleteChunked(keys.txindex), opfsDelete(keys.txindex)];
   if (keys.txindexCheckpoint) deletes.push(syncerDbDelete(keys.txindexCheckpoint));
   if (keys.txindexLegacy) deletes.push(filterDbDelete(keys.txindexLegacy));
   await Promise.all(deletes);
@@ -413,19 +565,47 @@ export async function clearTxindex(net) {
 export async function clearUtxoIndex(net) {
   const n = net || _activeNetwork;
   const keys = networkDataKeys(n);
-  await syncerDbDelete(keys.utxoindex);
+  await Promise.all([syncerDbDeleteChunked(keys.utxoindex), opfsDelete(keys.utxoindex)]);
 }
 
 export async function clearAllData(net) {
-  await clearFilters(net);
-  await clearTxindex(net);
-  await clearUtxoIndex(net);
   const n = net || _activeNetwork;
-  const keys = networkDataKeys(n);
+  const prefix = n + ':';
+  // Delete ALL keys for this network (including chunks, WIP data, etc.)
+  await new Promise((resolve, reject) => {
+    const req = indexedDB.open('sia_syncer', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('cache');
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('cache', 'readwrite');
+      const store = tx.objectStore('cache');
+      const cursor = store.openCursor();
+      cursor.onsuccess = () => {
+        const c = cursor.result;
+        if (!c) return;
+        if (typeof c.key === 'string' && c.key.startsWith(prefix)) {
+          c.delete();
+        }
+        c.continue();
+      };
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    };
+    req.onerror = () => reject(req.error);
+  });
+  // Also clear OPFS cached data (headers, filters, txindex, utxo, attestation)
+  const opfsKeys = networkDataKeys(n);
   await Promise.all([
-    syncerDbDelete(keys.headers),
-    syncerDbDelete(keys.attestationindex),
+    opfsDelete(n + ':header_ids'),
+    opfsDelete(opfsKeys.filter),
+    opfsDelete(opfsKeys.txindex),
+    opfsDelete(opfsKeys.utxoindex),
+    opfsDelete(opfsKeys.attestationindex),
   ]);
+  // Also clear legacy filter DB entries
+  const keys = networkDataKeys(n);
+  if (keys.filterLegacy) await filterDbDelete(keys.filterLegacy);
+  if (keys.txindexLegacy) await filterDbDelete(keys.txindexLegacy);
   if (n === _activeNetwork) await loadFilters();
 }
 
@@ -569,7 +749,7 @@ export async function importNetworkData(net, packed) {
 
     const dbKey = keys[name];
     if (dbKey) {
-      await syncerDbSave(dbKey, data);
+      await syncerDbSaveChunked(dbKey, data);
     }
   }
 
@@ -580,6 +760,14 @@ export async function importNetworkData(net, packed) {
 // --- Public API: Load filters from IndexedDB (for active network) ---
 
 export async function loadFilters() {
+  try {
+    return await _loadFiltersInner();
+  } catch (e) {
+    console.warn('loadFilters failed (stale data?), indexes unavailable until next sync:', e);
+  }
+}
+
+async function _loadFiltersInner() {
   // Clean up old blob URLs
   if (_filterBlobUrl) { URL.revokeObjectURL(_filterBlobUrl); _filterBlobUrl = null; }
   if (_txindexBlobUrl) { URL.revokeObjectURL(_txindexBlobUrl); _txindexBlobUrl = null; }
@@ -591,12 +779,16 @@ export async function loadFilters() {
   const net = _activeNetwork;
   const keys = networkDataKeys(net);
 
-  // Load filter data: try WASM-generated key, then legacy
+  // Load filter data: try OPFS first, then IndexedDB chunked, then legacy
   let filterData = null;
-  const syncerFilter = await syncerDbLoad(keys.filter);
-  if (syncerFilter && syncerFilter.byteLength > 0) {
-    filterData = syncerFilter;
-  } else if (keys.filterLegacy) {
+  filterData = await opfsLoad(keys.filter);
+  if (!filterData || !filterData.byteLength) {
+    const syncerFilter = await syncerDbLoadChunked(keys.filter);
+    if (syncerFilter && syncerFilter.byteLength > 0) {
+      filterData = syncerFilter;
+    }
+  }
+  if ((!filterData || !filterData.byteLength) && keys.filterLegacy) {
     const legacyFilter = await filterDbLoad(keys.filterLegacy);
     if (legacyFilter && legacyFilter.byteLength > 0) {
       filterData = legacyFilter;
@@ -608,8 +800,11 @@ export async function loadFilters() {
     _filterBlobUrl = URL.createObjectURL(new Blob([filterData], { type: 'application/octet-stream' }));
   }
 
-  // Load txindex data
-  let txdata = await syncerDbLoad(keys.txindex);
+  // Load txindex data: try OPFS first, then IndexedDB
+  let txdata = await opfsLoad(keys.txindex);
+  if (!txdata || !txdata.byteLength) {
+    txdata = await syncerDbLoadChunked(keys.txindex);
+  }
   if ((!txdata || !txdata.byteLength) && keys.txindexLegacy) {
     txdata = await filterDbLoad(keys.txindexLegacy);
   }
@@ -617,8 +812,11 @@ export async function loadFilters() {
     _txindexBlobUrl = URL.createObjectURL(new Blob([txdata], { type: 'application/octet-stream' }));
   }
 
-  // Load utxoindex data
-  const utxodata = await syncerDbLoad(keys.utxoindex);
+  // Load utxoindex data: try OPFS first, then IndexedDB
+  let utxodata = await opfsLoad(keys.utxoindex);
+  if (!utxodata || !utxodata.byteLength) {
+    utxodata = await syncerDbLoadChunked(keys.utxoindex);
+  }
   if (utxodata && utxodata.byteLength > 0) {
     _utxoindexBlobUrl = URL.createObjectURL(new Blob([utxodata], { type: 'application/octet-stream' }));
 
@@ -646,8 +844,11 @@ export async function loadFilters() {
     }
   }
 
-  // Load attestation index data
-  const attdata = await syncerDbLoad(keys.attestationindex);
+  // Load attestation index data: try OPFS first, then IndexedDB
+  let attdata = await opfsLoad(keys.attestationindex);
+  if (!attdata || !attdata.byteLength) {
+    attdata = await syncerDbLoad(keys.attestationindex);
+  }
   if (attdata && attdata.byteLength > 0) {
     _attestationindexBlobUrl = URL.createObjectURL(new Blob([attdata], { type: 'application/octet-stream' }));
   }
@@ -1053,10 +1254,22 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
     const worker = new Worker('./network-sync-worker.js', { type: 'module' });
     _syncWorkers[net] = worker;
 
-    worker.onmessage = (e) => {
+    const pendingSaves = [];
+
+    worker.onmessage = async (e) => {
       switch (e.data.type) {
-        case 'ready':
-          worker.postMessage({
+        case 'ready': {
+          // Load cached headers via OPFS (IndexedDB reads fail for large values in Chrome)
+          let cachedHeaders = null;
+          try {
+            cachedHeaders = await opfsLoad(net + ':header_ids');
+            if (cachedHeaders && cachedHeaders.byteLength > 0) {
+              _emitSyncLog(net, `Loaded ${cachedHeaders.byteLength / 32} cached header IDs`, 'data');
+            }
+          } catch (e) {
+            // Failed — will re-download from peer
+          }
+          const msg = {
             type: 'sync', net,
             peerUrl: config.peerUrl,
             genesisHex,
@@ -1068,8 +1281,12 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
             utxoindexKey: netKey(net, 'utxoindex'),
             attestationKey: netKey(net, 'attestationindex'),
             numWorkers: parseInt(localStorage.getItem('sync-num-workers') || '10', 10) || 10,
-          });
+            cachedHeaderIds: cachedHeaders || undefined,
+          };
+          const transfers = cachedHeaders ? [cachedHeaders.buffer] : [];
+          worker.postMessage(msg, transfers);
           break;
+        }
         case 'log':
           parseAndUpdateProgress(e.data.net, e.data.msg);
           _emitSyncLog(e.data.net, e.data.msg, e.data.cls);
@@ -1084,7 +1301,24 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
           if (e.data.networkHeight != null) _syncState[e.data.net].networkHeight = e.data.networkHeight;
           _notify();
           break;
+        case 'save': {
+          const dataSize = e.data.data ? e.data.data.byteLength : 0;
+          if (dataSize === 0) break;
+          const saveKey = e.data.key;
+          const saveData = new Uint8Array(e.data.data);
+          // Use OPFS for all large binary data (IndexedDB reads fail for large values in Chrome)
+          const savePromise = opfsSave(saveKey, saveData);
+          pendingSaves.push(
+            savePromise
+              .then(() => _emitSyncLog(e.data.net, `Saved ${saveKey} (${(dataSize / 1024 / 1024).toFixed(1)} MB)`, 'ok'))
+              .catch(err => _emitSyncLog(e.data.net, `Failed to save ${saveKey}: ${err}`, 'err'))
+          );
+          break;
+        }
         case 'done':
+          console.log(`[done] Waiting for ${pendingSaves.length} pending saves...`);
+          await Promise.all(pendingSaves);
+          console.log(`[done] All saves complete, resolving`);
           delete _syncWorkers[net];
           worker.terminate();
           resolve();
@@ -1141,14 +1375,23 @@ async function syncNetwork(net) {
       networkHeight: networkHeight,
       needsCatchup: behind,
     };
+    // Reload blob URLs if this is the active network
+    if (net === _activeNetwork) {
+      try {
+        _emitSyncLog(net, 'Loading indexes...', 'info');
+        await loadFilters();
+        _emitSyncLog(net, 'Indexes loaded', 'ok');
+      } catch (e) {
+        _emitSyncLog(net, 'Warning: failed to load indexes after sync: ' + e, 'err');
+      }
+    }
+
     if (behind) {
       _emitSyncLog(net, 'Sync complete (behind: ' + currentHeight + '/' + networkHeight + ', will re-sync)', 'info');
     } else {
-      _emitSyncLog(net, 'Sync complete', 'ok');
+      _emitSyncLog(net, 'Done', 'ok');
     }
-
-    // Reload blob URLs if this is the active network
-    if (net === _activeNetwork) await loadFilters();
+    _notify();
 
     // Prune confirmed transactions from mempool by checking the txindex
     if (_mempool[net] && Object.keys(_mempool[net]).length > 0 && _txindexBlobUrl && net === _activeNetwork) {
@@ -1247,8 +1490,26 @@ export function syncNow(net, { restart = false } = {}) {
 
 // --- Initialization ---
 
-export function init(wasmFunctions) {
+export async function init(wasmFunctions) {
   _wasm = wasmFunctions;
+
+  // Load cached header IDs from OPFS and inject into main-thread WASM
+  // so explorer queries don't trigger a full header re-sync
+  for (const net of getEnabledNetworks()) {
+    try {
+      const headerBytes = await opfsLoad(net + ':header_ids');
+      if (headerBytes && headerBytes.byteLength > 0 && _wasm.set_cached_header_ids) {
+        const genesisHex = GENESIS_IDS[net] || GENESIS_IDS[net.replace('_v2', '')];
+        if (genesisHex) {
+          _wasm.set_cached_header_ids(genesisHex, headerBytes);
+          console.log(`[chain] Injected ${headerBytes.byteLength / 32} cached header IDs for ${net}`);
+        }
+      }
+    } catch (e) {
+      // Non-fatal — explorer will fall back to syncing headers
+    }
+  }
+
   loadFilters();
 
   // Auto-start sync if any networks are enabled

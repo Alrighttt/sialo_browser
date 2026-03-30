@@ -656,7 +656,7 @@
           <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
             <h2 style="color:var(--text-secondary,#888);">Explorer Unavailable</h2>
             <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable at least one coin network in the <strong>Syncer</strong> page to use the Explorer.
+              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Explorer.
             </p>
           </div>
         </div>
@@ -807,7 +807,7 @@
           <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
             <h2 style="color:var(--text-secondary,#888);">Wallet Unavailable</h2>
             <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable at least one coin network in the <strong>Syncer</strong> page to use the Wallet.
+              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Wallet.
             </p>
           </div>
         </div>
@@ -1035,7 +1035,7 @@
           <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
             <h2 style="color:var(--text-secondary,#888);">Manifest Unavailable</h2>
             <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable at least one coin network in the <strong>Syncer</strong> page to use Manifests.
+              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use Manifests.
             </p>
           </div>
         </div>
@@ -1389,10 +1389,46 @@
       open_private_manifest, open_channel_manifest, open_group_manifest,
       build_v2_transaction, broadcast_v2_transaction,
       compute_utxo_proofs, v2_output_id, attestation_key_hash,
+      set_cached_header_ids,
     } from './pkg/syncer_wasm.js';
-        import { init as chainInit, onChange as chainOnChange, isSyncing, getSyncState, getEnabledNetworks, getNetworkConfig, getGenesisHex, getFilterUrl, getTxindexUrl, getUtxoIndexUrl, getAttestationIndexUrl, getActiveNetwork, setActiveNetwork, getRelayState, getMempool, getMempoolTransactions, onMempoolChange, addToMempool, clearMempool, loadAttestationEntries, exploreQuery as chainExploreQuery, exportNetworkData, importNetworkData, getStorageSizes } from './chain.js';
+        import { init as chainInit, onChange as chainOnChange, isSyncing, getSyncState, getEnabledNetworks, getNetworkConfig, getGenesisHex, getFilterUrl, getTxindexUrl, getUtxoIndexUrl, getAttestationIndexUrl, getActiveNetwork, setActiveNetwork, getRelayState, getMempool, getMempoolTransactions, onMempoolChange, addToMempool, clearMempool, loadAttestationEntries, exploreQuery as chainExploreQuery, exportNetworkData, importNetworkData, getStorageSizes, isReady } from './chain.js';
     import { initExplorer, explore as explorerQuery, exploreTransaction, buildTransactionCard, highlightMempoolTxn } from './explorer.js';
     import { initSyncerConfig } from './syncer-config.js';
+
+    // --- KDF Worker (encrypt/decrypt off main thread) ---
+    let _kdfWorker = null;
+    let _kdfReady = false;
+    const _kdfCallbacks = new Map();
+    let _kdfIdCounter = 0;
+
+    function initKdfWorker() {
+      _kdfWorker = new Worker('./kdf-worker.js', { type: 'module' });
+      _kdfWorker.onmessage = (e) => {
+        if (e.data.type === 'ready') { _kdfReady = true; return; }
+        const cb = _kdfCallbacks.get(e.data.id);
+        if (!cb) return;
+        _kdfCallbacks.delete(e.data.id);
+        if (e.data.type === 'error') cb.reject(new Error(e.data.error));
+        else cb.resolve(e.data.result);
+      };
+      _kdfWorker.postMessage({ type: 'init', wasmUrl: './pkg/syncer_wasm_bg.wasm' });
+    }
+
+    function kdfEncrypt(entropyHex, password) {
+      return new Promise((resolve, reject) => {
+        const id = ++_kdfIdCounter;
+        _kdfCallbacks.set(id, { resolve, reject });
+        _kdfWorker.postMessage({ type: 'encrypt', id, entropyHex, password });
+      });
+    }
+
+    function kdfDecrypt(encryptedHex, password) {
+      return new Promise((resolve, reject) => {
+        const id = ++_kdfIdCounter;
+        _kdfCallbacks.set(id, { resolve, reject });
+        _kdfWorker.postMessage({ type: 'decrypt', id, encryptedHex, password });
+      });
+    }
 
     // Debug helpers (accessible from console)
     window._dbg = { getMempool, getMempoolTransactions };
@@ -3285,12 +3321,14 @@
     // Initialize syncer WASM, chain service, and explorer panel
     await syncerInit();
     _dbg('[JS] Syncer WASM module initialized');
-    chainInit({
+    initKdfWorker();
+    await chainInit({
       connect_and_discover_ip, sync_chain, scan_balance_filtered,
       generate_filters, generate_txindex, lookup_txid, lookup_utxos,
       listen_for_relays, sync_headers, explore_query, scan_wallet_utxos,
       generate_mnemonic, mnemonic_to_entropy, entropy_to_mnemonic,
       encrypt_entropy, decrypt_entropy, derive_addresses,
+      set_cached_header_ids,
     });
     initExplorer();
     initAttestationExplorer();
@@ -3304,13 +3342,17 @@
     document.querySelectorAll('.net-bar').forEach(bar => {
       bar.innerHTML = `
         <span class="nb-dot">&#9679;</span>
-        <span class="nb-name">Mainnet</span>
-        <span class="nb-state">Disabled</span>
-        <span class="nb-phase"></span>
-        <span class="nb-relay">Relay: off</span>
+        <span class="nb-name" style="cursor:pointer;" title="Open Syncer">Mainnet</span>
+        <span class="nb-state" style="cursor:pointer;" title="Open Syncer">Disabled</span>
+        <span class="nb-phase" style="cursor:pointer;" title="Open Syncer"></span>
+        <span class="nb-relay" style="cursor:pointer;" title="Open Syncer">Relay: off</span>
         <span class="nb-sep"></span>
         <span style="flex:1;"></span>
         <span class="nb-sel-mount"></span>`;
+      // Click status area to open syncer page
+      for (const cls of ['.nb-name', '.nb-state', '.nb-phase', '.nb-relay']) {
+        bar.querySelector(cls).addEventListener('click', () => openOrActivateInternalTab('syncer-config'));
+      }
       const sel = createNetSelector({
         mode: 'single',
         initial: getActiveNetwork(),
@@ -3393,9 +3435,12 @@
         }
 
         const relayEl = bar.querySelector('.nb-relay');
-        if (relayState.running) {
+        if (relayState.connected) {
           relayEl.textContent = 'Relay: connected';
           relayEl.style.color = '#4ade80';
+        } else if (relayState.running) {
+          relayEl.textContent = 'Relay: connecting';
+          relayEl.style.color = '#f59e0b';
         } else {
           relayEl.textContent = 'Relay: off';
           relayEl.style.color = '#666';
@@ -3409,13 +3454,17 @@
 
     // Toggle chain-dependent pages based on active networks
     function updateChainPageAvailability() {
-      const hasNetworks = getEnabledNetworks().length > 0;
+      const enabled = getEnabledNetworks();
+      const hasSynced = isReady() || enabled.some(net => {
+        const s = getSyncState(net);
+        return s.status === 'synced';
+      });
       for (const prefix of ['exp', 'wallet', 'manifest']) {
         const overlay = document.getElementById(`${prefix}-disabled-overlay`);
         const content = document.getElementById(`${prefix}-main-content`);
         if (overlay && content) {
-          overlay.style.display = hasNetworks ? 'none' : '';
-          content.style.display = hasNetworks ? '' : 'none';
+          overlay.style.display = hasSynced ? 'none' : '';
+          content.style.display = hasSynced ? '' : 'none';
         }
       }
     }
@@ -3457,34 +3506,36 @@
 
       for (const net of enabled) {
         const s = getSyncState(net);
+        const showLabel = enabled.length > 1;
         const label = net === 'mainnet' ? 'M' : net === 'mainnet_v2' ? 'V2' : net === 'zen' ? 'Z' : net.slice(0, 2).toUpperCase();
+        const prefix = showLabel ? label + ':' : '';
         let text, color;
         if (s.status === 'syncing') {
           if (s.currentHeight != null && s.networkHeight != null && s.currentHeight < s.networkHeight) {
-            text = label + ':' + s.currentHeight.toLocaleString() + '/' + s.networkHeight.toLocaleString();
+            text = prefix + s.currentHeight.toLocaleString() + '/' + s.networkHeight.toLocaleString();
           } else if (s.currentHeight != null && s.networkHeight != null) {
-            text = label + ':' + s.networkHeight.toLocaleString();
+            text = prefix + s.networkHeight.toLocaleString();
           } else {
-            text = label + ':syncing';
+            text = prefix + 'syncing';
           }
           color = '#60a5fa';
           if (worstStatus === 'synced') worstStatus = 'syncing';
         } else if (s.status === 'synced') {
-          text = s.networkHeight != null ? label + ':' + s.networkHeight.toLocaleString() : label + ':synced';
+          text = s.networkHeight != null ? prefix + s.networkHeight.toLocaleString() : prefix + 'synced';
           color = '#4ade80';
         } else if (s.status === 'error') {
-          text = label + ':err';
+          text = prefix + 'err';
           color = '#f87171';
           worstStatus = 'error';
         } else {
-          text = label + ':idle';
+          text = prefix + 'idle';
           color = '#888';
         }
         const height = s.networkHeight || s.currentHeight;
         if (height != null && (s.status === 'synced' || s.status === 'syncing')) {
-          spans.push('<span style="color:' + color + '">' + label + ':<span data-block-height="' + height + '" data-net="' + net + '" style="cursor:pointer;" title="View block ' + height + ' in Explorer">' + height.toLocaleString() + '</span></span>');
+          spans.push('<span style="color:' + color + '">' + prefix + '<span data-block-height="' + height + '" data-net="' + net + '" style="cursor:pointer;" title="View block ' + height + ' in Explorer">' + height.toLocaleString() + '</span></span>');
         } else {
-          spans.push('<span style="color:' + color + '">' + text + '</span>');
+          spans.push('<span style="color:' + color + '; cursor:pointer;" title="Open Syncer">' + text + '</span>');
         }
       }
 
@@ -6936,9 +6987,8 @@ p{margin:0.8em 0;}
 
       try {
         document.getElementById('wallet-status-text').textContent = 'Encrypting...';
-        await new Promise(r => setTimeout(r, 50));
         const entropyHex = mnemonic_to_entropy(phrase);
-        const encrypted = encrypt_entropy(entropyHex, password);
+        const encrypted = await kdfEncrypt(entropyHex, password);
         await walletDbSave('encrypted_entropy', encrypted);
         _walletEntropy = entropyHex;
         _walletHasSaved = true;
@@ -6962,8 +7012,7 @@ p{margin:0.8em 0;}
         const encrypted = await walletDbLoad('encrypted_entropy');
         if (!encrypted) { walletLog('No saved wallet found in browser storage.', 'err'); return; }
         document.getElementById('wallet-status-text').textContent = 'Decrypting...';
-        await new Promise(r => setTimeout(r, 50));
-        const entropyHex = decrypt_entropy(encrypted, password);
+        const entropyHex = await kdfDecrypt(encrypted, password);
         _walletEntropy = entropyHex;
         _walletHasSaved = true;
         document.getElementById('wallet-password').value = '';
@@ -8149,6 +8198,8 @@ p{margin:0.8em 0;}
       }
     }
 
+    let _walletScanWorker = null;
+
     async function walletScanUtxos() {
       if (!_walletEntropy) { walletLog('Unlock wallet first.', 'err'); return; }
 
@@ -8183,11 +8234,50 @@ p{margin:0.8em 0;}
 
       try {
         const utxoIndexUrl = getUtxoIndexUrl();
-        const resultJson = await scan_wallet_utxos(
-          _walletEntropy, account, config.peerUrl, genesisHex, filterUrl,
-          utxoIndexUrl || undefined,
-          walletScanLog, certHash
-        );
+
+        // Run scan in a Web Worker to avoid blocking the main thread
+        const resultJson = await new Promise((resolve, reject) => {
+          if (_walletScanWorker) { _walletScanWorker.terminate(); }
+          const worker = new Worker('./wallet-scan-worker.js', { type: 'module' });
+          _walletScanWorker = worker;
+
+          worker.onmessage = (e) => {
+            switch (e.data.type) {
+              case 'ready':
+                worker.postMessage({
+                  type: 'scan',
+                  entropyHex: _walletEntropy,
+                  account,
+                  peerUrl: config.peerUrl,
+                  genesisHex,
+                  filterUrl,
+                  utxoIndexUrl: utxoIndexUrl || undefined,
+                  certHash: certHash || undefined,
+                });
+                break;
+              case 'log':
+                walletScanLog(e.data.msg, e.data.cls);
+                break;
+              case 'result':
+                worker.terminate();
+                _walletScanWorker = null;
+                resolve(e.data.resultJson);
+                break;
+              case 'error':
+                worker.terminate();
+                _walletScanWorker = null;
+                reject(new Error(e.data.error));
+                break;
+            }
+          };
+          worker.onerror = (err) => {
+            worker.terminate();
+            _walletScanWorker = null;
+            reject(new Error(err.message));
+          };
+          worker.postMessage({ type: 'init', wasmUrl: './pkg/syncer_wasm_bg.wasm' });
+        });
+
         const result = JSON.parse(resultJson);
         _lastWalletScanResult = result;
 
@@ -8479,7 +8569,7 @@ p{margin:0.8em 0;}
       try {
         const encrypted = await walletDbLoad('encrypted_entropy');
         if (!encrypted) { mfstLog('No saved wallet found.', 'err'); return; }
-        const entropyHex = decrypt_entropy(encrypted, password);
+        const entropyHex = await kdfDecrypt(encrypted, password);
         _walletEntropy = entropyHex;
         _walletHasSaved = true;
         document.getElementById('mfst-password').value = '';

@@ -6,7 +6,28 @@ import init, { sync_headers, generate_filters, generate_txindex }
   from './pkg/syncer_wasm.js';
 
 const DEFAULT_NUM_WORKERS = 10;
-const CHUNK_SIZE = 5000; // blocks per work unit — small chunks enable work-stealing
+const CHUNK_SIZE = 1000; // blocks per work unit — kept small to avoid Chrome's IndexedDB value size limits in workers
+
+// --- OPFS helpers (Origin Private File System — reliable for large binary data) ---
+
+async function opfsLoad(key) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const fh = await root.getFileHandle(key);
+    const file = await fh.getFile();
+    const buffer = await file.arrayBuffer();
+    return new Uint8Array(buffer);
+  } catch (e) {
+    return null;
+  }
+}
+
+// Load data: try OPFS first, fall back to IndexedDB
+async function loadData(key) {
+  const opfs = await opfsLoad(key);
+  if (opfs && opfs.byteLength > 0) return opfs;
+  return syncerDbLoad(key);
+}
 
 // --- IndexedDB helpers (same as chain.js, available in workers) ---
 
@@ -36,6 +57,23 @@ function syncerDbSave(key, data) {
     };
     req.onerror = () => reject(req.error);
   });
+}
+
+// Chunked save for large blobs — splits into 2MB pieces
+const CHUNK_MAX = 2 * 1024 * 1024;
+async function syncerDbSaveChunked(key, data, logFn) {
+  const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
+  const numChunks = Math.ceil(arr.byteLength / CHUNK_MAX);
+  const sizeMB = (arr.byteLength / 1024 / 1024).toFixed(1);
+  if (logFn) logFn(`Saving ${sizeMB} MB in ${numChunks} chunks...`, 'data');
+  await syncerDbSave(key, { chunked: true, totalSize: arr.byteLength, numChunks });
+  for (let i = 0; i < numChunks; i++) {
+    const start = i * CHUNK_MAX;
+    const end = Math.min(start + CHUNK_MAX, arr.byteLength);
+    await syncerDbSave(key + ':chunk:' + i, arr.slice(start, end));
+    if (logFn && (i + 1) % 10 === 0) logFn(`Saved chunk ${i + 1}/${numChunks}`, 'data');
+  }
+  if (logFn) logFn(`Saved ${numChunks} chunks (${sizeMB} MB)`, 'data');
 }
 
 function syncerDbDelete(key) {
@@ -353,6 +391,11 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   const headerIdsBytes = await sync_headers(
     peerUrl, genesisHex, logFn, certHash || undefined
   );
+  // Save header IDs via main thread (chunked IndexedDB, avoids Chrome's large value limit)
+  if (headerIdsBytes && headerIdsBytes.length > 0) {
+    const copy = new Uint8Array(headerIdsBytes);
+    self.postMessage({ type: 'save', net, key: net + ':header_ids', data: copy }, [copy.buffer]);
+  }
   const totalBlocks = headerIdsBytes.length / 32;
   if (totalBlocks === 0) {
     logFn('No headers synced', 'err');
@@ -365,7 +408,7 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   let cachedFilterTip = 0;
   let cachedTxindexTip = 0;
   let cachedUtxoTip = 0;
-  const existingFilters = await syncerDbLoad(filterKey);
+  const existingFilters = await loadData(filterKey);
   if (existingFilters && existingFilters.byteLength >= 24) {
     try {
       const arr = existingFilters instanceof ArrayBuffer ? new Uint8Array(existingFilters) : existingFilters;
@@ -373,7 +416,7 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
       cachedFilterTip = Number(view.getBigUint64(16, true));
     } catch (e) { /* ignore parse errors, will rebuild */ }
   }
-  const existingTxindex = await syncerDbLoad(txindexKey);
+  const existingTxindex = await loadData(txindexKey);
   if (existingTxindex && existingTxindex.byteLength >= 16) {
     try {
       const arr = existingTxindex instanceof ArrayBuffer ? new Uint8Array(existingTxindex) : existingTxindex;
@@ -381,7 +424,7 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
       cachedTxindexTip = view.getUint32(12, true);
     } catch (e) { /* ignore parse errors, will rebuild */ }
   }
-  const existingUtxo = await syncerDbLoad(utxoindexKey);
+  const existingUtxo = await loadData(utxoindexKey);
   if (existingUtxo && existingUtxo.byteLength >= 16) {
     try {
       const arr = existingUtxo instanceof ArrayBuffer ? new Uint8Array(existingUtxo) : existingUtxo;
@@ -390,7 +433,7 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     } catch (e) { /* ignore parse errors, will rebuild */ }
   }
   let cachedAttestationTip = 0;
-  const existingAttestation = await syncerDbLoad(attestationKey);
+  const existingAttestation = await loadData(attestationKey);
   if (existingAttestation && existingAttestation.byteLength >= 16) {
     try {
       const arr = existingAttestation instanceof ArrayBuffer ? new Uint8Array(existingAttestation) : existingAttestation;
@@ -419,6 +462,22 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     logFn(`Attestation index has wrong data (tip ${cachedAttestationTip} > chain ${totalBlocks}) — clearing`, 'err');
     await syncerDbDelete(attestationKey);
     cachedAttestationTip = 0;
+  }
+
+  // Detect incomplete filter data: every block should have a filter entry.
+  // If the entry count is far below the tip height, force a full rebuild.
+  if (existingFilters && cachedFilterTip > 0) {
+    const arr = existingFilters instanceof ArrayBuffer ? new Uint8Array(existingFilters) : existingFilters;
+    if (arr.byteLength >= 12) {
+      const entryCount = new DataView(arr.buffer, arr.byteOffset, arr.byteLength).getUint32(8, true);
+      if (entryCount < cachedFilterTip * 0.95) {
+        logFn(`Filter data incomplete: ${entryCount} entries for ${cachedFilterTip} blocks — forcing full rebuild`, 'err');
+        cachedFilterTip = 0;
+        cachedTxindexTip = 0;
+        cachedUtxoTip = 0;
+        cachedAttestationTip = 0;
+      }
+    }
   }
 
   // If cached data covers the chain tip exactly, skip
@@ -557,14 +616,20 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     }, [headerSliceCopy.buffer]);
   }
 
+  // In-memory accumulator — avoids IndexedDB read failures in workers
+  const inMemoryChunks = new Map(); // chunkStart → parsed result
+
   async function saveChunkCheckpoint(chunkStart, resultBytes) {
     completedSet.add(chunkStart);
-    await Promise.all([
-      syncerDbSave(wipChunkKey(chunkStart), resultBytes),
-      syncerDbSave(wipMetaKey, JSON.stringify({
-        totalBlocks, chunkSize: CHUNK_SIZE, startFrom, completed: Array.from(completedSet),
-      })),
-    ]);
+    // Parse and keep in memory instead of saving to IndexedDB
+    const arr = new Uint8Array(
+      resultBytes instanceof ArrayBuffer ? resultBytes : resultBytes.buffer ? resultBytes : new Uint8Array(resultBytes)
+    );
+    inMemoryChunks.set(chunkStart, parseChunkResult(arr));
+    // Still save meta for resume tracking (small data, won't fail)
+    await syncerDbSave(wipMetaKey, JSON.stringify({
+      totalBlocks, chunkSize: CHUNK_SIZE, startFrom, completed: Array.from(completedSet),
+    }));
   }
 
   // Run workers (if any remaining)
@@ -631,18 +696,20 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     await Promise.all(workerDonePromises);
   }
 
-  // Step 4: Load all chunk results from checkpoints and merge in height order
-  logFn('All chunks done, loading and merging results...', 'info');
+  // Step 4: Merge all in-memory chunk results (no IndexedDB reads needed)
+  logFn('All chunks done, merging results...', 'info');
 
+  const sortedChunks = [...allChunkDefs].sort((a, b) => a.start - b.start);
+
+  // Merge filters
+  let allFilters = existingFilterEntries;
   const allChunkResults = [];
-  for (const chunk of allChunkDefs) {
-    const data = await syncerDbLoad(wipChunkKey(chunk.start));
-    if (data) {
-      const parsed = parseChunkResult(new Uint8Array(
-        data instanceof ArrayBuffer ? data : data.buffer ? data : new Uint8Array(data)
-      ));
+  for (const chunk of sortedChunks) {
+    const parsed = inMemoryChunks.get(chunk.start);
+    if (parsed) {
+      allFilters = allFilters.concat(parsed.filters);
       allChunkResults.push({
-        chunkStart: chunk.start, filters: parsed.filters,
+        chunkStart: chunk.start,
         txindexBytes: parsed.txindexBytes, txindexCount: parsed.txindexCount,
         utxoCreatedBytes: parsed.utxoCreatedBytes, utxoCreatedCount: parsed.utxoCreatedCount,
         utxoSpentBytes: parsed.utxoSpentBytes, utxoSpentCount: parsed.utxoSpentCount,
@@ -651,25 +718,17 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     }
   }
 
-  allChunkResults.sort((a, b) => a.chunkStart - b.chunkStart);
-
-  // Merge filters: existing cached entries + new chunk entries
-  let allFilters = existingFilterEntries;
-  for (const chunk of allChunkResults) {
-    allFilters = allFilters.concat(chunk.filters);
-  }
-
   const tipHeight = allFilters.length > 0
     ? allFilters[allFilters.length - 1].height
     : totalBlocks;
 
-  // Step 5a: Save filters, then free filter data to reclaim memory before txindex merge
-  logFn('Saving filters to IndexedDB...', 'info');
+  logFn('Serializing filters...', 'info');
   const filterBytes = serializeFilterFile(allFilters, tipHeight);
-  await syncerDbSave(filterKey, filterBytes);
   allFilters = null;
-  for (const c of allChunkResults) c.filters = null;
-  logFn('Filters saved', 'ok');
+  for (const [, parsed] of inMemoryChunks) { parsed.filters = null; }
+  // Send to main thread for IndexedDB save (worker IndexedDB is unreliable for large writes)
+  self.postMessage({ type: 'save', net, key: filterKey, data: filterBytes }, [filterBytes.buffer]);
+  logFn('Filters sent to main thread for save', 'ok');
 
   // Step 5b: K-way merge txindex binary — each chunk's data is already sorted by prefix
   logFn('K-way merging transaction index...', 'info');
@@ -682,10 +741,11 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   const totalTxCount = mergedTxindexBytes.byteLength / 12;
   logFn(`Merged ${totalTxCount} txindex entries`, 'ok');
 
-  logFn('Saving transaction index to IndexedDB...', 'info');
-  await syncerDbSave(txindexKey, serializeTxindex(mergedTxindexBytes, totalTxCount, tipHeight));
+  logFn('Serializing transaction index...', 'info');
+  const txindexSerialized = serializeTxindex(mergedTxindexBytes, totalTxCount, tipHeight);
   for (const c of allChunkResults) c.txindexBytes = null;
-  logFn('Transaction index saved', 'ok');
+  self.postMessage({ type: 'save', net, key: txindexKey, data: txindexSerialized }, [txindexSerialized.buffer]);
+  logFn('Transaction index sent to main thread for save', 'ok');
 
   // Build UTXO index: existing unspent + new creates - new spends.
   // Sort each chunk's spent entries then k-way merge into a global sorted array.
@@ -737,11 +797,11 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   });
   logFn(`UTXO index: ${totalCreated} created, ${totalSpent} spent, ${unspent.length} unspent`, 'ok');
 
-  logFn('Saving UTXO index to IndexedDB...', 'info');
+  logFn('Serializing UTXO index...', 'info');
   const utxoBytes = serializeUtxoIndex(unspent, tipHeight);
-  await syncerDbSave(utxoindexKey, utxoBytes);
   for (const c of allChunkResults) { c.utxoCreatedBytes = null; c.utxoSpentBytes = null; }
-  logFn('UTXO index saved', 'ok');
+  self.postMessage({ type: 'save', net, key: utxoindexKey, data: utxoBytes }, [utxoBytes.buffer]);
+  logFn('UTXO index sent to main thread for save', 'ok');
 
   // Build attestation index: existing entries + new chunk entries, sorted by (pubkey, keyHash, height)
   logFn('Building attestation index...', 'info');
@@ -758,10 +818,10 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   });
   logFn(`Attestation index: ${allAttestations.length} entries`, 'ok');
 
-  logFn('Saving attestation index to IndexedDB...', 'info');
+  logFn('Serializing attestation index...', 'info');
   const attestationBytes = serializeAttestationIndex(allAttestations, tipHeight);
-  await syncerDbSave(attestationKey, attestationBytes);
-  logFn('Attestation index saved', 'ok');
+  self.postMessage({ type: 'save', net, key: attestationKey, data: attestationBytes }, [attestationBytes.buffer]);
+  logFn('Attestation index sent to main thread for save', 'ok');
 
   // Clean up WIP checkpoint data
   logFn('Cleaning up checkpoints...', 'info');
@@ -795,7 +855,19 @@ self.onmessage = async (e) => {
       return;
     }
 
-    const { net, peerUrl, genesisHex, certHash, v2, startHeight, filterKey, txindexKey, utxoindexKey, attestationKey, numWorkers: msgNumWorkers } = e.data;
+    const { net, peerUrl, genesisHex, certHash, v2, startHeight, filterKey, txindexKey, utxoindexKey, attestationKey, numWorkers: msgNumWorkers, cachedHeaderIds } = e.data;
+
+    // If main thread pre-loaded cached headers, inject into the WASM's
+    // idb_load memory cache so sync_headers finds them without hitting
+    // IndexedDB (which is unreliable in workers for large values).
+    if (cachedHeaderIds && cachedHeaderIds.byteLength > 0) {
+      try {
+        const { _injectCache } = await import('./pkg/snippets/syncer_wasm-60b7e6263235eb95/inline0.js');
+        _injectCache(net + ':header_ids', new Uint8Array(cachedHeaderIds));
+      } catch (e) {
+        // Failed to inject — sync_headers will re-download
+      }
+    }
     const logFn = (msg, cls) => self.postMessage({ type: 'log', net, msg, cls });
 
     try {
