@@ -9,6 +9,11 @@
 // Both functions take an SDK object handle, DOM elements, and a helpers object
 // containing utility functions (formatSize, getUrl, etc.) so they remain decoupled
 // from the main index.html script.
+//
+// The WebCodecs pipeline delegates rendering, timing, audio MSE, and decode feeding
+// to video-pipeline-core.js (shared with sia-injected.js for iframe playback).
+
+const VPC = self.VideoPipelineCore;
 
 // --- WebCodecs streaming pipeline (handles B-frames correctly) ---
 
@@ -22,87 +27,35 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   const totalSize = obj.size();
   statusEl.textContent = `File size: ${formatSize(totalSize)}. Initializing WebCodecs...`;
 
-  // State
+  // Build shared pipeline state
+  const s = VPC.createState();
+  s.canvas = canvasEl;
+  s.ctx = canvasEl.getContext('2d');
+
+  // Local state (not shared with core)
   let byteOffset = 0;
-  let demuxWorker = null;   // worker handle (needed by seekTo before worker is created)
-  let seekPendingFlag = false; // true between seek request and worker flush
-  let downloadComplete = false;
+  let demuxWorker = null;
+  let seekPendingFlag = false;
   let mp4boxReady = false;
-  let aborted = false;
   let resolveAbort, rejectAbort;
   const abortPromise = new Promise((resolve, reject) => {
     resolveAbort = resolve;
     rejectAbort = reject;
   });
 
-  // WebCodecs video decoder
-  let videoDecoder = null;
-
-  // Video rendering
-  const ctx = canvasEl.getContext('2d');
-  const frameBuffer = []; // holds only UNDISPLAYED future frames
-  const FRAME_BUFFER_MAX = 6;
-  let renderLoopRunning = false;
-  let canvasSized = false;
-  let paused = false;
-  let pauseOffsetUs = 0; // microseconds of media time accumulated before pause
-
-  // Audio via MSE (hidden <audio> element with SourceBuffer)
-  let audioEl = null;
-  let audioMediaSource = null;
-  let audioSourceBuffer = null;
-  const audioAppendQueue = [];
-  let audioSbAppending = false;
-  let hasAudio = false;
-  let audioMode = null; // 'fmp4-mse' (setSegmentOptions) or 'raw-mse' (setExtractionOptions → audio/mpeg)
-
-  // Video-only timing (used when no audio clock is available)
-  let wallClockStart = 0;   // performance.now() when first frame is displayed
-  let videoTimeBase = -1;   // PTS (microseconds) of the first displayed video frame
-  let wallClockSynced = false; // true once first frame display establishes timing
-
-  // Stall compensation: when the main thread is blocked (WASM slab processing),
-  // rAF stops firing. When it resumes, the wall clock has jumped forward.
-  // Instead of skipping frames (visible stutter), we absorb the excess time
-  // so the video effectively "pauses" during the stall and resumes smoothly.
-  let lastRafTime = 0;
-  const STALL_THRESHOLD_MS = 50; // gaps longer than 3 frames at 60fps = stall
-  const NORMAL_FRAME_MS = 16.67; // expected rAF interval at 60Hz
-
-  // Controls state
-  let mediaDuration = 0; // from worker stream-init, seconds
-
   // Seek state
-  let isSeeking = false;        // true while user is dragging the scrub bar
-  let seekInProgress = false;   // prevents concurrent seeks
-  let pendingSeekTime = null;   // queued seek during an in-progress seek
-  let seekPendingDraw = false;  // true after seekTo(), cleared after drawing one frame while paused
+  let seekInProgress = false;
+  let pendingSeekTime = null;
   let bufferedDurationSec = 0;
   let lastBufferedUpdateTime = 0;
 
-  // Returns current media time in microseconds
-  function getCurrentMediaTimeUs() {
-    if (paused) return pauseOffsetUs;
-    if (hasAudio && audioEl) {
-      // Always use audio as the clock when audio is active.
-      // Stall video (return -1) until audio actually starts playing,
-      // so video and audio are in sync from the very first frame.
-      if (audioEl.paused || audioEl.currentTime === 0) return -1;
-      return audioEl.currentTime * 1e6;
-    }
-    // No audio: use wall clock synced to first displayed frame
-    if (!wallClockSynced) return -1; // timing not yet established
-    const elapsedUs = (performance.now() - wallClockStart) * 1000;
-    return videoTimeBase + elapsedUs;
-  }
-
   // Approximate buffered duration from download progress (mp4box is in worker)
   function getBufferedDuration() {
-    if (mediaDuration <= 0) return 0;
-    if (downloadComplete) return mediaDuration;
+    if (s.mediaDuration <= 0) return 0;
+    if (s.downloadComplete) return s.mediaDuration;
     const max = progressEl.max || 1;
     const current = progressEl.value || 0;
-    return (current / max) * mediaDuration;
+    return (current / max) * s.mediaDuration;
   }
 
   function getBufferedDurationThrottled() {
@@ -114,7 +67,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   }
 
   async function seekTo(timeSec) {
-    if (!mp4boxReady || mediaDuration <= 0) return;
+    if (!mp4boxReady || s.mediaDuration <= 0) return;
 
     if (seekInProgress) {
       pendingSeekTime = timeSec;
@@ -123,7 +76,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     seekInProgress = true;
 
     // Clamp to buffered range
-    const maxSeekable = downloadComplete ? mediaDuration : getBufferedDuration();
+    const maxSeekable = s.downloadComplete ? s.mediaDuration : getBufferedDuration();
     timeSec = Math.max(0, Math.min(timeSec, maxSeekable - 0.1));
 
     _dbg(`[webcodec] seekTo: ${timeSec.toFixed(2)}s (buffered: ${maxSeekable.toFixed(2)}s)`);
@@ -133,56 +86,28 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     if (demuxWorker) demuxWorker.postMessage({ type: 'seek', timeSec });
 
     // 2. Flush VideoDecoder — drains in-flight decodes
-    if (videoDecoder && videoDecoder.state === 'configured') {
+    if (s.decoder && s.decoder.state === 'configured') {
       try {
-        await videoDecoder.flush();
+        await s.decoder.flush();
       } catch (e) {
         _dbgWarn('[webcodec] decoder flush on seek:', e);
       }
     }
 
-    // 3. Clear pending video samples and frame buffer
-    pendingVideoSamples.length = 0;
-    while (frameBuffer.length > 0) frameBuffer.shift().close();
+    // 3. Clear buffers and reset timing
+    VPC.flushBuffers(s);
+    VPC.resetTimingForSeek(s, timeSec * 1e6);
 
-    // 4. Reset timing
-    const seekTimeUs = timeSec * 1e6;
-    pauseOffsetUs = seekTimeUs;
-    videoTimeBase = seekTimeUs;
-    wallClockStart = performance.now();
-    wallClockSynced = true;
-    lastRafTime = wallClockStart;
+    // 4. Handle audio seek
+    VPC.seekAudio(s, timeSec);
 
-    // 5. Handle audio seek
-    if (hasAudio && audioEl) {
-      audioAppendQueue.length = 0;
-
-      // Abort any in-progress SourceBuffer operation
-      if (audioSourceBuffer && audioSourceBuffer.updating) {
-        try { audioSourceBuffer.abort(); } catch (e) {}
-        audioSbAppending = false;
-      }
-
-      // For raw-mse, set timestampOffset so new data is positioned correctly
-      if (audioMode === 'raw-mse' && audioSourceBuffer) {
-        try { audioSourceBuffer.timestampOffset = timeSec; } catch (e) {}
-      }
-
-      audioEl.currentTime = timeSec;
-      if (paused) {
-        audioEl.pause();
-      } else {
-        audioEl.play().catch(() => {});
-      }
+    // 5. Re-anchor wall clock for non-audio case
+    if (!s.hasAudio && !s.paused) {
+      s.wallClockStart = performance.now();
+      s.videoTimeBase = timeSec * 1e6;
     }
 
-    // 6. Re-anchor wall clock for non-audio case
-    if (!hasAudio && !paused) {
-      wallClockStart = performance.now();
-      videoTimeBase = seekTimeUs;
-    }
-
-    seekPendingDraw = true;
+    s.seekPendingDraw = true;
     seekInProgress = false;
 
     // If another seek was requested during this one, execute it
@@ -193,120 +118,23 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     }
   }
 
-  // --- Video frame rendering ---
-  // Key design: frames are CONSUMED (shifted + closed) immediately after drawing.
-  // The canvas retains the drawn pixels, so we don't need to hold the VideoFrame.
-  // This frees buffer slots so the decoder output callback doesn't evict
-  // undisplayed frames.
+  // --- Render loop (delegates to shared core) ---
   function renderLoop() {
-    if (aborted) {
-      while (frameBuffer.length > 0) frameBuffer.shift().close();
-      return;
-    }
-
-    // Stall compensation: if the main thread was blocked (WASM slab processing,
-    // mp4box parsing), absorb the excess time so the clock doesn't jump forward.
-    // This makes the video "pause" during stalls instead of skipping frames.
+    // Extended stall logging (debug only, not in core)
     const now = performance.now();
-    if (lastRafTime > 0) {
-      const gapMs = now - lastRafTime;
+    if (s.lastRafTime > 0) {
+      const gapMs = now - s.lastRafTime;
       if (gapMs > 50) {
-        _dbgWarn(`[perf] rAF gap: ${gapMs.toFixed(1)}ms (missed ${Math.floor(gapMs/16.67)} frames) bufLen=${frameBuffer.length} pending=${pendingVideoSamples.length} audioQ=${audioAppendQueue.length} dlComplete=${downloadComplete}`);
-      }
-    }
-    if (lastRafTime > 0 && wallClockSynced && !hasAudio && !paused) {
-      const gapMs = now - lastRafTime;
-      if (gapMs > STALL_THRESHOLD_MS) {
-        const excessMs = gapMs - NORMAL_FRAME_MS;
-        wallClockStart += excessMs; // shift clock forward = time "didn't pass"
-      }
-    }
-    lastRafTime = now;
-
-    // Drip-feed queued samples to decoders (backpressure via decodeQueueSize)
-    feedSamples();
-
-    if (paused) {
-      // After a seek while paused, draw the first available frame as a preview
-      if (seekPendingDraw && frameBuffer.length > 0) {
-        seekPendingDraw = false;
-        let frameToDraw = null;
-        while (frameBuffer.length > 0) {
-          if (frameToDraw) frameToDraw.close();
-          frameToDraw = frameBuffer.shift();
-        }
-        if (frameToDraw) {
-          ctx.drawImage(frameToDraw, 0, 0, canvasEl.width, canvasEl.height);
-          frameToDraw.close();
-        }
-      }
-      requestAnimationFrame(renderLoop);
-      return;
-    }
-
-    // Establish timing on first available frame (not on onReady)
-    if (!wallClockSynced && !hasAudio && frameBuffer.length > 0) {
-      videoTimeBase = frameBuffer[0].timestamp; // microseconds
-      wallClockStart = performance.now();
-      wallClockSynced = true;
-      lastRafTime = wallClockStart; // reset so first real frame doesn't trigger stall detection
-      _dbg(`[webcodec] timing synced: videoTimeBase=${videoTimeBase} bufLen=${frameBuffer.length}`);
-    }
-
-    const mediaTimeUs = getCurrentMediaTimeUs();
-    if (mediaTimeUs < 0) {
-      requestAnimationFrame(renderLoop);
-      return;
-    }
-
-    // Find the latest frame whose time has arrived, consume all older ones
-    let frameToDraw = null;
-    while (frameBuffer.length > 0 && frameBuffer[0].timestamp <= mediaTimeUs) {
-      if (frameToDraw) frameToDraw.close(); // skip intermediate frames
-      frameToDraw = frameBuffer.shift();
-    }
-
-    if (frameToDraw) {
-      // Size canvas to video's native resolution for full quality rendering.
-      // CSS object-fit:contain handles display scaling without quality loss.
-      if (!canvasSized) {
-        canvasEl.width = frameToDraw.displayWidth;
-        canvasEl.height = frameToDraw.displayHeight;
-        canvasSized = true;
-        _dbg(`[webcodec] canvas sized to native ${frameToDraw.displayWidth}x${frameToDraw.displayHeight}`);
-      }
-
-      ctx.drawImage(frameToDraw, 0, 0, canvasEl.width, canvasEl.height);
-      frameToDraw.close();
-    }
-    // else: no new frame ready — canvas retains the last drawn content
-
-    // Update time display and seek bar
-    const mediaTimeSec = mediaTimeUs / 1e6;
-    const timeEl = document.getElementById('vc-time');
-    if (timeEl) {
-      const m = Math.floor(mediaTimeSec / 60);
-      const s = Math.floor(mediaTimeSec % 60);
-      const pad = s < 10 ? '0' : '';
-      if (mediaDuration > 0) {
-        const dm = Math.floor(mediaDuration / 60);
-        const ds = Math.floor(mediaDuration % 60);
-        const dpad = ds < 10 ? '0' : '';
-        timeEl.textContent = `${m}:${pad}${s} / ${dm}:${dpad}${ds}`;
-      } else {
-        timeEl.textContent = `${m}:${pad}${s}`;
+        _dbgWarn(`[perf] rAF gap: ${gapMs.toFixed(1)}ms (missed ${Math.floor(gapMs/16.67)} frames) bufLen=${s.frameBuffer.length} pending=${s.pendingSamples.length} audioQ=${s.audioAppendQueue.length} dlComplete=${s.downloadComplete}`);
       }
     }
 
-    // Update seek bar (unless user is dragging)
-    if (!isSeeking && mediaDuration > 0) {
-      const playedPct = Math.min(100, (mediaTimeSec / mediaDuration) * 100);
-      if (seekPlayedEl) seekPlayedEl.style.width = playedPct + '%';
-      if (seekThumbEl) seekThumbEl.style.left = playedPct + '%';
+    if (!VPC.renderTick(s)) return; // aborted
 
-      // Update buffered indicator (throttled to 1Hz)
+    // Update buffered indicator (throttled to 1Hz) — specific to main-page player
+    if (s.mediaDuration > 0 && !s.seeking) {
       const bufDur = getBufferedDurationThrottled();
-      const bufPct = Math.min(100, (bufDur / mediaDuration) * 100);
+      const bufPct = Math.min(100, (bufDur / s.mediaDuration) * 100);
       if (seekBufferedEl) seekBufferedEl.style.width = bufPct + '%';
     }
 
@@ -315,80 +143,12 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 
   let framesReceived = 0;
   function bufferVideoFrame(frame) {
-    if (aborted) { frame.close(); return; }
+    if (s.aborted) { frame.close(); return; }
     framesReceived++;
     if (framesReceived <= 5) {
-      _dbg(`[webcodec] bufferVideoFrame #${framesReceived}: ts=${frame.timestamp} bufLen=${frameBuffer.length}`);
+      _dbg(`[webcodec] bufferVideoFrame #${framesReceived}: ts=${frame.timestamp} bufLen=${s.frameBuffer.length}`);
     }
-    // No eviction — feed rate is controlled to prevent overflow
-    frameBuffer.push(frame);
-  }
-
-  // --- Rate-controlled sample feeding ---
-  // Feed based on total pipeline depth (decode queue + frame buffer).
-  // At most 1 video sample per call to prevent flooding.
-  const pendingVideoSamples = [];
-  const PIPELINE_MAX = 12; // max total items in decode queue + frame buffer
-
-  let samplesFed = 0;
-  function feedSamples() {
-    if (!videoDecoder || videoDecoder.state !== 'configured') return;
-    // Feed more aggressively when buffer is empty (startup / seeking)
-    // Otherwise feed 2 per tick (handles up to 120fps video at 60Hz display)
-    const maxFeed = frameBuffer.length === 0 ? 8 : 2;
-    let fed = 0;
-    while (pendingVideoSamples.length > 0 && fed < maxFeed) {
-      const pipelineDepth = videoDecoder.decodeQueueSize + frameBuffer.length;
-      if (pipelineDepth >= PIPELINE_MAX) break;
-      const s = pendingVideoSamples.shift();
-      fed++;
-      samplesFed++;
-      if (samplesFed <= 10) {
-        _dbg(`[webcodec] feed #${samplesFed}: cts=${s.cts} sync=${s.is_sync} pipeline=${pipelineDepth} pending=${pendingVideoSamples.length}`);
-      }
-      try {
-        videoDecoder.decode(new EncodedVideoChunk({
-          type: s.is_sync ? 'key' : 'delta',
-          timestamp: (s.cts * 1e6) / s.timescale,
-          duration: (s.duration * 1e6) / s.timescale,
-          data: s.data,
-        }));
-      } catch (e) {}
-    }
-    // Audio is handled via MSE (onSegment → SourceBuffer), not WebCodecs
-  }
-
-  // --- Audio via MSE: drain fMP4 segments into SourceBuffer ---
-  function drainAudioQueue() {
-    if (!audioSourceBuffer || audioSbAppending || audioAppendQueue.length === 0) return;
-    if (audioMediaSource.readyState !== 'open') return;
-    const buf = audioAppendQueue.shift();
-    audioSbAppending = true;
-    try {
-      audioSourceBuffer.appendBuffer(buf);
-    } catch (e) {
-      audioSbAppending = false;
-      if (e.name === 'QuotaExceededError') {
-        audioAppendQueue.unshift(buf);
-        // Evict old audio data
-        if (audioSourceBuffer.buffered.length > 0 && audioEl) {
-          const removeEnd = audioEl.currentTime - 5;
-          if (removeEnd > audioSourceBuffer.buffered.start(0)) {
-            audioSourceBuffer.remove(audioSourceBuffer.buffered.start(0), removeEnd);
-          }
-        }
-      } else {
-        _dbgWarn('[webcodec] Audio appendBuffer error:', e);
-      }
-    }
-  }
-
-  function maybeEndAudioStream() {
-    if (!downloadComplete || audioAppendQueue.length > 0 || audioSbAppending) return;
-    _dbg(`[perf] maybeEndAudioStream: calling endOfStream at ${performance.now().toFixed(1)}`);
-    if (audioMediaSource && audioMediaSource.readyState === 'open') {
-      try { audioMediaSource.endOfStream(); } catch (e) {}
-    }
+    s.frameBuffer.push(frame);
   }
 
   // --- Handle stream-init from worker: configure VideoDecoder + audio MSE ---
@@ -396,7 +156,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     mp4boxReady = true;
 
     if (msg.duration && msg.duration > 0) {
-      mediaDuration = msg.duration;
+      s.mediaDuration = msg.duration;
     }
 
     const trackDescs = [];
@@ -404,73 +164,62 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     if (msg.audioConfig) trackDescs.push(`audio (${msg.audioConfig.mime})`);
     statusEl.textContent = `Tracks: ${trackDescs.join(', ')}. Configuring decoders...`;
 
-    // --- Audio setup (via MSE) ---
-    if (msg.audioConfig && audioMediaSource && audioMediaSource.readyState === 'open') {
+    // --- Audio setup (via shared core MSE helpers) ---
+    if (msg.audioConfig && audioMediaSourceReady) {
       try {
-        audioMode = msg.audioConfig.mode;
-        audioSourceBuffer = audioMediaSource.addSourceBuffer(msg.audioConfig.mime);
-        audioSourceBuffer.addEventListener('updateend', () => {
-          audioSbAppending = false;
-          drainAudioQueue();
-          maybeEndAudioStream();
+        s.audioMode = msg.audioConfig.mode;
+        s.audioSourceBuffer = s.audioMediaSource.addSourceBuffer(msg.audioConfig.mime);
+        s.audioSourceBuffer.addEventListener('updateend', () => {
+          s.audioSbAppending = false;
+          VPC.drainAudioQueue(s);
+          VPC.maybeEndAudio(s);
         });
-        audioSourceBuffer.addEventListener('error', (e) => {
+        s.audioSourceBuffer.addEventListener('error', (e) => {
           _dbgWarn('[webcodec] Audio SourceBuffer error:', e);
         });
-        hasAudio = true;
+        s.hasAudio = true;
 
         if (msg.audioConfig.initSegment) {
-          audioAppendQueue.push(msg.audioConfig.initSegment);
-          drainAudioQueue();
+          s.audioInitSegment = msg.audioConfig.initSegment.slice
+            ? msg.audioConfig.initSegment.slice(0) : msg.audioConfig.initSegment;
+          s.audioAppendQueue.push(msg.audioConfig.initSegment);
+          VPC.drainAudioQueue(s);
         }
 
-        audioEl.play().catch(() => {});
+        s.audioEl.play().catch(() => {});
         _dbg(`[webcodec] Audio MSE ready: ${msg.audioConfig.mime} (${msg.audioConfig.mode})`);
       } catch (e) {
         _dbgWarn('[webcodec] Audio setup failed:', e);
-        hasAudio = false;
+        s.hasAudio = false;
       }
     }
 
-    // --- Video decoder setup ---
+    // --- Video decoder setup (via shared core) ---
     if (msg.videoConfig) {
-      const config = {
-        codec: msg.videoConfig.codec,
-        codedWidth: msg.videoConfig.codedWidth,
-        codedHeight: msg.videoConfig.codedHeight,
-      };
-      if (msg.videoConfig.description) {
-        config.description = new Uint8Array(msg.videoConfig.description);
-      }
-
-      videoDecoder = new VideoDecoder({
-        output: bufferVideoFrame,
-        error: (e) => {
-          console.error('[webcodec] VideoDecoder error:', e);
-          if (!aborted) {
-            aborted = true;
-            rejectAbort(new Error(`Video decoder error: ${e.message}`));
-          }
+      VPC.configureDecoder(s, msg.videoConfig, bufferVideoFrame, (e) => {
+        console.error('[webcodec] VideoDecoder error:', e);
+        if (!s.aborted) {
+          s.aborted = true;
+          rejectAbort(new Error(`Video decoder error: ${e.message}`));
         }
       });
-      videoDecoder.configure(config);
 
       _dbg(`[webcodec] VideoDecoder configured: ${msg.videoConfig.codec} ${msg.videoConfig.codedWidth}x${msg.videoConfig.codedHeight}`);
     }
 
-    if (!videoDecoder) {
+    if (!s.decoder) {
       rejectAbort(new Error('No supported video codec found'));
       return;
     }
 
     // Start render loop
-    renderLoopRunning = true;
+    s.renderRunning = true;
     requestAnimationFrame(renderLoop);
 
     statusEl.textContent = `Streaming: ${trackDescs.join(', ')}`;
   }
 
-  // --- Controls wiring (set up before download starts so controls work during streaming) ---
+  // --- Controls wiring ---
   const container = document.getElementById('video-container');
   const controlsEl = document.getElementById('video-controls');
   const playBtn = document.getElementById('vc-playpause');
@@ -480,6 +229,13 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   const seekPlayedEl = document.getElementById('vc-seek-played');
   const seekBufferedEl = document.getElementById('vc-seek-buffered');
   const seekThumbEl = document.getElementById('vc-seek-thumb');
+
+  // Wire shared state to UI elements
+  s.playBtn = playBtn;
+  s.seekPlayed = seekPlayedEl;
+  s.seekThumb = seekThumbEl;
+  // timeSpan is updated by core's updateTimeUI
+  s.timeSpan = document.getElementById('vc-time');
 
   let hideTimeout;
   function showControls() {
@@ -491,29 +247,12 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   container.addEventListener('mouseenter', showControls);
   showControls();
 
-  function togglePause() {
-    if (paused) {
-      // Resume: adjust wall clock so timing picks up from where we paused
-      paused = false;
-      if (wallClockSynced && !hasAudio) {
-        wallClockStart = performance.now() - ((pauseOffsetUs - videoTimeBase) / 1000);
-      }
-      if (audioEl && audioEl.paused) audioEl.play().catch(() => {});
-      playBtn.innerHTML = '&#9646;&#9646;';
-    } else {
-      // Pause: snapshot current media time
-      paused = true;
-      pauseOffsetUs = getCurrentMediaTimeUs();
-      if (audioEl && !audioEl.paused) audioEl.pause();
-      playBtn.innerHTML = '&#9654;';
-    }
-  }
-  canvasEl.addEventListener('click', togglePause);
-  playBtn.addEventListener('click', togglePause);
+  canvasEl.addEventListener('click', () => VPC.togglePause(s));
+  playBtn.addEventListener('click', () => VPC.togglePause(s));
   playBtn.innerHTML = '&#9646;&#9646;';
 
   volSlider.addEventListener('input', () => {
-    if (audioEl) audioEl.volume = parseFloat(volSlider.value);
+    if (s.audioEl) s.audioEl.volume = parseFloat(volSlider.value);
   });
 
   fsBtn.addEventListener('click', () => {
@@ -535,37 +274,31 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 
   function seekbarUpdateTimeDisplay(timeSec) {
     const timeEl = document.getElementById('vc-time');
-    if (!timeEl || mediaDuration <= 0) return;
-    const m = Math.floor(timeSec / 60);
-    const s = Math.floor(timeSec % 60);
-    const pad = s < 10 ? '0' : '';
-    const dm = Math.floor(mediaDuration / 60);
-    const ds = Math.floor(mediaDuration % 60);
-    const dpad = ds < 10 ? '0' : '';
-    timeEl.textContent = `${m}:${pad}${s} / ${dm}:${dpad}${ds}`;
+    if (!timeEl || s.mediaDuration <= 0) return;
+    timeEl.textContent = VPC.formatTime(timeSec) + ' / ' + VPC.formatTime(s.mediaDuration);
   }
 
   function seekbarClampPct(pct) {
-    if (!downloadComplete && mediaDuration > 0) {
-      const maxPct = Math.min(1, getBufferedDuration() / mediaDuration);
+    if (!s.downloadComplete && s.mediaDuration > 0) {
+      const maxPct = Math.min(1, getBufferedDuration() / s.mediaDuration);
       return Math.min(pct, maxPct);
     }
     return pct;
   }
 
   function seekbarStartDrag(e) {
-    if (mediaDuration <= 0) return;
+    if (s.mediaDuration <= 0) return;
     e.preventDefault();
     e.stopPropagation();
     seekbarDragging = true;
-    isSeeking = true;
+    s.seeking = true;
     seekThumbEl.style.opacity = '1';
 
     let pct = seekbarPctFromEvent(e);
     pct = seekbarClampPct(pct);
     seekPlayedEl.style.width = (pct * 100) + '%';
     seekThumbEl.style.left = (pct * 100) + '%';
-    seekbarUpdateTimeDisplay(pct * mediaDuration);
+    seekbarUpdateTimeDisplay(pct * s.mediaDuration);
   }
 
   function seekbarMoveDrag(e) {
@@ -575,18 +308,17 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     pct = seekbarClampPct(pct);
     seekPlayedEl.style.width = (pct * 100) + '%';
     seekThumbEl.style.left = (pct * 100) + '%';
-    seekbarUpdateTimeDisplay(pct * mediaDuration);
+    seekbarUpdateTimeDisplay(pct * s.mediaDuration);
   }
 
   function seekbarEndDrag(e) {
     if (!seekbarDragging) return;
     seekbarDragging = false;
-    isSeeking = false;
+    s.seeking = false;
 
-    // Calculate final position from last visual state
     const pctStr = seekPlayedEl.style.width;
     const pct = parseFloat(pctStr) / 100;
-    seekTo(pct * mediaDuration);
+    seekTo(pct * s.mediaDuration);
   }
 
   seekbarEl.addEventListener('mousedown', seekbarStartDrag);
@@ -597,36 +329,32 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   document.addEventListener('touchmove', seekbarMoveDrag, { passive: false });
   document.addEventListener('touchend', seekbarEndDrag);
 
-  // Single click to seek (without drag)
   seekbarEl.addEventListener('click', (e) => {
-    if (mediaDuration <= 0) return;
+    if (s.mediaDuration <= 0) return;
     e.stopPropagation();
     let pct = seekbarPctFromEvent(e);
     pct = seekbarClampPct(pct);
-    seekTo(pct * mediaDuration);
+    seekTo(pct * s.mediaDuration);
   });
 
   // --- Set up hidden <audio> element with MSE for audio playback ---
-  // The browser's native audio decoder (via MSE) handles multichannel AAC, Opus, etc.
-  // that WebCodecs AudioDecoder cannot decode.
+  let audioMediaSourceReady = false;
   if (window.MediaSource) {
-    audioEl = document.createElement('audio');
-    audioEl.style.display = 'none';
-    document.body.appendChild(audioEl);
-    audioMediaSource = new MediaSource();
-    audioEl.src = URL.createObjectURL(audioMediaSource);
+    s.audioEl = document.createElement('audio');
+    s.audioEl.style.display = 'none';
+    document.body.appendChild(s.audioEl);
+    s.audioMediaSource = new MediaSource();
+    s.audioEl.src = URL.createObjectURL(s.audioMediaSource);
 
-    // Wait for sourceopen before starting download (must be ready before onReady fires)
     await new Promise((resolve) => {
-      if (audioMediaSource.readyState === 'open') resolve();
-      else audioMediaSource.addEventListener('sourceopen', resolve, { once: true });
+      if (s.audioMediaSource.readyState === 'open') resolve();
+      else s.audioMediaSource.addEventListener('sourceopen', resolve, { once: true });
     });
+    audioMediaSourceReady = true;
     _dbg('[webcodec] Audio MediaSource ready');
   }
 
   // --- Stream data from SDK via Web Worker (demuxing in worker) ---
-  // mp4box.appendBuffer() runs in the worker thread, so the main thread
-  // is never blocked by MP4 parsing at slab boundaries.
   progressEl.style.display = 'block';
   const downloadStart = performance.now();
 
@@ -641,18 +369,18 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       if (msg.type === 'stream-init') {
         handleStreamInit(msg);
       } else if (msg.type === 'stream-video') {
-        if (aborted || seekPendingFlag) return;
-        for (const s of msg.samples) pendingVideoSamples.push(s);
+        if (s.aborted || seekPendingFlag) return;
+        for (const sample of msg.samples) s.pendingSamples.push(sample);
         const _dt = performance.now() - _msgT0;
-        if (_dt > 5) _dbgWarn(`[perf] stream-video handler: ${_dt.toFixed(1)}ms (${msg.samples.length} samples, pendingTotal=${pendingVideoSamples.length})`);
+        if (_dt > 5) _dbgWarn(`[perf] stream-video handler: ${_dt.toFixed(1)}ms (${msg.samples.length} samples, pendingTotal=${s.pendingSamples.length})`);
       } else if (msg.type === 'stream-audio') {
-        if (aborted || seekPendingFlag) return;
-        audioAppendQueue.push(msg.buffer);
-        drainAudioQueue();
+        if (s.aborted || seekPendingFlag) return;
+        s.audioAppendQueue.push(msg.buffer);
+        VPC.drainAudioQueue(s);
         const _dt = performance.now() - _msgT0;
-        if (_dt > 5) _dbgWarn(`[perf] stream-audio handler: ${_dt.toFixed(1)}ms (queueLen=${audioAppendQueue.length})`);
+        if (_dt > 5) _dbgWarn(`[perf] stream-audio handler: ${_dt.toFixed(1)}ms (queueLen=${s.audioAppendQueue.length})`);
       } else if (msg.type === 'stream-progress') {
-        if (aborted) return;
+        if (s.aborted) return;
         progressEl.max = msg.total;
         progressEl.value = msg.current;
         byteOffset = msg.byteOffset;
@@ -660,15 +388,10 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         statusEl.textContent = `Streaming: ${msg.current}/${msg.total} slabs (${pct}%) — ${formatSize(msg.byteOffset)} / ${formatSize(msg.totalSize)}`;
         if (msg.current === msg.total) _dbg(`[perf] last progress message received at ${_msgT0.toFixed(1)}`);
       } else if (msg.type === 'stream-seek-flushed') {
-        // Clear any stale samples that arrived between seek request and worker flush
-        pendingVideoSamples.length = 0;
-        while (frameBuffer.length > 0) frameBuffer.shift().close();
+        VPC.flushBuffers(s);
         seekPendingFlag = false;
       } else if (msg.type === 'stream-complete') {
         _dbg(`[perf] stream-complete received at ${performance.now().toFixed(1)}`);
-        // Defer resolution by one frame so the render loop can process
-        // the burst of samples from mp4box.flush() before the completion
-        // continuation (DOM updates, localStorage, etc.) blocks the thread.
         requestAnimationFrame(() => {
           _dbg(`[perf] stream-complete resolving at ${performance.now().toFixed(1)}`);
           resolveStream();
@@ -696,25 +419,16 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   try {
     await Promise.race([streamPromise, abortPromise]);
   } catch (e) {
-    aborted = true;
+    s.aborted = true;
     worker.terminate();
     throw e;
   }
-  // Do NOT terminate worker here — it's still needed for post-download seeking.
-  // Worker is terminated by the abort handler when the stream is cleaned up.
 
-  if (!aborted) {
+  if (!s.aborted) {
     const _completionT0 = performance.now();
     _dbg(`[perf] completion continuation starting at ${_completionT0.toFixed(1)}`);
-    downloadComplete = true;
+    s.downloadComplete = true;
     progressEl.value = progressEl.max;
-
-    // Don't flush the VideoDecoder here — flushing forces all queued chunks
-    // through immediately and puts the decoder in "key frame required" state,
-    // which causes a visible stutter. Instead, let the normal feedSamples() →
-    // renderLoop() pipeline drain remaining samples smoothly.
-    // Audio MSE will be ended by maybeEndAudioStream() once its queue drains
-    // naturally via the drainAudioQueue() callback chain.
 
     const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
     statusEl.textContent = `Stream complete! ${formatSize(totalSize)} in ${elapsed}s.`;
@@ -723,17 +437,8 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 
   return {
     abort: () => {
-      aborted = true;
+      VPC.abort(s);
       worker.terminate();
-      if (videoDecoder) try { videoDecoder.close(); } catch (e) {}
-      if (audioEl) {
-        try { audioEl.pause(); } catch (e) {}
-        try { audioEl.remove(); } catch (e) {}
-      }
-      if (audioMediaSource && audioMediaSource.readyState === 'open') {
-        try { audioMediaSource.endOfStream(); } catch (e) {}
-      }
-      while (frameBuffer.length > 0) frameBuffer.shift().close();
       clearTimeout(hideTimeout);
       resolveAbort();
     }
@@ -784,8 +489,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     }
   }
 
-  // mp4box v2 returns a single init segment for all tracks.
-  // Use one combined SourceBuffer with all codecs.
   let sourceBuffer = null;
   const appendQueue = [];
   let sbAppending = false;
@@ -797,7 +500,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       type: t.type, name: t.name
     })));
 
-    // Filter to only video and audio tracks (skip timecode, metadata, etc.)
     const mediaTracks = info.tracks.filter(t => t.video || t.audio);
     _dbg('[stream] Media tracks:', mediaTracks.map(t => ({
       id: t.id, codec: t.codec, video: !!t.video, audio: !!t.audio,
@@ -813,7 +515,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     ).join(', ');
     statusEl.textContent = `Tracks: ${trackDescs}. Starting playback...`;
 
-    // Build combined codec string from media tracks only
     const codecs = mediaTracks.map(t => t.codec).join(', ');
     const mime = `video/mp4; codecs="${codecs}"`;
     _dbg(`[stream] Combined MIME: ${mime}`);
@@ -827,7 +528,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     sourceBuffer = mediaSource.addSourceBuffer(mime);
     sourceBuffer.addEventListener('updateend', () => {
       sbAppending = false;
-      // After any operation completes, try to drain queued data
       if (needsEviction) {
         tryEvict();
       } else {
@@ -842,19 +542,16 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       }
     });
 
-    // Periodically evict old buffer data as video plays
     videoEl.addEventListener('timeupdate', () => {
       if (needsEviction && !sbAppending && sourceBuffer && !sourceBuffer.updating) {
         tryEvict();
       }
     });
 
-    // Set segment options only for media tracks
     for (const track of mediaTracks) {
       mp4box.setSegmentOptions(track.id, null, { nbSamples: 100, rapAlignment: true });
     }
 
-    // Get single combined init segment (mp4box v2 API)
     const initResult = mp4box.initializeSegmentation();
     _dbg('[stream] Init segment:', {
       tracks: initResult.tracks,
@@ -876,7 +573,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     if (aborted || !sourceBuffer || sourceBuffer.updating || sbAppending) return;
     if (mediaSource.readyState !== 'open') return;
     if (!sourceBuffer.buffered || sourceBuffer.buffered.length === 0) {
-      // No buffered data yet, just retry the append
       needsEviction = false;
       drainAppendQueue();
       return;
@@ -884,7 +580,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
 
     const currentTime = videoEl.currentTime;
     const bufferedStart = sourceBuffer.buffered.start(0);
-    const keepBehind = 5; // keep 5 seconds behind playhead
+    const keepBehind = 5;
 
     if (currentTime - bufferedStart > keepBehind) {
       const removeEnd = currentTime - keepBehind;
@@ -892,10 +588,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       sbAppending = true;
       sourceBuffer.remove(bufferedStart, removeEnd);
       needsEviction = false;
-      // updateend will fire → sbAppending=false → drainAppendQueue resumes
-    } else {
-      // Playhead hasn't advanced enough to evict. Wait for timeupdate.
-      // Don't spam retries — the timeupdate listener will trigger us.
     }
   }
 
@@ -905,14 +597,11 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       maybeEndOfStream();
       return;
     }
-    // Guard against SourceBuffer removed from MediaSource
     if (mediaSource.readyState !== 'open') return;
-    // Proactively evict if we have a lot buffered ahead
     if (sourceBuffer.buffered && sourceBuffer.buffered.length > 0) {
       const bufferedEnd = sourceBuffer.buffered.end(sourceBuffer.buffered.length - 1);
       const bufferedStart = sourceBuffer.buffered.start(0);
       const currentTime = videoEl.currentTime;
-      // If buffer exceeds 60 seconds ahead of playhead, evict old data first
       if (bufferedEnd - currentTime > 60 && currentTime - bufferedStart > 5) {
         _dbg(`[stream] Proactive eviction: ${(bufferedEnd - currentTime).toFixed(0)}s buffered ahead`);
         needsEviction = true;
@@ -949,7 +638,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
     if (!needsEviction) {
       drainAppendQueue();
     }
-    // If needsEviction, don't try to drain — wait for eviction to complete
   };
 
   mp4box.onError = (e) => {
@@ -985,9 +673,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       const pct = total > 0 ? ((current / total) * 100).toFixed(0) : 0;
       statusEl.textContent = `Streaming: ${current}/${total} slabs (${pct}%) — ${formatSize(byteOffset)} / ${formatSize(totalSize)}`;
 
-      // Detect moov-at-end or non-MP4: if enough data delivered and mp4box still hasn't parsed moov.
-      // We check byteOffset (bytes actually fed to mp4box) rather than slab count because
-      // the progress callback can fire before all chunk data from a slab is flushed.
       if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
         aborted = true;
         rejectAbort(new Error(
@@ -1001,9 +686,6 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
   try {
     await Promise.race([streamPromise, abortPromise]);
   } catch (e) {
-    // Silence callbacks from the still-running WASM download before
-    // propagating the error — prevents it from clobbering the status
-    // element if the caller starts a fallback download.
     aborted = true;
     throw e;
   }

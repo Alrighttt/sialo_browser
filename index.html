@@ -1353,6 +1353,9 @@
 
   </div><!-- /app -->
 
+  <!-- Shared video pipeline core (used by video-streaming.js and injected into iframes for sia-injected.js) -->
+  <script src="./video-pipeline-core.js"></script>
+
   <script type="module">
     import init, {
       generateRecoveryPhrase,
@@ -5515,11 +5518,15 @@
     // then downloads the target via the SDK (which holds the app key) and
     // loads it back into the iframe.
 
-    // Script injected into every HTML page loaded in the iframe.
-    // Loaded from sia-injected.js at startup, then wrapped in <script> tags for injection.
+    // Scripts injected into every HTML page loaded in the iframe.
+    // video-pipeline-core.js provides shared rendering/timing/audio functions.
+    // sia-injected.js intercepts sia:// links and handles video streaming.
     let SIA_INJECTED_SCRIPT = '';
-    const siaInjectedReady = fetch('./sia-injected.js').then(r => r.text()).then(js => {
-      SIA_INJECTED_SCRIPT = '<script>' + js + '<\/script>';
+    const siaInjectedReady = Promise.all([
+      fetch('./video-pipeline-core.js').then(r => r.text()),
+      fetch('./sia-injected.js').then(r => r.text()),
+    ]).then(([coreJs, injectedJs]) => {
+      SIA_INJECTED_SCRIPT = '<script>' + coreJs + '<\/script><script>' + injectedJs + '<\/script>';
     });
 
     // Render a text string as styled markdown HTML and return a blob URL.
