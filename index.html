@@ -1168,7 +1168,7 @@
             </div>
             <div id="mfst-backup-result" style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
               <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your backup):</div>
-              <div id="mfst-share-url" style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;" title="Click to copy"></div>
+              <div id="mfst-backup-share-url" style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;" title="Click to copy"></div>
               <div style="margin-top:0.5rem;">
                 <button id="btn-mfst-copy-url" style="font-size:0.75rem; padding:0.25rem 0.5rem;">Copy URL</button>
                 <button id="btn-mfst-save-onchain" style="font-size:0.75rem; padding:0.25rem 0.5rem; margin-left:0.25rem;">Save on-chain with manifest pointer</button>
@@ -6851,7 +6851,24 @@ p{margin:0.8em 0;}
     function walletScanLog(msg, type) {
       const el = document.getElementById('wallet-scan-log');
       const color = type === 'err' ? '#f87171' : type === 'ok' ? '#4ade80' : type === 'info' ? '#60a5fa' : type === 'data' ? '#f59e0b' : '#888';
-      el.innerHTML += `<div style="color:${color}">${msg}</div>`;
+      const ts = new Date().toLocaleTimeString();
+      const prefix = '[' + ts + '] ';
+      // "progress" type replaces the last log line (for counters like header sync)
+      if (type === 'progress') {
+        let last = el.querySelector('[data-progress]');
+        if (!last) {
+          last = document.createElement('div');
+          last.setAttribute('data-progress', '1');
+          el.appendChild(last);
+        }
+        last.style.color = color;
+        last.textContent = prefix + msg;
+      } else {
+        // Remove any stale progress line when a non-progress message arrives
+        const prog = el.querySelector('[data-progress]');
+        if (prog) prog.removeAttribute('data-progress');
+        el.innerHTML += `<div style="color:${color}">${prefix}${msg}</div>`;
+      }
       el.scrollTop = el.scrollHeight;
     }
 
@@ -7493,7 +7510,7 @@ p{margin:0.8em 0;}
         const s = hastings.toString();
         if (s.length <= 24) {
           const decimal = s.padStart(24, '0');
-          return decimal.slice(0, decimal.length - 24 || 1) + '.' + decimal.slice(-24, -24 + 4) + ' SC';
+          return '0.' + decimal.slice(0, 4) + ' SC';
         }
         const whole = s.slice(0, s.length - 24);
         const frac = s.slice(s.length - 24, s.length - 20);
@@ -7711,6 +7728,7 @@ p{margin:0.8em 0;}
         amountHastings: u.amountHastings,
         maturityHeight: u.maturityHeight || 0,
         addressIndex: u._addrIndex || 0,
+        height: u.height || 0,
       }));
 
       btn.disabled = true;
@@ -9016,7 +9034,7 @@ p{margin:0.8em 0;}
 
         // Step 6: Show share URL to user
         const resultEl = document.getElementById('mfst-backup-result');
-        const urlEl = document.getElementById('mfst-share-url');
+        const urlEl = document.getElementById('mfst-backup-share-url');
         urlEl.textContent = shareUrl;
         urlEl.addEventListener('click', () => {
           navigator.clipboard.writeText(shareUrl);
@@ -9184,7 +9202,7 @@ p{margin:0.8em 0;}
 
     async function mfstSaveOnChain() {
       const statusEl = document.getElementById('mfst-backup-status');
-      const shareUrl = document.getElementById('mfst-share-url').textContent;
+      const shareUrl = document.getElementById('mfst-backup-share-url').textContent;
       if (!shareUrl) { mfstLog('No share URL to save.', 'err'); return; }
       if (!_walletEntropy) { mfstLog('Wallet is locked.', 'err'); return; }
 
@@ -9311,7 +9329,7 @@ p{margin:0.8em 0;}
     document.getElementById('btn-mfst-build').addEventListener('click', mfstBuildTransaction);
     document.getElementById('btn-mfst-backup').addEventListener('click', mfstBackup);
     document.getElementById('btn-mfst-copy-url').addEventListener('click', () => {
-      const url = document.getElementById('mfst-share-url').textContent;
+      const url = document.getElementById('mfst-backup-share-url').textContent;
       navigator.clipboard.writeText(url).then(() => mfstLog('Share URL copied to clipboard.', 'ok'));
     });
     document.getElementById('btn-mfst-save-onchain').addEventListener('click', mfstSaveOnChain);

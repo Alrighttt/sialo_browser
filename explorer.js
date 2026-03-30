@@ -319,7 +319,7 @@ export async function exploreTransaction(txid, heightHint) {
 // Keep exported for external callers (e.g. makeAddrLink)
 export async function exploreAddress(addr) {
   document.getElementById('exp-query').value = addr;
-  explore();
+  await explore();
 }
 
 function formatHastings(hastings) {

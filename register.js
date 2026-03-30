@@ -81,10 +81,10 @@ export function initRegistrationWizard(helpers) {
       regBuilder = new Builder(url);
 
       const appMetadata = JSON.stringify({
-        appID: regAppId,
+        app_id: regAppId,
         name: 'Sialo',
         description: 'Sialo - a decentralized browser and CLI tool for the Sia network',
-        serviceURL: 'https://sialo.io',
+        service_url: 'https://sialo.io',
       });
 
       await regBuilder.requestConnection(appMetadata);

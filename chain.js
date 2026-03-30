@@ -692,7 +692,10 @@ export async function exportNetworkData(net) {
   for (const name of keyNames) {
     const dbKey = keys[name];
     if (!dbKey) continue;
-    const data = await syncerDbLoad(dbKey);
+    let data = await opfsLoad(dbKey);
+    if (!data || !data.byteLength) {
+      data = await syncerDbLoadChunked(dbKey);
+    }
     if (!data || !(data instanceof ArrayBuffer || data instanceof Uint8Array || ArrayBuffer.isView(data))) continue;
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data.buffer || data);
     if (bytes.length === 0) continue;
