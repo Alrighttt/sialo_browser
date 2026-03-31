@@ -506,8 +506,8 @@ function renderTransactionView(result) {
   ctx.style.cssText = 'padding:0.5rem 0.75rem; font-size:0.8rem; cursor:pointer;';
   ctx.innerHTML =
     '<span style="color:var(--text-secondary);">Block </span>' +
-    '<span style="color:var(--color-blue);">' + result.blockHeight.toLocaleString() + '</span>' +
-    '<span style="color:var(--text-muted); margin-left:0.75rem;">' + formatTimestamp(result.timestamp) + '</span>' +
+    '<span style="color:var(--color-blue);">' + escapeHtml(result.blockHeight.toLocaleString()) + '</span>' +
+    '<span style="color:var(--text-muted); margin-left:0.75rem;">' + escapeHtml(formatTimestamp(result.timestamp)) + '</span>' +
     '<span style="color:var(--text-muted); float:right; font-size:0.7rem;">click to view full block</span>';
   ctx.addEventListener('click', () => {
     renderBlockDetailView(result);
@@ -551,16 +551,16 @@ function buildBlockHeaderCard(result) {
 
   card.innerHTML =
     '<div class="block-card-header">' +
-      '<span class="block-card-title">Block ' + result.blockHeight.toLocaleString() + '</span>' +
-      '<span class="block-card-subtitle">Miner Reward: ' + formatHastings(minerReward) + '</span>' +
+      '<span class="block-card-title">Block ' + escapeHtml(result.blockHeight.toLocaleString()) + '</span>' +
+      '<span class="block-card-subtitle">Miner Reward: ' + escapeHtml(formatHastings(minerReward)) + '</span>' +
     '</div>' +
     '<div class="block-card-row">' +
-      '<span style="color:var(--color-orange);">' + new Date(ts).toLocaleString() + '</span>' +
-      '<span>Total Fees: ' + formatHastings(totalFees) + '</span>' +
+      '<span style="color:var(--color-orange);">' + escapeHtml(new Date(ts).toLocaleString()) + '</span>' +
+      '<span>Total Fees: ' + escapeHtml(formatHastings(totalFees)) + '</span>' +
     '</div>' +
     '<div class="block-card-row">' +
-      '<span class="block-card-hash" title="' + (block.parentID || '') + '">Parent: ' + truncHash(block.parentID) + '</span>' +
-      '<span>Nonce: ' + block.nonce + '</span>' +
+      '<span class="block-card-hash" title="' + escapeHtml(block.parentID || '') + '">Parent: ' + escapeHtml(truncHash(block.parentID)) + '</span>' +
+      '<span>Nonce: ' + escapeHtml(String(block.nonce)) + '</span>' +
     '</div>' +
     (v1Count > 0 ? '<div class="block-card-row"><span></span><span>' + v1Count + ' V1 Transaction' + (v1Count !== 1 ? 's' : '') + '</span></div>' : '') +
     (v2Count > 0 ? '<div class="block-card-row"><span></span><span>' + v2Count + ' V2 Transaction' + (v2Count !== 1 ? 's' : '') + '</span></div>' : '');
@@ -637,8 +637,8 @@ export function buildTransactionCard(txn, index, highlight) {
   header.innerHTML =
     '<div class="txn-card-left">' +
       '<span class="txn-type-dot ' + cls.dot + '"></span>' +
-      '<span class="txn-txid" title="' + txid + '">' + (txid ? truncHash(txid, 6) : 'Txn ' + (index + 1)) + '</span>' +
-      '<span class="txn-type-label">' + cls.type + '</span>' +
+      '<span class="txn-txid" title="' + escapeHtml(txid) + '">' + escapeHtml(txid ? truncHash(txid, 6) : 'Txn ' + (index + 1)) + '</span>' +
+      '<span class="txn-type-label">' + escapeHtml(cls.type) + '</span>' +
     '</div>' +
     '<div class="txn-card-right">' +
       '<span>' + inputCount + ' Input' + (inputCount !== 1 ? 's' : '') + ' | ' + outputCount + ' Output' + (outputCount !== 1 ? 's' : '') + '</span>' +
@@ -863,7 +863,7 @@ function buildFileContractFlow(txn, fc) {
     item.innerHTML =
       '<div style="color:' + (isRenter ? 'var(--color-green)' : 'var(--color-red)') + '; font-weight:600; margin-bottom:3px;">' +
       (isRenter ? '\u2714 Renter Funds' : '\u26D4 Host Collateral') + '</div>' +
-      '<div style="color:var(--text-primary);">' + (val > 0n ? formatHastings(val) : '') + '</div>';
+      '<div style="color:var(--text-primary);">' + (val > 0n ? escapeHtml(formatHastings(val)) : '') + '</div>';
     leftCol.appendChild(item);
   }
 
@@ -872,8 +872,8 @@ function buildFileContractFlow(txn, fc) {
   center.className = 'flow-center';
   center.innerHTML =
     '<div class="flow-center-title">File Contract Formed</div>' +
-    '<div class="flow-center-row">Expiration: <strong style="color:var(--text-primary);">' + fc.expirationHeight.toLocaleString() + '</strong></div>' +
-    '<div class="flow-center-row">Proof Height: <strong style="color:var(--text-primary);">' + fc.proofHeight.toLocaleString() + '</strong></div>';
+    '<div class="flow-center-row">Expiration: <strong style="color:var(--text-primary);">' + escapeHtml(fc.expirationHeight.toLocaleString()) + '</strong></div>' +
+    '<div class="flow-center-row">Proof Height: <strong style="color:var(--text-primary);">' + escapeHtml(fc.proofHeight.toLocaleString()) + '</strong></div>';
 
   // Right: Outputs
   const rightCol = document.createElement('div');
@@ -887,7 +887,7 @@ function buildFileContractFlow(txn, fc) {
     item.innerHTML =
       '<div style="color:' + (isRenter ? 'var(--color-green)' : 'var(--color-orange)') + '; font-weight:600; margin-bottom:3px;">' +
       (isRenter ? '\u2714 Renter Change' : '\uD83D\uDFE0 Host Change') + '</div>' +
-      '<div style="color:var(--text-primary);">' + formatHastings(val) + '</div>';
+      '<div style="color:var(--text-primary);">' + escapeHtml(formatHastings(val)) + '</div>';
     rightCol.appendChild(item);
   }
 
@@ -900,13 +900,13 @@ function buildFileContractFlow(txn, fc) {
 function buildFileContractDetail(fc, title, contractId) {
   const box = document.createElement('div');
   box.className = 'contract-box';
-  box.innerHTML = '<div class="contract-box-title">' + (title || 'File Contract') + '</div>';
+  box.innerHTML = '<div class="contract-box-title">' + escapeHtml(title || 'File Contract') + '</div>';
 
   // Contract ID row (when caller passes the state-element id)
   if (contractId) {
     const idRow = document.createElement('div');
     idRow.style.cssText = 'font-size:0.72rem; color:var(--text-secondary); padding:0 0.1rem 0.4rem; font-family:var(--font-mono);';
-    idRow.innerHTML = 'ID: <span style="color:var(--text-primary);" title="' + contractId + '">' + truncHash(contractId, 14) + '</span>';
+    idRow.innerHTML = 'ID: <span style="color:var(--text-primary);" title="' + escapeHtml(contractId) + '">' + escapeHtml(truncHash(contractId, 14)) + '</span>';
     box.appendChild(idRow);
   }
 
@@ -922,8 +922,8 @@ function buildFileContractDetail(fc, title, contractId) {
   renter.innerHTML =
     '<div class="contract-party-header" style="background:rgba(74,222,128,0.1); color:var(--color-green);">Renter</div>' +
     '<div class="contract-party-body">' +
-      '<div>' + truncHash(renterKey.replace('ed25519:', ''), 10) + '</div>' +
-      '<div>Renter Payout: <span>' + renterPayout + '</span></div>' +
+      '<div>' + escapeHtml(truncHash(renterKey.replace('ed25519:', ''), 10)) + '</div>' +
+      '<div>Renter Payout: <span>' + escapeHtml(renterPayout) + '</span></div>' +
       '<div>' + (hasSig ? '\u2714\uFE0F Signed' : '\u274C Not signed') + '</div>' +
     '</div>';
 
@@ -937,10 +937,10 @@ function buildFileContractDetail(fc, title, contractId) {
   host.innerHTML =
     '<div class="contract-party-header" style="background:rgba(245,158,11,0.1); color:var(--color-orange);">Host</div>' +
     '<div class="contract-party-body">' +
-      '<div>' + truncHash(hostKey.replace('ed25519:', ''), 10) + '</div>' +
-      '<div>Host Payout: <span>' + hostPayout + '</span></div>' +
-      '<div>Missed: <span>' + missedHost + '</span></div>' +
-      '<div>Total Collateral: <span>' + totalColl + '</span></div>' +
+      '<div>' + escapeHtml(truncHash(hostKey.replace('ed25519:', ''), 10)) + '</div>' +
+      '<div>Host Payout: <span>' + escapeHtml(hostPayout) + '</span></div>' +
+      '<div>Missed: <span>' + escapeHtml(missedHost) + '</span></div>' +
+      '<div>Total Collateral: <span>' + escapeHtml(totalColl) + '</span></div>' +
     '</div>';
 
   parties.append(renter, host);
@@ -950,15 +950,15 @@ function buildFileContractDetail(fc, title, contractId) {
   const footer = document.createElement('div');
   footer.className = 'contract-footer';
   let footerParts =
-    '<span>Proof Height: <strong style="color:var(--text-primary);">' + fc.proofHeight.toLocaleString() + '</strong></span>' +
-    '<span>Expiration: <strong style="color:var(--text-primary);">' + fc.expirationHeight.toLocaleString() + '</strong></span>' +
-    '<span>Filesize: <strong style="color:var(--text-primary);">' + formatFilesize(fc.filesize || 0) + '</strong></span>';
+    '<span>Proof Height: <strong style="color:var(--text-primary);">' + escapeHtml(fc.proofHeight.toLocaleString()) + '</strong></span>' +
+    '<span>Expiration: <strong style="color:var(--text-primary);">' + escapeHtml(fc.expirationHeight.toLocaleString()) + '</strong></span>' +
+    '<span>Filesize: <strong style="color:var(--text-primary);">' + escapeHtml(formatFilesize(fc.filesize || 0)) + '</strong></span>';
   if (fc.revisionNumber != null) {
-    footerParts += '<span>Revision: <strong style="color:var(--text-primary);">' + fc.revisionNumber.toLocaleString() + '</strong></span>';
+    footerParts += '<span>Revision: <strong style="color:var(--text-primary);">' + escapeHtml(fc.revisionNumber.toLocaleString()) + '</strong></span>';
   }
   const merkleRoot = fc.fileMerkleRoot;
   if (merkleRoot && merkleRoot !== '0'.repeat(64)) {
-    footerParts += '<span>Merkle Root: <strong style="color:var(--text-primary);" title="' + merkleRoot + '">' + truncHash(merkleRoot, 10) + '</strong></span>';
+    footerParts += '<span>Merkle Root: <strong style="color:var(--text-primary);" title="' + escapeHtml(merkleRoot) + '">' + escapeHtml(truncHash(merkleRoot, 10)) + '</strong></span>';
   }
   footer.innerHTML = footerParts;
   box.appendChild(footer);
@@ -974,22 +974,22 @@ function buildV1ContractDetail(fc) {
   const missedOutputs = fc.missedProofOutputs || [];
 
   let html =
-    '<span class="detail-label">Contract ID</span><span class="detail-value">' + truncHash(fc.parentID || '', 12) + '</span>' +
-    '<span class="detail-label">Revision</span><span class="detail-value">' + (fc.revisionNumber || 0).toLocaleString() + '</span>' +
-    '<span class="detail-label">Filesize</span><span class="detail-value">' + formatFilesize(fc.filesize || 0) + '</span>' +
-    '<span class="detail-label">Window</span><span class="detail-value">' + (fc.windowStart || 0).toLocaleString() + ' – ' + (fc.windowEnd || 0).toLocaleString() + '</span>';
+    '<span class="detail-label">Contract ID</span><span class="detail-value">' + escapeHtml(truncHash(fc.parentID || '', 12)) + '</span>' +
+    '<span class="detail-label">Revision</span><span class="detail-value">' + escapeHtml((fc.revisionNumber || 0).toLocaleString()) + '</span>' +
+    '<span class="detail-label">Filesize</span><span class="detail-value">' + escapeHtml(formatFilesize(fc.filesize || 0)) + '</span>' +
+    '<span class="detail-label">Window</span><span class="detail-value">' + escapeHtml((fc.windowStart || 0).toLocaleString()) + ' – ' + escapeHtml((fc.windowEnd || 0).toLocaleString()) + '</span>';
 
   if (validOutputs.length > 0) {
     html += '<span class="detail-label">Valid Proof Outputs</span><span class="detail-value">';
     for (const o of validOutputs) {
-      html += '<div>' + formatHastings(BigInt(o.value)) + ' → ' + truncHash(o.address, 8) + '</div>';
+      html += '<div>' + escapeHtml(formatHastings(BigInt(o.value))) + ' → ' + escapeHtml(truncHash(o.address, 8)) + '</div>';
     }
     html += '</span>';
   }
   if (missedOutputs.length > 0) {
     html += '<span class="detail-label">Missed Proof Outputs</span><span class="detail-value">';
     for (const o of missedOutputs) {
-      html += '<div>' + formatHastings(BigInt(o.value)) + ' → ' + truncHash(o.address, 8) + '</div>';
+      html += '<div>' + escapeHtml(formatHastings(BigInt(o.value))) + ' → ' + escapeHtml(truncHash(o.address, 8)) + '</div>';
     }
     html += '</span>';
   }
@@ -1006,7 +1006,7 @@ function buildResolutionDetail(res) {
   const typeLabel = document.createElement('div');
   typeLabel.style.cssText = 'margin-bottom:0.65rem;';
   const badgeClass = res.type === 'renewal' ? 'badge-green' : res.type === 'storageProof' ? 'badge-blue' : 'badge-orange';
-  typeLabel.innerHTML = '<span class="badge ' + badgeClass + '">' + res.type + '</span>';
+  typeLabel.innerHTML = '<span class="badge ' + badgeClass + '">' + escapeHtml(res.type) + '</span>';
   frag.appendChild(typeLabel);
 
   // Parent contract — full detail with ID, all fields, footer
@@ -1028,13 +1028,13 @@ function buildResolutionDetail(res) {
     details.style.marginTop = '0.5rem';
     let html = '';
     if (renewal.finalRenterOutput) {
-      html += '<span class="detail-label">Final Renter Output</span><span class="detail-value">' + formatHastings(BigInt(renewal.finalRenterOutput.value)) + '</span>';
+      html += '<span class="detail-label">Final Renter Output</span><span class="detail-value">' + escapeHtml(formatHastings(BigInt(renewal.finalRenterOutput.value))) + '</span>';
     }
     if (renewal.finalHostOutput) {
-      html += '<span class="detail-label">Final Host Output</span><span class="detail-value">' + formatHastings(BigInt(renewal.finalHostOutput.value)) + '</span>';
+      html += '<span class="detail-label">Final Host Output</span><span class="detail-value">' + escapeHtml(formatHastings(BigInt(renewal.finalHostOutput.value))) + '</span>';
     }
-    html += '<span class="detail-label">Renter Rollover</span><span class="detail-value">' + formatHastings(BigInt(renewal.renterRollover || '0')) + '</span>';
-    html += '<span class="detail-label">Host Rollover</span><span class="detail-value">' + formatHastings(BigInt(renewal.hostRollover || '0')) + '</span>';
+    html += '<span class="detail-label">Renter Rollover</span><span class="detail-value">' + escapeHtml(formatHastings(BigInt(renewal.renterRollover || '0'))) + '</span>';
+    html += '<span class="detail-label">Host Rollover</span><span class="detail-value">' + escapeHtml(formatHastings(BigInt(renewal.hostRollover || '0'))) + '</span>';
     details.innerHTML = html;
     frag.appendChild(details);
   }
@@ -1046,13 +1046,13 @@ function buildResolutionDetail(res) {
     const pi = res.resolution.proofIndex;
     let html = '';
     if (pi?.chainIndex) {
-      html += '<span class="detail-label">Proof Index Height</span><span class="detail-value">' + (pi.chainIndex.height || 0).toLocaleString() + '</span>';
+      html += '<span class="detail-label">Proof Index Height</span><span class="detail-value">' + escapeHtml((pi.chainIndex.height || 0).toLocaleString()) + '</span>';
     }
     if (parentContract?.renterOutput?.value) {
-      html += '<span class="detail-label">Renter Receives</span><span class="detail-value" style="color:var(--color-green);">' + formatHastings(BigInt(parentContract.renterOutput.value)) + '</span>';
+      html += '<span class="detail-label">Renter Receives</span><span class="detail-value" style="color:var(--color-green);">' + escapeHtml(formatHastings(BigInt(parentContract.renterOutput.value))) + '</span>';
     }
     if (parentContract?.hostOutput?.value) {
-      html += '<span class="detail-label">Host Receives</span><span class="detail-value" style="color:var(--color-green);">' + formatHastings(BigInt(parentContract.hostOutput.value)) + '</span>';
+      html += '<span class="detail-label">Host Receives</span><span class="detail-value" style="color:var(--color-green);">' + escapeHtml(formatHastings(BigInt(parentContract.hostOutput.value))) + '</span>';
     }
     details.innerHTML = html;
     frag.appendChild(details);
@@ -1064,10 +1064,10 @@ function buildResolutionDetail(res) {
     details.style.marginTop = '0.5rem';
     let html = '<span class="detail-label" style="color:var(--color-orange);">Outcome</span><span class="detail-value" style="color:var(--color-orange);">Missed proof — host penalized</span>';
     if (parentContract?.renterOutput?.value) {
-      html += '<span class="detail-label">Renter Receives</span><span class="detail-value">' + formatHastings(BigInt(parentContract.renterOutput.value)) + '</span>';
+      html += '<span class="detail-label">Renter Receives</span><span class="detail-value">' + escapeHtml(formatHastings(BigInt(parentContract.renterOutput.value))) + '</span>';
     }
     if (parentContract?.missedHostValue != null) {
-      html += '<span class="detail-label">Host Receives</span><span class="detail-value" style="color:var(--color-orange);">' + formatHastings(BigInt(parentContract.missedHostValue)) + '</span>';
+      html += '<span class="detail-label">Host Receives</span><span class="detail-value" style="color:var(--color-orange);">' + escapeHtml(formatHastings(BigInt(parentContract.missedHostValue))) + '</span>';
     }
     details.innerHTML = html;
     frag.appendChild(details);
@@ -1255,7 +1255,7 @@ function populateStatsTab(result) {
 
   const row = (label, value, color) =>
     '<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #1a1a1a;">' +
-    '<span style="color:#888;">' + label + '</span>' +
+    '<span style="color:#888;">' + escapeHtml(String(label)) + '</span>' +
     '<span style="color:' + (color || '#e0e0e0') + ';">' + value + '</span></div>';
 
   let html = '';

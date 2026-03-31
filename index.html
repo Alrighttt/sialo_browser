@@ -1403,6 +1403,10 @@
     import { initSyncerConfig } from './syncer-config.js';
     import { createNetSelector } from './net-selector.js';
 
+    // Vendor libraries
+    import { marked } from './vendor/marked.esm.js';
+    import DOMPurify from './vendor/purify.es.mjs';
+
     // Extracted modules
     import { _dbg, _dbgWarn, _esc, hex, fromHex, randomHex, formatSize } from './utils.js';
     import { initKdfWorker, kdfEncrypt, kdfDecrypt } from './kdf.js';
@@ -1530,9 +1534,9 @@
             const pkShort = m.pubkeyHex.slice(0, 8) + '…' + m.pubkeyHex.slice(-6);
             const keyCol = queryType === 'key' ? raw : m.keyHashHex.slice(0, 12) + '…';
             tr.innerHTML =
-              `<td style="padding:6px 8px; font-family:monospace; color:#aaa; cursor:pointer;" title="Click to copy: ${m.pubkeyHex}" class="att-pubkey-cell">${pkShort}</td>` +
-              `<td style="padding:6px 8px; text-align:right;"><a href="#" style="color:#60a5fa; text-decoration:none;" class="att-height-link">${m.height.toLocaleString()}</a></td>` +
-              `<td class="att-key-cell" style="padding:6px 8px; color:#ccc;">${keyCol}</td>` +
+              `<td style="padding:6px 8px; font-family:monospace; color:#aaa; cursor:pointer;" title="Click to copy: ${_esc(m.pubkeyHex)}" class="att-pubkey-cell">${_esc(pkShort)}</td>` +
+              `<td style="padding:6px 8px; text-align:right;"><a href="#" style="color:#60a5fa; text-decoration:none;" class="att-height-link">${_esc(m.height.toLocaleString())}</a></td>` +
+              `<td class="att-key-cell" style="padding:6px 8px; color:#ccc;">${_esc(keyCol)}</td>` +
               `<td class="att-val-cell" style="padding:6px 8px; color:#666; font-size:0.75rem;">loading…</td>`;
 
             tr.querySelector('.att-pubkey-cell').addEventListener('click', () => {
@@ -3790,7 +3794,7 @@
 
         status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e)}</span>`;
       }
     });
 
@@ -4236,7 +4240,7 @@
 
         status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(bytesDownloaded)}\nDownloaded in ${elapsed}s (single worker, 1 SDK)\n<span class="pass">Saved to disk!</span>`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e)}</span>`;
       } finally {
         _downloadInProgress = false;
         document.getElementById('btn-download').disabled = false;
@@ -5103,47 +5107,14 @@
     });
 
     // Render a text string as styled markdown HTML and return a blob URL.
+    // Uses marked for parsing and DOMPurify for sanitization.
     function renderMarkdownHtml(text) {
-      // Escape HTML entities first
-      let s = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      // Fenced code blocks
-      s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) =>
-        `<pre><code class="lang-${lang}">${code.trim()}</code></pre>`);
-      // Inline code
-      s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>');
-      // Headings
-      s = s.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
-      s = s.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
-      s = s.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
-      s = s.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
-      s = s.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
-      s = s.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
-      // Horizontal rules
-      s = s.replace(/^---+$/gm, '<hr>');
-      // Bold + italic
-      s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
-      s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-      s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
-      // Protocol whitelist for URLs in markdown (blocks javascript:, data:, vbscript:, etc.)
-      function _safeUrl(url) { return /^(https?:\/\/|sia:\/\/|\/|#|\.\.?\/)/.test(url); }
-      // Images (before links)
-      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) =>
-        _safeUrl(src) ? `<img src="${src}" alt="${alt}" style="max-width:100%;">` : `[image: ${alt}]`);
-      // Links
-      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) =>
-        _safeUrl(href) ? `<a href="${href}">${text}</a>` : text);
-      // Blockquotes
-      s = s.replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>');
-      // Unordered lists
-      s = s.replace(/^[-*]\s+(.+)$/gm, '<li>$1</li>');
-      s = s.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
-      // Paragraphs: wrap remaining loose lines separated by blank lines
-      s = s.split(/\n{2,}/).map(block => {
-        const trimmed = block.trim();
-        if (!trimmed) return '';
-        if (/^<(h[1-6]|pre|ul|ol|li|blockquote|hr|img)/.test(trimmed)) return trimmed;
-        return `<p>${trimmed.replace(/\n/g, '<br>')}</p>`;
-      }).join('\n');
+      const rawHtml = marked.parse(text);
+      const s = DOMPurify.sanitize(rawHtml, {
+        ALLOWED_URI_REGEXP: /^(?:https?|sia):\/\/|^[#./]/i,
+        ADD_TAGS: ['img'],
+        ADD_ATTR: ['target'],
+      });
 
       const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
 body{font-family:system-ui,-apple-system,sans-serif;padding:2rem;background:#0a0a0a;color:#e0e0e0;margin:0;max-width:800px;margin:0 auto;line-height:1.7;}
@@ -5158,8 +5129,11 @@ blockquote{border-left:4px solid #3b82f6;margin:1rem 0;padding:0.5rem 1rem;color
 ul{padding-left:1.5rem;}
 li{margin:0.3em 0;}
 hr{border:none;border-top:1px solid #333;margin:2rem 0;}
-img{border-radius:6px;margin:1rem 0;}
+img{border-radius:6px;margin:1rem 0;max-width:100%;}
 p{margin:0.8em 0;}
+table{border-collapse:collapse;width:100%;margin:1rem 0;}
+th,td{border:1px solid #333;padding:0.5rem 0.75rem;text-align:left;}
+th{background:#161b22;color:#f0f0f0;}
 </style></head><body>${s}</body></html>`;
       const blob = new Blob([html], { type: 'text/html' });
       return URL.createObjectURL(blob);
@@ -6454,7 +6428,10 @@ p{margin:0.8em 0;}
         // Remove any stale progress line when a non-progress message arrives
         const prog = el.querySelector('[data-progress]');
         if (prog) prog.removeAttribute('data-progress');
-        el.innerHTML += `<div style="color:${color}">${prefix}${msg}</div>`;
+        const div = document.createElement('div');
+        div.style.color = color;
+        div.textContent = prefix + msg;
+        el.appendChild(div);
       }
       el.scrollTop = el.scrollHeight;
     }
@@ -6667,9 +6644,9 @@ p{margin:0.8em 0;}
         let html = '<table><thead><tr><th>Index</th><th>Address</th><th>Public Key</th></tr></thead><tbody>';
         for (const a of addrs) {
           html += `<tr>
-            <td style="color:#f59e0b; white-space:nowrap;">${a.index}</td>
-            <td><span class="addr-link" data-addr="${a.address}" title="Open in Explorer">${a.address}</span></td>
-            <td style="color:#888;">${a.public_key}</td>
+            <td style="color:#f59e0b; white-space:nowrap;">${_esc(String(a.index))}</td>
+            <td><span class="addr-link" data-addr="${_esc(a.address)}" title="Open in Explorer">${_esc(a.address)}</span></td>
+            <td style="color:#888;">${_esc(a.public_key)}</td>
           </tr>`;
         }
         html += '</tbody></table>';
@@ -6901,8 +6878,8 @@ p{margin:0.8em 0;}
       };
       const row = (label, value, color) =>
         '<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid #1a1a1a;">' +
-        '<span style="color:#888;">' + label + '</span>' +
-        '<span style="color:' + (color || '#e0e0e0') + ';">' + value + '</span></div>';
+        '<span style="color:#888;">' + _esc(label) + '</span>' +
+        '<span style="color:' + (color || '#e0e0e0') + ';">' + _esc(value) + '</span></div>';
 
       let html = '';
 
@@ -7541,11 +7518,11 @@ p{margin:0.8em 0;}
 
       summaryEl.style.display = '';
       summaryEl.innerHTML =
-        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Total In:</span><span style="color:#4ade80;">' + txbFormatSC(totalIn.toString()) + '</span></div>' +
-        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Total Out:</span><span>' + txbFormatSC(totalOut.toString()) + '</span></div>' +
-        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Fee:</span><span>' + txbFormatSC(fee.toString()) + '</span></div>' +
+        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Total In:</span><span style="color:#4ade80;">' + _esc(txbFormatSC(totalIn.toString())) + '</span></div>' +
+        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Total Out:</span><span>' + _esc(txbFormatSC(totalOut.toString())) + '</span></div>' +
+        '<div style="display:flex; justify-content:space-between;"><span style="color:#888;">Fee:</span><span>' + _esc(txbFormatSC(fee.toString())) + '</span></div>' +
         '<div style="display:flex; justify-content:space-between; border-top:1px solid #2a2a2a; margin-top:4px; padding-top:4px;"><span style="color:#888;">Change:</span><span style="color:' + (deficit ? '#f87171' : '#10b981') + ';">' +
-        (deficit ? 'Insufficient funds (' + txbFormatSC((totalSpend - totalIn).toString()) + ' short)' : txbFormatSC(change.toString())) + '</span></div>';
+        (deficit ? 'Insufficient funds (' + _esc(txbFormatSC((totalSpend - totalIn).toString())) + ' short)' : _esc(txbFormatSC(change.toString()))) + '</span></div>';
     }
 
     async function txbBuildTransaction() {
@@ -8016,9 +7993,9 @@ p{margin:0.8em 0;}
           const nextIdx = await mfstFindNextIndex(account);
           const json = derive_manifest_info(_walletEntropy, account, nextIdx);
           const manifest = JSON.parse(json);
-          info.innerHTML = 'Next index: <span style="color:#f59e0b;">' + nextIdx +
+          info.innerHTML = 'Next index: <span style="color:#f59e0b;">' + _esc(String(nextIdx)) +
             '</span> · Pubkey: <span style="color:#10b981; font-family:monospace;">' +
-            manifest.publicKey.slice(0, 24) + '...</span>';
+            _esc(manifest.publicKey.slice(0, 24)) + '...</span>';
         } catch (err) { info.textContent = ''; }
       } else {
         info.textContent = '';
@@ -8438,7 +8415,7 @@ p{margin:0.8em 0;}
             row.style.cssText = 'padding:0.4rem 0; border-bottom:1px solid #1a1a1a;';
             const metaSpan = document.createElement('span');
             metaSpan.style.cssText = 'font-size:0.75rem;';
-            metaSpan.innerHTML = '<span style="color:#60a5fa;">Height ' + r.height + ' · Account ' + r.account + ' · Index ' + r.index + '</span>';
+            metaSpan.innerHTML = '<span style="color:#60a5fa;">Height ' + _esc(String(r.height)) + ' · Account ' + _esc(String(r.account)) + ' · Index ' + _esc(String(r.index)) + '</span>';
             row.appendChild(metaSpan);
 
             if (r.url) {
@@ -8551,7 +8528,7 @@ p{margin:0.8em 0;}
           metaSpan.style.cssText = 'font-size:0.75rem; color:#888;';
           let metaText = 'Height ' + r.height;
           if (r.account !== null && r.account !== undefined) metaText += ' · Account ' + r.account;
-          metaSpan.innerHTML = '<span style="color:#60a5fa;">' + metaText + '</span>';
+          metaSpan.innerHTML = '<span style="color:#60a5fa;">' + _esc(metaText) + '</span>';
           row.appendChild(metaSpan);
 
           if (r.url) {
