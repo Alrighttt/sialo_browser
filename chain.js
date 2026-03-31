@@ -64,9 +64,21 @@ let _mempool = (() => {
 })();
 let _mempoolListeners = []; // (net, mempool) => void
 
+const MAX_MEMPOOL_PER_NET = 200; // cap entries per network to avoid localStorage quota issues
+
 function _saveMempool() {
-  try { localStorage.setItem('chain:mempool', JSON.stringify(_mempool)); }
-  catch (e) { console.warn('chain.js: failed to save mempool to localStorage:', e); }
+  try {
+    // Evict oldest entries if a network exceeds the cap
+    for (const net of Object.keys(_mempool)) {
+      const entries = Object.entries(_mempool[net]);
+      if (entries.length > MAX_MEMPOOL_PER_NET) {
+        entries.sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
+        const toRemove = entries.slice(0, entries.length - MAX_MEMPOOL_PER_NET);
+        for (const [txid] of toRemove) delete _mempool[net][txid];
+      }
+    }
+    localStorage.setItem('chain:mempool', JSON.stringify(_mempool));
+  } catch (e) { console.warn('chain.js: failed to save mempool to localStorage:', e); }
 }
 
 // Per-network relay listener state: { running, reconnectTimer }
@@ -262,10 +274,12 @@ export function getUtxoPrefixCount() { return _utxoPrefixCount; }
 // UTXO pre-filter: O(log N) binary search on sorted unique address prefixes
 export function checkUtxoPrefilter(addressHex) {
   if (!_utxoPrefixes || _utxoPrefixCount === 0) return false;
+  // Need at least 16 hex chars (8 bytes) for a valid prefix lookup
+  if (!addressHex || addressHex.length < 16) return false;
   // Parse first 8 bytes of address hex
   const hex = addressHex.length > 16 ? addressHex.slice(0, 16) : addressHex;
   const target = new Uint8Array(8);
-  for (let i = 0; i < 8; i++) target[i] = parseInt(hex.substr(i * 2, 2), 16);
+  for (let i = 0; i < 8; i++) target[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
 
   let lo = 0, hi = _utxoPrefixCount;
   while (lo < hi) {
@@ -1157,8 +1171,10 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
 // --- Sync ---
 
 async function syncNetwork(net) {
-  const config = _networks[net];
-  if (!config || !config.peerUrl || !config.enabled) return;
+  const live = _networks[net];
+  if (!live || !live.peerUrl || !live.enabled) return;
+  // Snapshot config so mid-sync user edits don't cause mixed state
+  const config = { ...live };
 
   const prev = _syncState[net] || {};
   if (prev.status === 'syncing') return; // already running

@@ -13,10 +13,15 @@ let historyIndex = -1;
 let lastExplorerResult = null;
 let lastExplorerAddress = null;
 
+// --- Cached DOM elements (populated in initExplorer) ---
+
+let $query, $btnLookup, $addressResult, $txResult, $balanceBox,
+    $stats, $utxoWrap, $txJson, $historyBody, $utxoBody, $log;
+
 // --- Logging ---
 
 function log(msg, cls) {
-  const el = document.getElementById('exp-log');
+  const el = $log || document.getElementById('exp-log');
   const span = document.createElement('span');
   span.style.color = cls === 'ok' ? '#4ade80' : cls === 'err' ? '#f87171' : cls === 'info' ? '#60a5fa' : cls === 'data' ? '#f59e0b' : '#e0e0e0';
   span.textContent = msg + '\n';
@@ -96,7 +101,7 @@ function updateNavUI() {
 function navigateTo(idx) {
   historyIndex = idx;
   const entry = queryHistory[historyIndex];
-  document.getElementById('exp-query').value = entry.query;
+  $query.value = entry.query;
   updateNavUI();
   executeQuery(entry.query, true);
 }
@@ -118,24 +123,24 @@ function pushHistory(type, query) {
 // --- Hide all result areas ---
 
 function hideAllResults() {
-  document.getElementById('exp-address-result').style.display = 'none';
-  document.getElementById('exp-tx-result').style.display = 'none';
-  document.getElementById('exp-balance-box').style.display = 'none';
-  document.getElementById('exp-stats').style.display = 'none';
-  document.getElementById('exp-utxo-wrap').style.display = 'none';
-  document.getElementById('exp-tx-json').style.display = 'none';
+  $addressResult.style.display = 'none';
+  $txResult.style.display = 'none';
+  $balanceBox.style.display = 'none';
+  $stats.style.display = 'none';
+  $utxoWrap.style.display = 'none';
+  $txJson.style.display = 'none';
 }
 
 // --- Unified Explorer ---
 
 export async function explore() {
-  const query = document.getElementById('exp-query').value.trim();
+  const query = $query.value.trim();
   if (!query) { log('Please enter a block height, block/tx ID, or address.', 'err'); return; }
   return executeQuery(query, false);
 }
 
 async function executeQuery(query, skipHistory) {
-  document.getElementById('exp-btn-lookup').disabled = true;
+  $btnLookup.disabled = true;
   hideAllResults();
 
   try {
@@ -150,13 +155,13 @@ async function executeQuery(query, skipHistory) {
     if (result.type === 'block') {
       if (!skipHistory) pushHistory('block', query);
       renderBlockDetailView(result);
-      document.getElementById('exp-tx-result').style.display = 'block';
+      $txResult.style.display = 'block';
       log('Block ' + result.blockHeight.toLocaleString() + ' loaded — ' +
         (result.block.v2?.transactionCount || 0) + ' transactions', 'ok');
     } else if (result.type === 'transaction') {
       if (!skipHistory) pushHistory('transaction', query);
       renderTransactionView(result);
-      document.getElementById('exp-tx-result').style.display = 'block';
+      $txResult.style.display = 'block';
       log('Transaction found in block ' + result.blockHeight.toLocaleString(), 'ok');
     }
   } catch (e) {
@@ -164,7 +169,7 @@ async function executeQuery(query, skipHistory) {
     console.error(e);
     throw e;
   } finally {
-    document.getElementById('exp-btn-lookup').disabled = false;
+    $btnLookup.disabled = false;
   }
 }
 
@@ -175,24 +180,24 @@ async function showAddressResult(addr) {
 
   if (!chain.getFilterUrl()) {
     log('No filters loaded. Enable auto-sync in Syncer page.', 'err');
-    document.getElementById('exp-btn-lookup').disabled = false;
+    $btnLookup.disabled = false;
     return;
   }
   if (!chain.getPeerUrl()) {
     log('No peer URL configured. Set one in the Syncer page.', 'err');
-    document.getElementById('exp-btn-lookup').disabled = false;
+    $btnLookup.disabled = false;
     return;
   }
 
   // Show address result area
-  document.getElementById('exp-address-result').style.display = 'block';
+  $addressResult.style.display = 'block';
 
   // Reset sub-elements
-  document.getElementById('exp-history-body').innerHTML = '';
-  document.getElementById('exp-utxo-body').innerHTML = '';
-  document.getElementById('exp-utxo-wrap').style.display = 'none';
-  document.getElementById('exp-balance-box').style.display = 'none';
-  document.getElementById('exp-stats').style.display = 'none';
+  $historyBody.innerHTML = '';
+  $utxoBody.innerHTML = '';
+  $utxoWrap.style.display = 'none';
+  $balanceBox.style.display = 'none';
+  $stats.style.display = 'none';
 
   const startTime = performance.now();
   const logFn = (msg, cls) => log(msg, cls);
@@ -232,7 +237,7 @@ async function showAddressResult(addr) {
     })();
 
     // Show balance
-    document.getElementById('exp-balance-box').style.display = 'block';
+    $balanceBox.style.display = 'block';
     document.getElementById('exp-balance-value').textContent = utxoBalance;
     document.getElementById('exp-received').textContent = '+' + result.receivedSC;
     document.getElementById('exp-sent').textContent = '-' + result.sentSC;
@@ -242,7 +247,7 @@ async function showAddressResult(addr) {
       result.falsePositives + ' false positives | ' + elapsed + 's';
 
     // Show stats
-    document.getElementById('exp-stats').style.display = 'block';
+    $stats.style.display = 'block';
     document.getElementById('exp-stat-summary').textContent =
       result.blocksScanned + ' blocks scanned, ' + result.transactionsFound + ' transactions found';
 
@@ -251,7 +256,7 @@ async function showAddressResult(addr) {
       populateHistoryTable(result.utxos);
       populateUtxoTable(result.utxos);
       populateStatsTab(result);
-      document.getElementById('exp-utxo-wrap').style.display = 'block';
+      $utxoWrap.style.display = 'block';
     }
 
     // Store result for JSON export
@@ -263,7 +268,7 @@ async function showAddressResult(addr) {
     log('ERROR: ' + e, 'err');
     console.error(e);
   } finally {
-    document.getElementById('exp-btn-lookup').disabled = false;
+    $btnLookup.disabled = false;
   }
 }
 
@@ -271,8 +276,8 @@ async function showAddressResult(addr) {
 // If the txid isn't in the txindex (e.g. tail blocks), fetches the block at
 // heightHint and finds the matching transaction within it.
 export async function exploreTransaction(txid, heightHint) {
-  document.getElementById('exp-query').value = txid;
-  document.getElementById('exp-btn-lookup').disabled = true;
+  $query.value = txid;
+  $btnLookup.disabled = true;
   hideAllResults();
 
   try {
@@ -281,14 +286,14 @@ export async function exploreTransaction(txid, heightHint) {
     if (result.type === 'transaction') {
       pushHistory('transaction', txid);
       renderTransactionView(result);
-      document.getElementById('exp-tx-result').style.display = 'block';
+      $txResult.style.display = 'block';
       log('Transaction found in block ' + result.blockHeight.toLocaleString(), 'ok');
       return;
     }
     // If it came back as a block for some reason, render it
     pushHistory('block', txid);
     renderBlockDetailView(result);
-    document.getElementById('exp-tx-result').style.display = 'block';
+    $txResult.style.display = 'block';
   } catch (e) {
     // Txid not found — try height hint fallback
     if (!heightHint) { log('ERROR: ' + e, 'err'); throw e; }
@@ -306,7 +311,7 @@ export async function exploreTransaction(txid, heightHint) {
           blockResult.txid = txid;
           pushHistory('transaction', txid);
           renderTransactionView(blockResult);
-          document.getElementById('exp-tx-result').style.display = 'block';
+          $txResult.style.display = 'block';
           log('Transaction found in block ' + blockResult.blockHeight.toLocaleString(), 'ok');
           return;
         }
@@ -315,19 +320,19 @@ export async function exploreTransaction(txid, heightHint) {
       log('Transaction not found in block ' + heightHint + ', showing block.', 'info');
       pushHistory('block', String(heightHint));
       renderBlockDetailView(blockResult);
-      document.getElementById('exp-tx-result').style.display = 'block';
+      $txResult.style.display = 'block';
     } catch (e2) {
       log('ERROR: ' + e2, 'err');
       throw e2;
     }
   } finally {
-    document.getElementById('exp-btn-lookup').disabled = false;
+    $btnLookup.disabled = false;
   }
 }
 
 // Keep exported for external callers (e.g. makeAddrLink)
 export async function exploreAddress(addr) {
-  document.getElementById('exp-query').value = addr;
+  $query.value = addr;
   await explore();
 }
 
@@ -486,8 +491,7 @@ function renderBlockDetailView(result) {
   }
 
   // Raw JSON
-  const jsonEl = document.getElementById('exp-tx-json');
-  jsonEl.textContent = JSON.stringify(result.block, null, 2);
+  $txJson.textContent = JSON.stringify(result.block, null, 2);
 }
 
 function renderTransactionView(result) {
@@ -507,7 +511,7 @@ function renderTransactionView(result) {
     '<span style="color:var(--text-muted); float:right; font-size:0.7rem;">click to view full block</span>';
   ctx.addEventListener('click', () => {
     renderBlockDetailView(result);
-    document.getElementById('exp-tx-json').style.display = 'none';
+    $txJson.style.display = 'none';
   });
   headerEl.appendChild(ctx);
 
@@ -518,16 +522,14 @@ function renderTransactionView(result) {
     if (v1Idx < v1Txns.length) {
       txnsEl.appendChild(buildTransactionCard(v1Txns[v1Idx], v1Idx, true));
     }
-    const jsonEl = document.getElementById('exp-tx-json');
-    jsonEl.textContent = JSON.stringify(v1Txns[v1Idx] || result.block, null, 2);
+    $txJson.textContent = JSON.stringify(v1Txns[v1Idx] || result.block, null, 2);
   } else {
     const txns = result.block.v2?.transactions || [];
     const txIndex = (result.txIndex != null) ? result.txIndex : 0;
     if (txIndex < txns.length) {
       txnsEl.appendChild(buildTransactionCard(txns[txIndex], txIndex, true));
     }
-    const jsonEl = document.getElementById('exp-tx-json');
-    jsonEl.textContent = JSON.stringify(txns[txIndex] || result.block, null, 2);
+    $txJson.textContent = JSON.stringify(txns[txIndex] || result.block, null, 2);
   }
 }
 
@@ -794,7 +796,7 @@ function makeAddrLink(addr, n) {
   span.title = addr;
   span.textContent = truncHash(addr, n || 10);
   span.addEventListener('click', () => {
-    document.getElementById('exp-query').value = addr;
+    $query.value = addr;
     explore();
   });
   return span;
@@ -1092,8 +1094,8 @@ function switchTab(tabName) {
 // --- Table population ---
 
 function populateHistoryTable(utxos) {
-  const body = document.getElementById('exp-history-body');
-  body.innerHTML = '';
+  $historyBody.innerHTML = '';
+  const body = $historyBody;
   const sorted = [...utxos].sort((a, b) => (b.height || 0) - (a.height || 0));
   for (const u of sorted) {
     const tr = document.createElement('tr');
@@ -1105,7 +1107,7 @@ function populateHistoryTable(utxos) {
     const heightLink = document.createElement('span');
     heightLink.style.cssText = 'color:#60a5fa; cursor:pointer; text-decoration:underline;';
     heightLink.textContent = u.height;
-    heightLink.onclick = () => { document.getElementById('exp-query').value = u.height; explore(); };
+    heightLink.onclick = () => { $query.value = u.height; explore(); };
     tdHeight.appendChild(heightLink);
 
     const tdDir = document.createElement('td');
@@ -1124,7 +1126,7 @@ function populateHistoryTable(utxos) {
       link.textContent = truncateAddr(u.txid);
       link.title = u.txid;
       link.onclick = () => {
-        document.getElementById('exp-query').value = u.txid;
+        $query.value = u.txid;
         explore();
       };
       tdTxid.appendChild(link);
@@ -1144,8 +1146,8 @@ function populateHistoryTable(utxos) {
 }
 
 function populateUtxoTable(utxos) {
-  const body = document.getElementById('exp-utxo-body');
-  body.innerHTML = '';
+  $utxoBody.innerHTML = '';
+  const body = $utxoBody;
 
   // Compute unspent outputs: received outputs whose outputId isn't consumed by any sent input
   const spentIds = new Set();
@@ -1166,7 +1168,7 @@ function populateUtxoTable(utxos) {
     const heightLink2 = document.createElement('span');
     heightLink2.style.cssText = 'color:#60a5fa; cursor:pointer; text-decoration:underline;';
     heightLink2.textContent = u.height;
-    heightLink2.onclick = () => { document.getElementById('exp-query').value = u.height; explore(); };
+    heightLink2.onclick = () => { $query.value = u.height; explore(); };
     tdHeight.appendChild(heightLink2);
 
     const tdAmt = document.createElement('td');
@@ -1303,7 +1305,7 @@ function populateStatsTab(result) {
   // Make height links clickable
   el.querySelectorAll('.height-link').forEach(link => {
     link.addEventListener('click', () => {
-      document.getElementById('exp-query').value = link.dataset.height;
+      $query.value = link.dataset.height;
       explore();
     });
   });
@@ -1332,9 +1334,22 @@ function saveResultAsJson() {
 // --- Initialization ---
 
 export function initExplorer() {
-  document.getElementById('exp-btn-lookup').addEventListener('click', explore);
+  // Cache frequently accessed DOM elements
+  $query = document.getElementById('exp-query');
+  $btnLookup = document.getElementById('exp-btn-lookup');
+  $addressResult = document.getElementById('exp-address-result');
+  $txResult = document.getElementById('exp-tx-result');
+  $balanceBox = document.getElementById('exp-balance-box');
+  $stats = document.getElementById('exp-stats');
+  $utxoWrap = document.getElementById('exp-utxo-wrap');
+  $txJson = document.getElementById('exp-tx-json');
+  $historyBody = document.getElementById('exp-history-body');
+  $utxoBody = document.getElementById('exp-utxo-body');
+  $log = document.getElementById('exp-log');
 
-  document.getElementById('exp-query').addEventListener('keydown', (e) => {
+  $btnLookup.addEventListener('click', explore);
+
+  $query.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') explore();
   });
 
@@ -1346,20 +1361,19 @@ export function initExplorer() {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  document.getElementById('exp-btn-toggle-json').addEventListener('click', () => {
-    const jsonEl = document.getElementById('exp-tx-json');
-    const btn = document.getElementById('exp-btn-toggle-json');
-    if (jsonEl.style.display === 'none') {
-      jsonEl.style.display = 'block';
-      btn.textContent = 'Hide Raw JSON';
+  const toggleJsonBtn = document.getElementById('exp-btn-toggle-json');
+  toggleJsonBtn.addEventListener('click', () => {
+    if ($txJson.style.display === 'none') {
+      $txJson.style.display = 'block';
+      toggleJsonBtn.textContent = 'Hide Raw JSON';
     } else {
-      jsonEl.style.display = 'none';
-      btn.textContent = 'Show Raw JSON';
+      $txJson.style.display = 'none';
+      toggleJsonBtn.textContent = 'Show Raw JSON';
     }
   });
 
   document.getElementById('exp-btn-clear-log').addEventListener('click', () => {
-    document.getElementById('exp-log').innerHTML = '';
+    $log.innerHTML = '';
   });
 
   // Subscribe to mempool changes
