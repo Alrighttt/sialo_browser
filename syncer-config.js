@@ -59,10 +59,23 @@ function updateNetCard(net) {
 
 // --- Save config ---
 
+function isValidPeerUrl(url) {
+  if (!url) return true; // empty is allowed (disables sync)
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'wss:';
+  } catch { return false; }
+}
+
 function saveConfig() {
   const net = document.getElementById('sc-network').value;
+  const peerUrl = document.getElementById('sc-peer-url').value.trim();
+  if (peerUrl && !isValidPeerUrl(peerUrl)) {
+    log('Invalid peer URL: must use https:// or wss:// protocol.', 'err');
+    return;
+  }
   chain.setNetworkConfig(net, {
-    peerUrl: document.getElementById('sc-peer-url').value.trim(),
+    peerUrl,
     certHash: document.getElementById('sc-cert-hash').value.trim() || null,
   });
 }

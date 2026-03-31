@@ -144,12 +144,20 @@ function parseChunkResult(data) {
   const view = new DataView(data.buffer, data.byteOffset, len);
   let pos = 0;
 
+  // Max reasonable count to prevent integer overflow in multiplication (256M entries)
+  const MAX_COUNT = 0x10000000;
+
   function check(needed) {
     if (pos + needed > len) throw new Error(`parseChunkResult: truncated data at offset ${pos}, need ${needed} bytes, have ${len - pos}`);
   }
 
+  function safeCount(count, label) {
+    if (count > MAX_COUNT) throw new Error(`parseChunkResult: ${label} count ${count} exceeds safety limit`);
+    return count;
+  }
+
   check(4);
-  const filterCount = view.getUint32(pos, true); pos += 4;
+  const filterCount = safeCount(view.getUint32(pos, true), 'filter'); pos += 4;
   const filters = [];
   for (let i = 0; i < filterCount; i++) {
     check(46); // 8 + 32 + 2 + 4 = 46 fixed bytes per filter entry
@@ -164,26 +172,26 @@ function parseChunkResult(data) {
 
   // txindex entries — raw binary (12 bytes per entry: 8 prefix + 4 height)
   check(4);
-  const txindexCount = view.getUint32(pos, true); pos += 4;
+  const txindexCount = safeCount(view.getUint32(pos, true), 'txindex'); pos += 4;
   check(txindexCount * 12);
   const txindexBytes = data.subarray(pos, pos + txindexCount * 12); pos += txindexCount * 12;
 
   // UTXO created entries — raw binary (20 bytes per entry: 8 addrPrefix + 8 oidPrefix + 4 height)
   check(4);
-  const utxoCreatedCount = view.getUint32(pos, true); pos += 4;
+  const utxoCreatedCount = safeCount(view.getUint32(pos, true), 'utxoCreated'); pos += 4;
   check(utxoCreatedCount * 20);
   const utxoCreatedBytes = data.subarray(pos, pos + utxoCreatedCount * 20); pos += utxoCreatedCount * 20;
 
   // UTXO spent entries — raw binary (16 bytes per entry: 8 addrPrefix + 8 oidPrefix)
   check(4);
-  const utxoSpentCount = view.getUint32(pos, true); pos += 4;
+  const utxoSpentCount = safeCount(view.getUint32(pos, true), 'utxoSpent'); pos += 4;
   check(utxoSpentCount * 16);
   const utxoSpentBytes = data.subarray(pos, pos + utxoSpentCount * 16); pos += utxoSpentCount * 16;
 
   // Attestation entries (may be absent in older chunks)
   const attestations = [];
   if (pos + 4 <= len) {
-    const attCount = view.getUint32(pos, true); pos += 4;
+    const attCount = safeCount(view.getUint32(pos, true), 'attestation'); pos += 4;
     for (let i = 0; i < attCount; i++) {
       check(44); // 32 + 8 + 4
       const pubkey = data.slice(pos, pos + 32); pos += 32;
@@ -202,6 +210,7 @@ function parseExistingFilters(data) {
   if (len < 24) throw new Error(`parseExistingFilters: data too short (${len} bytes, need >= 24)`);
   const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
+  if (count > 0x10000000) throw new Error(`parseExistingFilters: count ${count} exceeds safety limit`);
   let pos = 24; // skip header: magic(4) + version(4) + count(4) + p(4) + tipHeight(8)
   const entries = [];
   for (let i = 0; i < count; i++) {
@@ -223,6 +232,7 @@ function parseExistingTxindexBinary(data) {
   if (len < 16) throw new Error(`parseExistingTxindexBinary: data too short (${len} bytes, need >= 16)`);
   const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
+  if (count > 0x10000000) throw new Error(`parseExistingTxindexBinary: count ${count} exceeds safety limit`);
   const needed = 16 + count * 12;
   if (len < needed) throw new Error(`parseExistingTxindexBinary: truncated (${len} bytes, need ${needed} for ${count} entries)`);
   return { bytes: arr.slice(16, needed), count };
@@ -234,6 +244,7 @@ function parseExistingUtxoIndex(data) {
   if (len < 16) throw new Error(`parseExistingUtxoIndex: data too short (${len} bytes, need >= 16)`);
   const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
+  if (count > 0x10000000) throw new Error(`parseExistingUtxoIndex: count ${count} exceeds safety limit`);
   const needed = 16 + count * 20;
   if (len < needed) throw new Error(`parseExistingUtxoIndex: truncated (${len} bytes, need ${needed} for ${count} entries)`);
   let pos = 16;
@@ -253,6 +264,7 @@ function parseExistingAttestationIndex(data) {
   if (len < 16) throw new Error(`parseExistingAttestationIndex: data too short (${len} bytes, need >= 16)`);
   const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
+  if (count > 0x10000000) throw new Error(`parseExistingAttestationIndex: count ${count} exceeds safety limit`);
   const needed = 16 + count * 44;
   if (len < needed) throw new Error(`parseExistingAttestationIndex: truncated (${len} bytes, need ${needed} for ${count} entries)`);
   let pos = 16;

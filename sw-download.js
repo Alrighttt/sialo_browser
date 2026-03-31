@@ -15,6 +15,8 @@ self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
 const downloads = new Map();
 
 self.addEventListener('message', (e) => {
+  // Only accept messages from controlled clients (same-origin pages)
+  if (e.source && e.source.type !== 'window') return;
   const { type, uuid } = e.data;
 
   if (type === 'start-download') {

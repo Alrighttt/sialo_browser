@@ -694,7 +694,8 @@ export async function exploreAddress(addr, logFn) {
     config.certHash || undefined,
     DEFAULT_FILTER_MATCH_LIMIT
   );
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse address scan result: ' + e.message); }
 }
 
 export async function exploreAddressUnlimited(addr, logFn) {
@@ -708,7 +709,8 @@ export async function exploreAddressUnlimited(addr, logFn) {
     config.certHash || undefined,
     null
   );
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse address scan result: ' + e.message); }
 }
 
 export async function lookupTransaction(txid, logFn) {
@@ -723,7 +725,8 @@ export async function lookupTransaction(txid, logFn) {
   );
 
   if (resultJson === 'not_found') return null;
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse transaction result: ' + e.message); }
 }
 
 export async function exploreQuery(query, logFn) {
@@ -737,7 +740,8 @@ export async function exploreQuery(query, logFn) {
     config.certHash || undefined
   );
 
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse query result: ' + e.message); }
 }
 
 export async function lookupUtxos(address, logFn) {
@@ -751,7 +755,8 @@ export async function lookupUtxos(address, logFn) {
     config.certHash || undefined
   );
 
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse UTXO result: ' + e.message); }
 }
 
 // --- Public API: Attestation Index ---
@@ -767,9 +772,16 @@ export async function loadAttestationEntries() {
   if (arr[0] !== 0x53 || arr[1] !== 0x41 || arr[2] !== 0x50 || arr[3] !== 0x49) return [];
   const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
   const count = view.getUint32(8, true);
+  // Validate count against available data (44 bytes per entry: 32 + 8 + 4)
+  const maxEntries = Math.floor((arr.length - 16) / 44);
+  if (count > maxEntries) {
+    console.warn('Attestation index: count', count, 'exceeds available data, capping at', maxEntries);
+  }
+  const safeCount = Math.min(count, maxEntries);
   const entries = [];
   let pos = 16;
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < safeCount; i++) {
+    if (pos + 44 > arr.length) break;
     const pubkeyHex = bytesToHex(arr, pos, 32); pos += 32;
     const keyHashHex = bytesToHex(arr, pos, 8); pos += 8;
     const height = view.getUint32(pos, true); pos += 4;
@@ -780,8 +792,9 @@ export async function loadAttestationEntries() {
 
 function bytesToHex(arr, offset, len) {
   let hex = '';
-  for (let i = 0; i < len; i++) {
-    hex += arr[offset + i].toString(16).padStart(2, '0');
+  const end = Math.min(offset + len, arr.length);
+  for (let i = offset; i < end; i++) {
+    hex += arr[i].toString(16).padStart(2, '0');
   }
   return hex;
 }

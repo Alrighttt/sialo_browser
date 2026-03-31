@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' https:; frame-src blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
   <title>Sia Browser</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -167,7 +168,10 @@
       <label class="label" for="cfg-url">Indexer URL</label>
       <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
       <label class="label" for="cfg-key">App Key (hex seed)</label>
-      <input id="cfg-key" type="text" placeholder="e.g. ab12cd34..." style="margin-bottom:0.5rem" />
+      <div style="position:relative; margin-bottom:0.5rem;">
+        <input id="cfg-key" type="password" placeholder="e.g. ab12cd34..." style="width:100%; padding-right:2.5rem;" />
+        <button id="cfg-key-toggle" type="button" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; font-size:0.8rem; padding:2px 6px;" title="Show/hide key">show</button>
+      </div>
           </div><!-- /panel-section: Configuration -->
 
           <div class="panel-section">
@@ -1441,6 +1445,8 @@
     // Defined at module scope so they're available everywhere (including DOMContentLoaded handlers).
     function _dbg(...args) { if (localStorage.getItem('log-level') === 'debug') console.log(...args); }
     function _dbgWarn(...args) { if (localStorage.getItem('log-level') === 'debug') console.warn(...args); }
+    // HTML escaping for dynamic content inserted via innerHTML
+    function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
     // Check browser compatibility on page load
     window.addEventListener('DOMContentLoaded', () => {
@@ -3214,6 +3220,11 @@
     keyInput.addEventListener('input', () => {
       localStorage.setItem('app-key', keyInput.value.trim());
     });
+    document.getElementById('cfg-key-toggle').addEventListener('click', () => {
+      const btn = document.getElementById('cfg-key-toggle');
+      if (keyInput.type === 'password') { keyInput.type = 'text'; btn.textContent = 'hide'; }
+      else { keyInput.type = 'password'; btn.textContent = 'show'; }
+    });
     maxDownloadsInput.addEventListener('input', () => {
       localStorage.setItem('max-downloads', maxDownloadsInput.value);
     });
@@ -3241,7 +3252,17 @@
         const labelEl = document.createElement('div');
         labelEl.style.color = '#999';
         labelEl.style.fontSize = '0.85rem';
-        labelEl.innerHTML = `${label}: ${tooltip ? `<span class="info-tip">&#9432;<span class="info-tip-text">${tooltip}</span></span>` : ''}`;
+        labelEl.textContent = label + ': ';
+        if (tooltip) {
+          const tip = document.createElement('span');
+          tip.className = 'info-tip';
+          tip.textContent = '\u2139';
+          const tipText = document.createElement('span');
+          tipText.className = 'info-tip-text';
+          tipText.textContent = tooltip;
+          tip.appendChild(tipText);
+          labelEl.appendChild(tip);
+        }
         const statusEl = document.createElement('div');
         statusEl.style.textAlign = 'right';
         statusEl.innerHTML = supported
@@ -3264,10 +3285,10 @@
     // helpers to read shared config
     function getUrl() { return document.getElementById('cfg-url').value.trim(); }
     function getKeyHex() { return document.getElementById('cfg-key').value.trim(); }
-    function getMaxDownloads() { return parseInt(document.getElementById('cfg-max-downloads').value) || 8; }
-    function getMaxUploads() { return parseInt(document.getElementById('cfg-max-uploads').value) || 8; }
-    function getDownloadWorkers() { return parseInt(document.getElementById('cfg-download-workers').value) || 8; }
-    function getUploadWorkers() { return parseInt(document.getElementById('cfg-upload-workers').value) || 8; }
+    function getMaxDownloads() { return parseInt(document.getElementById('cfg-max-downloads', 10).value, 10) || 8; }
+    function getMaxUploads() { return parseInt(document.getElementById('cfg-max-uploads', 10).value, 10) || 8; }
+    function getDownloadWorkers() { return parseInt(document.getElementById('cfg-download-workers', 10).value, 10) || 8; }
+    function getUploadWorkers() { return parseInt(document.getElementById('cfg-upload-workers', 10).value, 10) || 8; }
     function getLogLevel() { return document.getElementById('cfg-debug-logging').checked ? 'debug' : null; }
 
     // Helpers object passed to extracted modules so they can access utilities
@@ -3742,7 +3763,7 @@
         }
       } catch (e) {
         console.error('Failed to load account:', e);
-        status.innerHTML = `<span class="fail">Failed to load account: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Failed to load account: ${_esc(e.message)}</span>`;
       }
     }
 
@@ -3883,7 +3904,7 @@
         statusEl.innerHTML = `<span class="pass">Queried ${total} hosts</span>`;
       } catch (e) {
         console.error('Failed to check balances:', e);
-        statusEl.innerHTML = `<span class="fail">Failed: ${e.message}</span>`;
+        statusEl.innerHTML = `<span class="fail">Failed: ${_esc(e.message)}</span>`;
       } finally {
         btn.disabled = false;
         btn.textContent = 'Check Balances';
@@ -3930,7 +3951,7 @@
         }, 1000);
       } catch (e) {
         console.error('Failed to prune slabs:', e);
-        status.innerHTML = `<span class="fail">Failed to prune slabs: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Failed to prune slabs: ${_esc(e.message)}</span>`;
         button.textContent = originalText;
         button.disabled = false;
       }
@@ -4084,9 +4105,9 @@
 
         await sdk.pinObject(obj);
 
-        status.innerHTML += `\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+        status.innerHTML += `\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
       }
     });
 
@@ -4122,9 +4143,9 @@
         const sdk = await connectSdk(status);
         await sdk.pinObject(obj);
 
-        status.innerHTML = `Upload + pin completed (${formatSize(size)}) in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+        status.innerHTML = `Upload + pin completed (${formatSize(size)}) in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
       }
     });
 
@@ -4183,7 +4204,7 @@
       progress.value = 0;
 
       try {
-        status.innerHTML = `Uploading ${selectedFile.name} (${formatSize(selectedFile.size)})...\n`;
+        status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)})...\n`;
 
         const result = await parallelUpload(selectedFile, status, progress);
         if (!result) return;
@@ -4197,9 +4218,9 @@
         const sdk = await connectSdk(status);
         await sdk.pinObject(obj);
 
-        status.innerHTML = `File: ${selectedFile.name}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+        status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
       }
     });
 
@@ -4217,7 +4238,7 @@
       progress.value = 0;
 
       try {
-        status.innerHTML = `Uploading ${selectedFile.name} (${formatSize(selectedFile.size)}) via encode workers...\n`;
+        status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)}) via encode workers...\n`;
 
         const result = await parallelEncodeUpload(selectedFile, status, progress);
         if (!result) return;
@@ -4231,7 +4252,7 @@
         const sdk = await connectSdk(status);
         await sdk.pinObject(obj);
 
-        status.innerHTML = `File: ${selectedFile.name}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+        status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
         status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
       }
@@ -4251,7 +4272,7 @@
       progress.value = 0;
 
       try {
-        status.innerHTML = `Uploading ${selectedFile.name} (${formatSize(selectedFile.size)})...`;
+        status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)})...`;
         const sdk = await connectSdk(status);
         if (!sdk) return;
 
@@ -4265,7 +4286,7 @@
         const upload = sdk.streamingUpload(fileSize, ulOpts2, (current, total) => {
           progress.max = total;
           progress.value = current;
-          status.innerHTML = `Uploading ${selectedFile.name} (${formatSize(fileSize)})... ${current}/${total} shards`;
+          status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(fileSize)})... ${current}/${total} shards`;
         });
         (async () => {
           for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
@@ -4285,9 +4306,9 @@
 
         await sdk.pinObject(obj);
 
-        status.innerHTML = `File: ${selectedFile.name}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${objectId}`;
+        status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
       }
     });
 
@@ -4500,10 +4521,10 @@
         clearInterval(progressInterval);
         const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
         progress.value = progress.max;
-        status.innerHTML = `File: ${filename}\nSize: ${formatSize(size)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
+        status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(size)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
       } catch (e) {
         if (progressInterval) clearInterval(progressInterval);
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
       } finally {
         _downloadInProgress = false;
         document.getElementById('btn-download').disabled = false;
@@ -4677,7 +4698,7 @@
         a.click();
         URL.revokeObjectURL(a.href);
 
-        status.innerHTML = `File: ${filename}\nSize: ${formatSize(bytesDownloaded)}\nDownloaded in ${elapsed}s (single worker, 1 SDK)\n<span class="pass">Saved to disk!</span>`;
+        status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(bytesDownloaded)}\nDownloaded in ${elapsed}s (single worker, 1 SDK)\n<span class="pass">Saved to disk!</span>`;
       } catch (e) {
         status.innerHTML += `\n<span class="fail">Error: ${e.message || e}</span>`;
       } finally {
@@ -5115,7 +5136,7 @@
     document.getElementById('btn-list-objects').addEventListener('click', async () => {
       const status = document.getElementById('list-status');
       const objectsList = document.getElementById('objects-list');
-      const limit = parseInt(document.getElementById('list-limit').value) || 50;
+      const limit = parseInt(document.getElementById('list-limit', 10).value, 10) || 50;
 
       status.textContent = 'Loading...';
       objectsList.innerHTML = '';
@@ -5183,7 +5204,7 @@
         objectsList.innerHTML = html;
         status.innerHTML = `<span class="pass">✓ Found ${objects.length} object${objects.length !== 1 ? 's' : ''}</span>`;
       } catch (e) {
-        status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
         objectsList.innerHTML = '';
       }
     });
@@ -5246,7 +5267,7 @@
           document.getElementById('btn-list-objects').click();
         }, 500);
       } catch (e) {
-        status.innerHTML = `<span class="fail">Delete failed: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Delete failed: ${_esc(e.message)}</span>`;
 
         // Restore original status after showing error for 3 seconds
         setTimeout(() => {
@@ -5329,7 +5350,7 @@
 
         try {
           const duration = parseFloat(configModal.querySelector('#share-modal-duration').value);
-          const unit = parseInt(configModal.querySelector('#share-modal-unit').value);
+          const unit = parseInt(configModal.querySelector('#share-modal-unit', 10).value);
 
           const status = document.getElementById('list-status');
           const sdk = await connectSdk(status);
@@ -5435,7 +5456,7 @@
             <div style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem;">
               <div style="margin-bottom:0.75rem;">
                 <div style="color:#888; font-size:0.85rem; margin-bottom:0.25rem;">Object ID:</div>
-                <div style="font-family:monospace; font-size:0.9rem; word-break:break-all;">${objectId}</div>
+                <div style="font-family:monospace; font-size:0.9rem; word-break:break-all;">${_esc(objectId)}</div>
               </div>
               <div style="margin-bottom:0.75rem;">
                 <div style="color:#888; font-size:0.85rem; margin-bottom:0.25rem;">Size:</div>
@@ -5482,7 +5503,7 @@
       const status = document.getElementById('share-status');
       const objectId = document.getElementById('share-object-id').value.trim();
       const duration = parseFloat(document.getElementById('share-duration').value);
-      const unit = parseInt(document.getElementById('share-unit').value);
+      const unit = parseInt(document.getElementById('share-unit', 10).value);
 
       if (!objectId) {
         status.innerHTML = '<span class="fail">Enter an Object ID</span>';
@@ -5500,9 +5521,25 @@
         const shareUrl = sdk.shareObject(obj, validUntilMs);
 
         const expiresAt = new Date(validUntilMs).toLocaleString();
-        status.innerHTML = `<span class="pass">Share link created!</span>\nExpires: ${expiresAt}\n\n<a href="${shareUrl}" target="_blank" rel="noopener" style="color:#60a5fa; word-break:break-all;">${shareUrl}</a>`;
+        status.textContent = '';
+        const passSpan = document.createElement('span');
+        passSpan.className = 'pass';
+        passSpan.textContent = 'Share link created!';
+        status.appendChild(passSpan);
+        status.appendChild(document.createTextNode('\nExpires: ' + expiresAt + '\n\n'));
+        const link = document.createElement('a');
+        link.href = shareUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.style.cssText = 'color:#60a5fa; word-break:break-all;';
+        link.textContent = shareUrl;
+        status.appendChild(link);
       } catch (e) {
-        status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+        const errSpan = document.createElement('span');
+        errSpan.className = 'fail';
+        errSpan.textContent = 'Error: ' + e.message;
+        status.appendChild(document.createTextNode('\n'));
+        status.appendChild(errSpan);
       }
     });
 
@@ -5608,8 +5645,9 @@ p{margin:0.8em 0;}
       const d = event.data;
       if (!d) return;
 
-      // Find which tab's iframe sent this message
+      // Only accept messages from our own iframes (source must match a known tab)
       const sourceTab = event.source ? findTabByIframeWindow(event.source) : null;
+      if (!sourceTab) return; // reject messages from unknown sources
 
       // 1. Link navigation — navigate within the source tab
       if (d.type === 'SIA_NAVIGATE' && typeof d.url === 'string') {
@@ -6292,7 +6330,7 @@ p{margin:0.8em 0;}
           // Wrap audio in HTML with styled player
           const audioBlob = new Blob([data], { type: mimeType });
           const audioUrl = URL.createObjectURL(audioBlob);
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;}audio{width:90%;max-width:600px;}</style></head><body><h2 style="margin-bottom:2rem;">🎵 Audio Player</h2><audio controls autoplay><source src="${audioUrl}" type="${mimeType}">Your browser does not support the audio element.</audio></body></html>`;
+          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;}audio{width:90%;max-width:600px;}</style></head><body><h2 style="margin-bottom:2rem;">🎵 Audio Player</h2><audio controls autoplay><source src="${audioUrl}" type="${_esc(mimeType)}">Your browser does not support the audio element.</audio></body></html>`;
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
         } else if (item.fileType === 'html') {
@@ -6312,7 +6350,7 @@ p{margin:0.8em 0;}
             const pngDataUrl = cvs.toDataURL('image/png');
             html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;}img{max-width:100%;max-height:100vh;object-fit:contain;}</style></head><body><img src="${pngDataUrl}" alt="Image"></body></html>`;
           } catch {
-            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${mimeType} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${_esc(mimeType)} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
           }
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
@@ -6338,7 +6376,7 @@ p{margin:0.8em 0;}
         if (!navInProgress) pushTabNav(tab, { url: item.originalUrl || item.displayUrl, blobUrl, label: item.title || item.displayUrl, fileType: item.fileType || 'html' });
         updateBrowserUI();
       } catch (e) {
-        status.innerHTML = `<span class="fail">Error re-downloading: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Error re-downloading: ${_esc(e.message)}</span>`;
       }
     }
 
@@ -6601,7 +6639,7 @@ p{margin:0.8em 0;}
           // Video that was too small to stream or streaming failed — use iframe player
           const videoBlob = new Blob([downloadedBlob], { type: mimeType });
           const videoUrl = URL.createObjectURL(videoBlob);
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:2rem;}video{width:100%;max-width:1200px;background:#000;}</style></head><body><video controls autoplay><source src="${videoUrl}" type="${mimeType}">Your browser does not support the video element.</video><p style="margin-top:1rem;color:#888;">File size: ${formatSize(size)} | Type: ${mimeType}</p></body></html>`;
+          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;padding:2rem;}video{width:100%;max-width:1200px;background:#000;}</style></head><body><video controls autoplay><source src="${videoUrl}" type="${_esc(mimeType)}">Your browser does not support the video element.</video><p style="margin-top:1rem;color:#888;">File size: ${formatSize(size)} | Type: ${_esc(mimeType)}</p></body></html>`;
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
 
@@ -6613,7 +6651,7 @@ p{margin:0.8em 0;}
         } else if (fileType === 'audio') {
           const audioBlob = new Blob([downloadedBlob], { type: mimeType });
           const audioUrl = URL.createObjectURL(audioBlob);
-          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;}audio{width:90%;max-width:600px;}</style></head><body><h2 style="margin-bottom:2rem;">🎵 Audio Player</h2><audio controls autoplay><source src="${audioUrl}" type="${mimeType}">Your browser does not support the audio element.</audio></body></html>`;
+          const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;}audio{width:90%;max-width:600px;}</style></head><body><h2 style="margin-bottom:2rem;">🎵 Audio Player</h2><audio controls autoplay><source src="${audioUrl}" type="${_esc(mimeType)}">Your browser does not support the audio element.</audio></body></html>`;
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
 
@@ -6626,7 +6664,7 @@ p{margin:0.8em 0;}
           addToHistory(displayUrl, blobUrl, displayUrl, true, url, 'pdf');
           if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: displayUrl, fileType: 'pdf' });
 
-          status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${downloadElapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
+          status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${_esc(mimeType)}\nLoaded in ${downloadElapsed}s\n<span class="pass">PDF opened in new tab!</span>`;
           return;
 
         } else if (fileType === 'html') {
@@ -6648,7 +6686,7 @@ p{margin:0.8em 0;}
             const pngDataUrl = cvs.toDataURL('image/png');
             html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;}img{max-width:100%;max-height:100vh;object-fit:contain;}</style></head><body><img src="${pngDataUrl}" alt="Image"></body></html>`;
           } catch {
-            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${mimeType} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
+            html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#0a0a0a;color:#e0e0e0;font-family:system-ui,sans-serif;text-align:center;}.msg{max-width:500px;}h2{margin-bottom:1rem;}p{color:#888;line-height:1.6;}</style></head><body><div class="msg"><h2>Unsupported Image Format</h2><p>${_esc(mimeType)} is not supported by this browser.</p><p>Try opening this file in Safari, or convert it to JPEG/PNG first.</p></div></body></html>`;
           }
           const blob = new Blob([html], { type: 'text/html' });
           blobUrl = URL.createObjectURL(blob);
@@ -6669,9 +6707,9 @@ p{margin:0.8em 0;}
         addToHistory(displayUrl, blobUrl, displayUrl, false, url, fileType);
         if (!navInProgress) pushTabNav(tab, { url, blobUrl, label: tab.label, fileType });
 
-        status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${mimeType}\nLoaded in ${downloadElapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
+        status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${_esc(mimeType)}\nLoaded in ${downloadElapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
       } catch (e) {
-        status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
       } finally {
         loadContentInProgress = false;
       }
@@ -6768,14 +6806,16 @@ p{margin:0.8em 0;}
         const displayUrl = `External (${fileType}): ${url}`;
         addToHistory(displayUrl, blobUrl, displayUrl, true, url, fileType);
 
-        status.innerHTML = `<span class="pass">✓ Opened in external tab as ${mimeType}!</span>`;
+        status.innerHTML = `<span class="pass">✓ Opened in external tab as ${_esc(mimeType)}!</span>`;
       } catch (e) {
-        status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+        status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
       }
     });
 
     // Listen for messages from iframe (e.g., from example.html buttons)
     window.addEventListener('message', async (event) => {
+      // Only accept messages from our own iframes
+      if (event.source && !findTabByIframeWindow(event.source)) return;
       const { type, url, title } = event.data;
 
       if (type === 'LOAD_IN_VIEWER') {
@@ -6811,7 +6851,7 @@ p{margin:0.8em 0;}
 
           status.innerHTML = `Size: ${formatSize(size)}\nLoaded in ${elapsed}s\n<span class="pass">${title || 'File'} loaded!</span>`;
         } catch (e) {
-          status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+          status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
         }
       } else if (type === 'LOAD_IN_NEW_TAB') {
         // Download and open in new tab
@@ -6835,7 +6875,7 @@ p{margin:0.8em 0;}
           // Clean up blob URL after a delay
           setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         } catch (e) {
-          status.innerHTML += `\n<span class="fail">Error: ${e.message}</span>`;
+          status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
         }
       }
     });
@@ -7066,8 +7106,8 @@ p{margin:0.8em 0;}
 
     function walletDeriveAddresses() {
       if (!_walletEntropy) { walletLog('Wallet is locked.', 'err'); return; }
-      const start = parseInt(document.getElementById('wallet-derive-start').value) || 0;
-      const count = parseInt(document.getElementById('wallet-derive-count').value) || 5;
+      const start = parseInt(document.getElementById('wallet-derive-start', 10).value) || 0;
+      const count = parseInt(document.getElementById('wallet-derive-count', 10).value) || 5;
 
       try {
         const json = derive_addresses(_walletEntropy, start, count);
@@ -7788,7 +7828,7 @@ p{margin:0.8em 0;}
       const selected = document.querySelectorAll('.txb-utxo-item.selected');
       let total = 0n;
       for (const el of selected) {
-        const u = _txbUtxos[parseInt(el.dataset.index)];
+        const u = _txbUtxos[parseInt(el.dataset.index, 10)];
         if (u) total += BigInt(u.amountHastings);
       }
       document.getElementById('txb-selected-summary').textContent =
@@ -7905,7 +7945,7 @@ p{margin:0.8em 0;}
       const selected = document.querySelectorAll('.txb-utxo-item.selected');
       let totalIn = 0n;
       for (const el of selected) {
-        const u = _txbUtxos[parseInt(el.dataset.index)];
+        const u = _txbUtxos[parseInt(el.dataset.index, 10)];
         if (u) totalIn += BigInt(u.amountHastings);
       }
 
@@ -7979,7 +8019,7 @@ p{margin:0.8em 0;}
       const inputs = [];
       let missingProofs = 0;
       for (const el of selected) {
-        const u = _txbUtxos[parseInt(el.dataset.index)];
+        const u = _txbUtxos[parseInt(el.dataset.index, 10)];
         const proof = _utxoProofs[u.outputId];
         if (!proof) missingProofs++;
         inputs.push({
@@ -8043,7 +8083,7 @@ p{margin:0.8em 0;}
             if (net === 'zen') return 'zen';
             return 'mainnet';
           })();
-          const attAccount = parseInt(document.getElementById('txb-att-account').value) || 0;
+          const attAccount = parseInt(document.getElementById('txb-att-account', 10).value) || 0;
           // Find next unused manifest index by scanning the attestation index
           const attIndex = await mfstFindNextIndex(attAccount);
           const attTxnJson = build_private_manifest_transaction(_walletEntropy, attAccount, attIndex, attUrl, '0', network);
@@ -8229,7 +8269,7 @@ p{margin:0.8em 0;}
       if (!_walletEntropy) { walletLog('Unlock wallet first.', 'err'); return; }
 
       const net = getActiveNetwork();
-      const account = parseInt(document.getElementById('wallet-account').value) || 0;
+      const account = parseInt(document.getElementById('wallet-account', 10).value) || 0;
 
       const filterUrl = getFilterUrl();
       if (!filterUrl) {
@@ -8420,7 +8460,7 @@ p{margin:0.8em 0;}
       const info = document.getElementById('txb-att-info');
       const cb = document.getElementById('txb-att-private');
       if (cb.checked && _walletEntropy) {
-        const account = parseInt(document.getElementById('txb-att-account').value) || 0;
+        const account = parseInt(document.getElementById('txb-att-account', 10).value) || 0;
         try {
           const nextIdx = await mfstFindNextIndex(account);
           const json = derive_manifest_info(_walletEntropy, account, nextIdx);
@@ -8454,7 +8494,7 @@ p{margin:0.8em 0;}
       if (txLink) {
         e.stopPropagation();
         const txid = txLink.dataset.txid;
-        const height = txLink.dataset.height ? parseInt(txLink.dataset.height) : undefined;
+        const height = txLink.dataset.height ? parseInt(txLink.dataset.height, 10) : undefined;
         openOrActivateInternalTab('explorer');
         setTimeout(() => {
           exploreTransaction(txid, height);
@@ -8628,7 +8668,7 @@ p{margin:0.8em 0;}
 
     function mfstDerive() {
       if (!_walletEntropy) return;
-      const account = parseInt(document.getElementById('mfst-account')?.value) || 0;
+      const account = parseInt(document.getElementById('mfst-account', 10)?.value) || 0;
       try {
         const json = derive_manifest_info(_walletEntropy, account, 0);
         const info = JSON.parse(json);
@@ -8691,8 +8731,8 @@ p{margin:0.8em 0;}
     async function mfstBuildTransaction() {
       if (!_walletEntropy) { mfstLog('Wallet is locked.', 'err'); return; }
       const type = document.getElementById('mfst-type').value;
-      const account = parseInt(document.getElementById('mfst-account').value) || 0;
-      const addrIdx = parseInt(document.getElementById('mfst-address-index').value) || 0;
+      const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
+      const addrIdx = parseInt(document.getElementById('mfst-address-index', 10).value) || 0;
       const url = document.getElementById('mfst-share-url').value.trim();
       const fee = document.getElementById('mfst-miner-fee').value.trim() || '0';
       const network = mfstGetNetwork();
@@ -8753,7 +8793,7 @@ p{margin:0.8em 0;}
 
         if (type === 'private') {
           if (!_walletEntropy) { mfstLog('Wallet is locked.', 'err'); return; }
-          const account = parseInt(document.getElementById('mfst-account').value) || 0;
+          const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
           // Scan all manifest indices (gap-based, like HD wallet addresses)
           const allEntries = await loadAttestationEntries();
           const pubkeySet = new Set(allEntries.map(e => e.pubkeyHex.toLowerCase()));
@@ -8923,7 +8963,7 @@ p{margin:0.8em 0;}
 
                 // Try to decode based on resolve type
                 if (type === 'private' && _walletEntropy) {
-                  const account = parseInt(document.getElementById('mfst-account').value) || 0;
+                  const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
                   try { url = open_private_manifest(_walletEntropy, account, valueHex); } catch (e) { /* wrong key */ }
                 } else if (type === 'public') {
                   // Public manifests store plaintext UTF-8 in the value
@@ -8935,7 +8975,7 @@ p{margin:0.8em 0;}
                   }
                 }
 
-                const acct = (type === 'private') ? (parseInt(document.getElementById('mfst-account').value) || 0) : null;
+                const acct = (type === 'private') ? (parseInt(document.getElementById('mfst-account', 10).value) || 0) : null;
                 results.push({ height: entry.height, key: att.key, url, raw: att.value, account: acct });
               }
             }
@@ -8992,7 +9032,7 @@ p{margin:0.8em 0;}
 
       const net = getActiveNetwork();
       const network = mfstGetNetwork();
-      const account = parseInt(document.getElementById('mfst-account')?.value) || 0;
+      const account = parseInt(document.getElementById('mfst-account', 10)?.value) || 0;
 
       // Verify chain is fully synced
       const syncState = getSyncState(net);
@@ -9130,7 +9170,7 @@ p{margin:0.8em 0;}
       if (!_walletEntropy) { mfstLog('Wallet is locked.', 'err'); return; }
 
       const net = getActiveNetwork();
-      const account = parseInt(document.getElementById('mfst-account')?.value) || 0;
+      const account = parseInt(document.getElementById('mfst-account', 10)?.value) || 0;
 
       try {
         statusEl.textContent = 'Resolving manifest for ' + net + '...';
@@ -9215,7 +9255,7 @@ p{margin:0.8em 0;}
 
       const net = getActiveNetwork();
       const network = mfstGetNetwork();
-      const account = parseInt(document.getElementById('mfst-account')?.value) || 0;
+      const account = parseInt(document.getElementById('mfst-account', 10)?.value) || 0;
       const previewEl = document.getElementById('mfst-txn-preview');
 
       try {
