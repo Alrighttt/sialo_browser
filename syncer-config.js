@@ -59,10 +59,23 @@ function updateNetCard(net) {
 
 // --- Save config ---
 
+function isValidPeerUrl(url) {
+  if (!url) return true; // empty is allowed (disables sync)
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'wss:';
+  } catch { return false; }
+}
+
 function saveConfig() {
   const net = document.getElementById('sc-network').value;
+  const peerUrl = document.getElementById('sc-peer-url').value.trim();
+  if (peerUrl && !isValidPeerUrl(peerUrl)) {
+    log('Invalid peer URL: must use https:// or wss:// protocol.', 'err');
+    return;
+  }
   chain.setNetworkConfig(net, {
-    peerUrl: document.getElementById('sc-peer-url').value.trim(),
+    peerUrl,
     certHash: document.getElementById('sc-cert-hash').value.trim() || null,
   });
 }
@@ -151,142 +164,89 @@ export function initSyncerConfig() {
   }
   updateResetLabel();
 
-  document.getElementById('sc-btn-clear-filters').addEventListener('click', async () => {
-    const net = networkSelect.value;
-    if (!confirm('Clear all filter data for ' + net + '? You will need to re-sync.')) return;
-    clearStatus.textContent = 'Clearing filters...';
+  // Shared wrapper for data management actions: status updates, try/catch, log
+  async function runDataAction(progressMsg, action, successMsg, logMsg) {
+    clearStatus.textContent = progressMsg;
     clearStatus.style.color = '#60a5fa';
     try {
-      await chain.clearFilters(net);
-      clearStatus.textContent = 'Filters cleared for ' + net;
+      await action();
+      clearStatus.textContent = successMsg;
       clearStatus.style.color = '#4ade80';
-      log('[' + net + '] Filters cleared', 'info');
+      if (logMsg) log(logMsg, 'info');
     } catch (e) {
       clearStatus.textContent = 'Error: ' + e;
       clearStatus.style.color = '#f87171';
     }
     updateStatus();
+  }
+
+  function requirePeerUrl(net) {
+    const config = chain.getNetworkConfig(net);
+    if (!config.peerUrl) {
+      log('Please enter a peer URL first.', 'err');
+      return false;
+    }
+    return true;
+  }
+
+  document.getElementById('sc-btn-clear-filters').addEventListener('click', async () => {
+    const net = networkSelect.value;
+    if (!confirm('Clear all filter data for ' + net + '? You will need to re-sync.')) return;
+    await runDataAction('Clearing filters...', () => chain.clearFilters(net),
+      'Filters cleared for ' + net, '[' + net + '] Filters cleared');
   });
 
   document.getElementById('sc-btn-clear-txindex').addEventListener('click', async () => {
     const net = networkSelect.value;
     if (!confirm('Clear transaction index for ' + net + '? You will need to re-sync.')) return;
-    clearStatus.textContent = 'Clearing transaction index...';
-    clearStatus.style.color = '#60a5fa';
-    try {
-      await chain.clearTxindex(net);
-      clearStatus.textContent = 'Transaction index cleared for ' + net;
-      clearStatus.style.color = '#4ade80';
-      log('[' + net + '] Transaction index cleared', 'info');
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    await runDataAction('Clearing transaction index...', () => chain.clearTxindex(net),
+      'Transaction index cleared for ' + net, '[' + net + '] Transaction index cleared');
   });
 
   document.getElementById('sc-btn-clear-all').addEventListener('click', async () => {
     const net = networkSelect.value;
     if (!confirm('Clear ALL sync data for ' + net + '? This will stop syncing, disconnect the relay, and clear all filters, transaction index, and checkpoints.')) return;
-    clearStatus.textContent = 'Stopping operations...';
-    clearStatus.style.color = '#60a5fa';
-    try {
+    await runDataAction('Stopping operations...', async () => {
       chain.stopNetwork(net);
       log('[' + net + '] Stopped sync and relay', 'info');
       autoSyncCheckbox.checked = false;
       clearStatus.textContent = 'Clearing all data...';
       await chain.clearAllData(net);
-      clearStatus.textContent = 'All data cleared for ' + net;
-      clearStatus.style.color = '#4ade80';
-      log('[' + net + '] All sync data cleared', 'info');
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    }, 'All data cleared for ' + net, '[' + net + '] All sync data cleared');
   });
 
   document.getElementById('sc-btn-rebuild-filters').addEventListener('click', async () => {
     const net = networkSelect.value;
-    const config = chain.getNetworkConfig(net);
-    if (!config.peerUrl) {
-      log('Please enter a peer URL first.', 'err');
-      return;
-    }
+    if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild all filters for ' + net + '? This will clear existing filters and transaction index, then re-sync from scratch.')) return;
-    clearStatus.textContent = 'Clearing data...';
-    clearStatus.style.color = '#60a5fa';
     log('[' + net + '] Rebuilding filters from scratch', 'info');
-    try {
-      await chain.rebuildFilters(net);
-      clearStatus.textContent = 'Rebuild started for ' + net;
-      clearStatus.style.color = '#4ade80';
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    await runDataAction('Clearing data...', () => chain.rebuildFilters(net),
+      'Rebuild started for ' + net, null);
   });
 
   document.getElementById('sc-btn-clear-utxoindex').addEventListener('click', async () => {
     const net = networkSelect.value;
     if (!confirm('Clear UTXO index for ' + net + '? You will need to re-sync.')) return;
-    clearStatus.textContent = 'Clearing UTXO index...';
-    clearStatus.style.color = '#60a5fa';
-    try {
-      await chain.clearUtxoIndex(net);
-      clearStatus.textContent = 'UTXO index cleared for ' + net;
-      clearStatus.style.color = '#4ade80';
-      log('[' + net + '] UTXO index cleared', 'info');
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    await runDataAction('Clearing UTXO index...', () => chain.clearUtxoIndex(net),
+      'UTXO index cleared for ' + net, '[' + net + '] UTXO index cleared');
   });
 
   document.getElementById('sc-btn-rebuild-txindex').addEventListener('click', async () => {
     const net = networkSelect.value;
-    const config = chain.getNetworkConfig(net);
-    if (!config.peerUrl) {
-      log('Please enter a peer URL first.', 'err');
-      return;
-    }
+    if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild transaction index for ' + net + '? This will clear the existing txindex then re-sync.')) return;
-    clearStatus.textContent = 'Clearing txindex...';
-    clearStatus.style.color = '#60a5fa';
     log('[' + net + '] Rebuilding txindex from scratch', 'info');
-    try {
-      await chain.regenerateTxindex(net);
-      clearStatus.textContent = 'Rebuild started for ' + net;
-      clearStatus.style.color = '#4ade80';
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    await runDataAction('Clearing txindex...', () => chain.regenerateTxindex(net),
+      'Rebuild started for ' + net, null);
   });
 
   document.getElementById('sc-btn-rebuild-utxoindex').addEventListener('click', async () => {
     const net = networkSelect.value;
-    const config = chain.getNetworkConfig(net);
-    if (!config.peerUrl) {
-      log('Please enter a peer URL first.', 'err');
-      return;
-    }
+    if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild UTXO index for ' + net + '? This will clear the existing UTXO index then re-sync.')) return;
-    clearStatus.textContent = 'Clearing UTXO index...';
-    clearStatus.style.color = '#60a5fa';
     log('[' + net + '] Rebuilding UTXO index from scratch', 'info');
-    try {
-      await chain.regenerateUtxoIndex(net);
-      clearStatus.textContent = 'Rebuild started for ' + net;
-      clearStatus.style.color = '#4ade80';
-    } catch (e) {
-      clearStatus.textContent = 'Error: ' + e;
-      clearStatus.style.color = '#f87171';
-    }
-    updateStatus();
+    await runDataAction('Clearing UTXO index...', () => chain.regenerateUtxoIndex(net),
+      'Rebuild started for ' + net, null);
   });
 
   // Subscribe to sync log events from chain.js

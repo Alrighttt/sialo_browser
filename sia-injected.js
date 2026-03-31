@@ -3,12 +3,13 @@
 //   - Link interception: rewrites sia:// link clicks into SIA_NAVIGATE messages
 //   - Resource loading: intercepts sia:// images/css/subresources, requests them from
 //     the parent via SIA_RESOURCE messages, and swaps in blob URLs when they arrive
-//   - Video streaming: implements a full WebCodecs + MSE playback pipeline that receives
-//     MP4 samples from the parent's Web Worker, decodes video frames to canvas, and
-//     feeds audio through MediaSource — including seek support and buffered-range UI
+//   - Video streaming: delegates rendering, timing, audio MSE, and decode feeding to
+//     video-pipeline-core.js (shared with the main page's video-streaming.js)
 //   - Dynamic content observation: MutationObserver watches for lazily-added sia://
 //     references and rewrites them on the fly
 (function() {
+  var VPC = self.VideoPipelineCore;
+
   // --- 1. Link navigation ---
   document.addEventListener('click', function(e) {
     var a = e.target.closest('a');
@@ -37,16 +38,9 @@
     window.parent.postMessage({ type: 'SIA_RESOURCE', url: url, requestId: id }, '*');
   }
 
-  // --- 3. Video streaming via WebCodecs ---
+  // --- 3. Video streaming via WebCodecs (using shared pipeline core) ---
   var _streamSessions = {};
   var _streamIdCounter = 0;
-
-  function formatTime(sec) {
-    if (!sec || sec < 0) sec = 0;
-    var m = Math.floor(sec / 60);
-    var s = Math.floor(sec % 60);
-    return m + ':' + (s < 10 ? '0' : '') + s;
-  }
 
   function drawPlayButton(canvas) {
     var ctx0 = canvas.getContext('2d');
@@ -64,22 +58,11 @@
     ctx0.fill();
   }
 
-  function togglePause(session) {
-    if (session.paused) {
-      session.paused = false;
-      if (session.wallClockSynced && !session.hasAudio) {
-        session.wallClockStart = performance.now() - ((session.pauseOffsetUs - session.videoTimeBase) / 1000);
-      }
-      if (session.audioEl && session.audioEl.paused) session.audioEl.play().catch(function(){});
-      if (session.playBtn) session.playBtn.innerHTML = '&#9646;&#9646;';
-    } else {
-      // Snapshot time BEFORE setting paused (getMediaTimeUs checks s.paused first)
-      var t = getMediaTimeUs(session);
-      session.paused = true;
-      session.pauseOffsetUs = t >= 0 ? t : 0;
-      if (session.audioEl && !session.audioEl.paused) session.audioEl.pause();
-      if (session.playBtn) session.playBtn.innerHTML = '&#9654;';
-    }
+  function renderLoop(sessionId) {
+    var s = _streamSessions[sessionId];
+    if (!s) return;
+    if (!VPC.renderTick(s)) return; // aborted
+    requestAnimationFrame(function() { renderLoop(sessionId); });
   }
 
   function requestVideoStream(videoEl) {
@@ -175,43 +158,23 @@
     videoEl.parentNode.insertBefore(container, videoEl.nextSibling);
     videoEl.parentNode.insertBefore(statusDiv, container.nextSibling);
 
-    var session = {
-      canvas: canvas,
-      ctx: canvas.getContext('2d'),
-      container: container,
-      controls: controls,
-      playBtn: playBtn,
-      timeSpan: timeSpan,
-      seekPlayed: seekPlayed,
-      seekBuffered: seekBuffered,
-      seekThumb: seekThumb,
-      statusDiv: statusDiv,
-      videoEl: videoEl,
-      decoder: null,
-      frameBuffer: [],
-      pendingSamples: [],
-      canvasSized: false,
-      paused: false,
-      pauseOffsetUs: 0,
-      wallClockStart: 0,
-      videoTimeBase: -1,
-      wallClockSynced: false,
-      lastRafTime: 0,
-      downloadComplete: false,
-      mediaDuration: 0,
-      hasAudio: false,
-      audioEl: null,
-      audioMediaSource: null,
-      audioSourceBuffer: null,
-      audioAppendQueue: [],
-      audioSbAppending: false,
-      renderRunning: false,
-      aborted: false,
-      started: false,
-      seeking: false,
-      decoderConfig: null,
-      audioMode: null,
-    };
+    // Build shared pipeline state via core
+    var session = VPC.createState();
+    session.canvas = canvas;
+    session.ctx = canvas.getContext('2d');
+    session.playBtn = playBtn;
+    session.timeSpan = timeSpan;
+    session.seekPlayed = seekPlayed;
+    session.seekBuffered = seekBuffered;
+    session.seekThumb = seekThumb;
+
+    // Extra fields for iframe-specific logic
+    session.container = container;
+    session.controls = controls;
+    session.statusDiv = statusDiv;
+    session.videoEl = videoEl;
+    session.started = false;
+
     _streamSessions[sessionId] = session;
 
     // Play/pause via canvas click or play button
@@ -223,7 +186,7 @@
         window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
         return;
       }
-      togglePause(session);
+      VPC.togglePause(session);
     });
     playBtn.addEventListener('click', function(e) {
       e.stopPropagation();
@@ -234,7 +197,7 @@
         window.parent.postMessage({ type: 'SIA_STREAM_REQUEST', url: url, sessionId: sessionId }, '*');
         return;
       }
-      togglePause(session);
+      VPC.togglePause(session);
     });
 
     // Volume
@@ -263,7 +226,7 @@
       if (session.seekPlayed) session.seekPlayed.style.width = pct;
       if (session.seekThumb) session.seekThumb.style.left = pct;
       if (session.timeSpan && session.mediaDuration > 0) {
-        session.timeSpan.textContent = formatTime(frac * session.mediaDuration) + ' / ' + formatTime(session.mediaDuration);
+        session.timeSpan.textContent = VPC.formatTime(frac * session.mediaDuration) + ' / ' + VPC.formatTime(session.mediaDuration);
       }
     }
     seekbar.addEventListener('click', function(e) { e.stopPropagation(); });
@@ -297,214 +260,18 @@
     }
   }
 
-  function getMediaTimeUs(s) {
-    if (s.paused) return s.pauseOffsetUs;
-    if (s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3) {
-      // Audio is playing with data — use as master clock.
-      // Re-sync wall-clock baseline so fallback picks up seamlessly if audio stalls.
-      var t = s.audioEl.currentTime * 1e6;
-      s.videoTimeBase = t;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      return t;
-    }
-    // Audio not ready (buffering after seek, or no audio) — use wall-clock timing
-    if (!s.wallClockSynced) return -1;
-    return s.videoTimeBase + (performance.now() - s.wallClockStart) * 1000;
-  }
-
-  function feedSamples(s) {
-    if (!s.decoder || s.decoder.state !== 'configured') return;
-    var maxFeed = s.frameBuffer.length === 0 ? 8 : 2;
-    var fed = 0;
-    // After decoder reset, skip delta frames until a keyframe arrives
-    if (s._needsKeyframe) {
-      while (s.pendingSamples.length > 0 && !s.pendingSamples[0].is_sync) {
-        s.pendingSamples.shift();
-      }
-      if (s.pendingSamples.length > 0 && s.pendingSamples[0].is_sync) {
-        s._needsKeyframe = false;
-      } else {
-        return; // still waiting for keyframe
-      }
-    }
-    while (s.pendingSamples.length > 0 && fed < maxFeed) {
-      if (s.decoder.decodeQueueSize + s.frameBuffer.length >= 12) break;
-      var sample = s.pendingSamples.shift();
-      fed++;
-      var ts = (sample.cts * 1e6) / sample.timescale;
-      try {
-        s.decoder.decode(new EncodedVideoChunk({
-          type: sample.is_sync ? 'key' : 'delta',
-          timestamp: ts,
-          duration: (sample.duration * 1e6) / sample.timescale,
-          data: sample.data,
-        }));
-      } catch (e) {}
-    }
-  }
-
-  function drainAudioQueue(s) {
-    if (!s.audioSourceBuffer || s.audioSbAppending || s.audioSourceBuffer.updating || s.audioAppendQueue.length === 0) return;
-    if (s.audioMediaSource.readyState !== 'open') return;
-    var buf = s.audioAppendQueue.shift();
-    s.audioSbAppending = true;
-    try {
-      s.audioSourceBuffer.appendBuffer(buf);
-    } catch (e) {
-      s.audioSbAppending = false;
-      if (e.name === 'QuotaExceededError') {
-        s.audioAppendQueue.unshift(buf);
-        if (s.audioSourceBuffer.buffered.length > 0 && s.audioEl) {
-          var removeEnd = s.audioEl.currentTime - 5;
-          if (removeEnd > s.audioSourceBuffer.buffered.start(0)) {
-            s.audioSourceBuffer.remove(s.audioSourceBuffer.buffered.start(0), removeEnd);
-          }
-        }
-      }
-    }
-  }
-
-  function maybeEndAudio(s) {
-    if (!s.downloadComplete || s.audioAppendQueue.length > 0 || s.audioSbAppending) return;
-    if (s.audioMediaSource && s.audioMediaSource.readyState === 'open') {
-      try { s.audioMediaSource.endOfStream(); } catch (e) {}
-    }
-  }
-
-  function renderLoop(sessionId) {
-    var s = _streamSessions[sessionId];
-    if (!s || s.aborted) {
-      if (s) { while (s.frameBuffer.length > 0) s.frameBuffer.shift().close(); }
-      return;
-    }
-
-    // Stall compensation (when using wall-clock timing)
-    var now = performance.now();
-    var usingAudioClock = s.hasAudio && s.audioEl && !s.audioEl.paused && s.audioEl.readyState >= 3;
-    if (s.lastRafTime > 0 && s.wallClockSynced && !usingAudioClock && !s.paused) {
-      var gapMs = now - s.lastRafTime;
-      if (gapMs > 50) s.wallClockStart += (gapMs - 16.67);
-    }
-    s.lastRafTime = now;
-
-    feedSamples(s);
-
-    if (s.paused) {
-      // Update time display while paused
-      var pausedSec = s.pauseOffsetUs / 1e6;
-      if (s.timeSpan && s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(pausedSec) + ' / ' + formatTime(s.mediaDuration);
-      }
-      requestAnimationFrame(function() { renderLoop(sessionId); });
-      return;
-    }
-
-    // Establish timing on first frame
-    if (!s.wallClockSynced && !s.hasAudio && s.frameBuffer.length > 0) {
-      s.videoTimeBase = s.frameBuffer[0].timestamp;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      s.lastRafTime = s.wallClockStart;
-    }
-
-    var mediaTimeUs = getMediaTimeUs(s);
-    if (mediaTimeUs < 0) {
-      requestAnimationFrame(function() { renderLoop(sessionId); });
-      return;
-    }
-
-    // Draw the latest frame whose time has arrived
-    var frameToDraw = null;
-    while (s.frameBuffer.length > 0 && s.frameBuffer[0].timestamp <= mediaTimeUs) {
-      if (frameToDraw) frameToDraw.close();
-      frameToDraw = s.frameBuffer.shift();
-    }
-    if (frameToDraw) {
-      if (!s.canvasSized) {
-        s.canvas.width = frameToDraw.displayWidth;
-        s.canvas.height = frameToDraw.displayHeight;
-        s.canvasSized = true;
-      }
-      s.ctx.drawImage(frameToDraw, 0, 0, s.canvas.width, s.canvas.height);
-      frameToDraw.close();
-    }
-
-    // Update controls
-    var mediaTimeSec = mediaTimeUs / 1e6;
-    if (s.timeSpan) {
-      if (s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(mediaTimeSec) + ' / ' + formatTime(s.mediaDuration);
-      } else {
-        s.timeSpan.textContent = formatTime(mediaTimeSec);
-      }
-    }
-    if (s.mediaDuration > 0 && !s.seeking) {
-      var playedPct = Math.min(100, (mediaTimeSec / s.mediaDuration) * 100);
-      if (s.seekPlayed) s.seekPlayed.style.width = playedPct + '%';
-      if (s.seekThumb) s.seekThumb.style.left = playedPct + '%';
-    }
-
-    requestAnimationFrame(function() { renderLoop(sessionId); });
-  }
-
   function handleStreamInit(sessionId, d) {
     var s = _streamSessions[sessionId];
     if (!s) return;
 
     // Set up audio MSE if audio config provided
     if (d.audioConfig && typeof MediaSource !== 'undefined') {
-      var audioEl = document.createElement('audio');
-      audioEl.style.display = 'none';
-      document.body.appendChild(audioEl);
-      var ms = new MediaSource();
-      audioEl.src = URL.createObjectURL(ms);
-      s.audioEl = audioEl;
-      s.audioMediaSource = ms;
-
-      ms.addEventListener('sourceopen', function() {
-        try {
-          s.audioSourceBuffer = ms.addSourceBuffer(d.audioConfig.mime);
-          s.audioSourceBuffer.addEventListener('updateend', function() {
-            s.audioSbAppending = false;
-            drainAudioQueue(s);
-            maybeEndAudio(s);
-          });
-          s.hasAudio = true;
-          if (d.audioConfig.initSegment) {
-            s.audioInitSegment = d.audioConfig.initSegment.slice(0); // keep a copy for seek recovery
-            s.audioAppendQueue.push(d.audioConfig.initSegment);
-            drainAudioQueue(s);
-          }
-          audioEl.play().catch(function(){});
-        } catch (e) {
-          console.warn('Audio setup failed:', e);
-        }
-      }, { once: true });
+      VPC.setupAudioMSE(s, d.audioConfig);
     }
 
-    // Set up VideoDecoder
+    // Set up VideoDecoder via shared core
     if (d.videoConfig) {
-      var config = {
-        codec: d.videoConfig.codec,
-        codedWidth: d.videoConfig.codedWidth,
-        codedHeight: d.videoConfig.codedHeight,
-      };
-      if (d.videoConfig.description) {
-        config.description = new Uint8Array(d.videoConfig.description);
-      }
-
-      s.decoder = new VideoDecoder({
-        output: function(frame) {
-          if (s.aborted) { frame.close(); return; }
-          s.frameBuffer.push(frame);
-        },
-        error: function(e) {
-          console.error('VideoDecoder error:', e);
-        }
-      });
-      s.decoderConfig = config;
-      s.decoder.configure(config);
+      VPC.configureDecoder(s, d.videoConfig);
 
       if (!s.renderRunning) {
         s.renderRunning = true;
@@ -515,8 +282,8 @@
     s.mediaDuration = d.duration || 0;
     if (d.audioConfig && d.audioConfig.mode) s.audioMode = d.audioConfig.mode;
     if (s.mediaDuration > 0) {
-      s.timeSpan.textContent = '0:00 / ' + formatTime(s.mediaDuration);
-      s.statusDiv.textContent = 'Streaming video (' + formatTime(s.mediaDuration) + ')...';
+      s.timeSpan.textContent = '0:00 / ' + VPC.formatTime(s.mediaDuration);
+      s.statusDiv.textContent = 'Streaming video (' + VPC.formatTime(s.mediaDuration) + ')...';
     } else {
       s.statusDiv.textContent = 'Streaming video...';
     }
@@ -560,7 +327,7 @@
     }
     if (d.type === 'SIA_STREAM_AUDIO' && s && d.buffer) {
       s.audioAppendQueue.push(d.buffer);
-      drainAudioQueue(s);
+      VPC.drainAudioQueue(s);
       return;
     }
     if (d.type === 'SIA_STREAM_PROGRESS' && s) {
@@ -575,6 +342,7 @@
     if (d.type === 'SIA_STREAM_SEEK_FLUSH' && s) {
       var timeSec = d.timeSec;
       var seekTimeUs = timeSec * 1e6;
+
       // Reset decoder (immediately stops pending work, no stale frames)
       if (s.decoder) {
         if (s.decoder.state === 'configured') s.decoder.reset();
@@ -582,63 +350,27 @@
         s._needsKeyframe = true;
       }
 
-      // Clear buffers
-      s.pendingSamples.length = 0;
-      while (s.frameBuffer.length > 0) s.frameBuffer.shift().close();
+      // Clear buffers and reset timing via shared core
+      VPC.flushBuffers(s);
+      VPC.resetTimingForSeek(s, seekTimeUs);
 
-      // Reset timing
-      s.pauseOffsetUs = seekTimeUs;
-      s.videoTimeBase = seekTimeUs;
-      s.wallClockStart = performance.now();
-      s.wallClockSynced = true;
-      s.lastRafTime = s.wallClockStart;
-
-      // Handle audio — clear SourceBuffer entirely, let re-extracted audio fill fresh.
-      // Previous approach of suppressing duplicate audio on the parent side was unreliable.
-      s.audioAppendQueue.length = 0;
-      if (s.audioSourceBuffer) {
-        if (s.audioSourceBuffer.updating) {
-          try { s.audioSourceBuffer.abort(); } catch (ex) {}
-        }
-        s.audioSbAppending = false;
-        // Set timestampOffset for raw-mse before remove (must be while updating=false)
-        if (s.audioMode === 'raw-mse') {
-          try { s.audioSourceBuffer.timestampOffset = timeSec; } catch (ex) {}
-        }
-        // Re-queue init segment for fMP4 (SourceBuffer stays configured after remove,
-        // but re-appending init segment ensures clean segment boundary)
-        if (s.audioMode === 'fmp4-mse' && s.audioInitSegment) {
-          s.audioAppendQueue.push(s.audioInitSegment.slice(0));
-        }
-        // Clear all buffered audio — re-extracted + new audio fills from seek point
-        try { s.audioSourceBuffer.remove(0, Infinity); } catch (ex) {}
-      }
-      if (s.audioEl) {
-        s.audioEl.pause();
-        s.audioEl.currentTime = timeSec;
-        if (!s.paused) {
-          s.audioEl.play().catch(function(){});
-        }
-      }
+      // Handle audio seek via shared core
+      VPC.seekAudio(s, timeSec);
 
       // Update visual
       if (s.mediaDuration > 0) {
-        var pct = Math.min(100, (timeSec / s.mediaDuration) * 100);
-        if (s.seekPlayed) s.seekPlayed.style.width = pct + '%';
-        if (s.seekThumb) s.seekThumb.style.left = pct + '%';
+        var seekPct = Math.min(100, (timeSec / s.mediaDuration) * 100);
+        if (s.seekPlayed) s.seekPlayed.style.width = seekPct + '%';
+        if (s.seekThumb) s.seekThumb.style.left = seekPct + '%';
       }
       if (s.timeSpan && s.mediaDuration > 0) {
-        s.timeSpan.textContent = formatTime(timeSec) + ' / ' + formatTime(s.mediaDuration);
+        s.timeSpan.textContent = VPC.formatTime(timeSec) + ' / ' + VPC.formatTime(s.mediaDuration);
       }
       return;
     }
     if (d.type === 'SIA_STREAM_END' && s) {
       s.downloadComplete = true;
       if (s.seekBuffered) s.seekBuffered.style.width = '100%';
-      // Don't flush the VideoDecoder here — flushing puts the decoder in
-      // "key frame required" state which drops pending non-keyframe samples,
-      // causing a visible freeze. Let feedSamples/renderLoop drain naturally.
-      // Audio MSE endOfStream is handled by the updateend chain via maybeEndAudio.
       s.statusDiv.textContent = 'Download complete.';
       return;
     }

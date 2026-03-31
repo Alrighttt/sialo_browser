@@ -3,14 +3,7 @@
 // on demand. A pool of these workers enables true parallel slab downloads.
 
 import init, { AppKey, Builder, DownloadOptions, setLogLevel } from './pkg/indexd_wasm.js';
-
-function fromHex(h) {
-  const bytes = new Uint8Array(h.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(h.substr(i * 2, 2), 16);
-  }
-  return bytes;
-}
+import { fromHex } from './worker-utils.js';
 
 let sdk = null;
 let obj = null;

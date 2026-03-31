@@ -3,14 +3,7 @@
 // posts decrypted chunks back via Transferable ArrayBuffers (zero-copy).
 
 import init, { AppKey, Builder, DownloadOptions } from './pkg/indexd_wasm.js';
-
-function fromHex(h) {
-  const bytes = new Uint8Array(h.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(h.substr(i * 2, 2), 16);
-  }
-  return bytes;
-}
+import { fromHex } from './worker-utils.js';
 
 self.onmessage = async (e) => {
   if (e.data.type !== 'start') return;

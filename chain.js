@@ -3,6 +3,13 @@
 // and syncer WASM functions. DOM-free — panels manage their own UI.
 // Supports multi-network background sync.
 
+import {
+  filterDbLoad, filterDbDelete,
+  syncerDbLoad, syncerDbSave, syncerDbDelete,
+  syncerDbSaveChunked, syncerDbLoadChunked, syncerDbDeleteChunked,
+  opfsSave, opfsLoad, opfsDelete,
+} from './db-helpers.js';
+
 const GENESIS_IDS = {
   mainnet: '25f6e3b9295a61f69fcb956aca9f0076234ecf2e02d399db5448b6e22f26e81c',
   mainnet_v2: '25f6e3b9295a61f69fcb956aca9f0076234ecf2e02d399db5448b6e22f26e81c',
@@ -19,6 +26,7 @@ const V2_REQUIRE_HEIGHTS = { mainnet: 530000, mainnet_v2: 530000, zen: 50 };
 
 const SYNC_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const SYNC_INTERVAL_RELAY_MS = 30 * 60 * 1000; // 30 minutes when relay is connected
+const DEFAULT_FILTER_MATCH_LIMIT = 1000; // max filter matches before prompting user
 
 // --- State ---
 
@@ -52,219 +60,31 @@ let _syncWorkers = {}; // Per-network active sync worker reference
 // Per-network mempool: { [net]: { [txid]: { id, inputs, outputs, minerFee, timestamp, height, blockId } } }
 let _mempool = (() => {
   try { return JSON.parse(localStorage.getItem('chain:mempool') || '{}'); }
-  catch (_) { return {}; }
+  catch (e) { console.warn('chain.js: failed to parse cached mempool, resetting:', e); return {}; }
 })();
 let _mempoolListeners = []; // (net, mempool) => void
 
+const MAX_MEMPOOL_PER_NET = 200; // cap entries per network to avoid localStorage quota issues
+
 function _saveMempool() {
-  try { localStorage.setItem('chain:mempool', JSON.stringify(_mempool)); }
-  catch (_) {}
+  try {
+    // Evict oldest entries if a network exceeds the cap
+    for (const net of Object.keys(_mempool)) {
+      const entries = Object.entries(_mempool[net]);
+      if (entries.length > MAX_MEMPOOL_PER_NET) {
+        entries.sort((a, b) => (a[1].timestamp || 0) - (b[1].timestamp || 0));
+        const toRemove = entries.slice(0, entries.length - MAX_MEMPOOL_PER_NET);
+        for (const [txid] of toRemove) delete _mempool[net][txid];
+      }
+    }
+    localStorage.setItem('chain:mempool', JSON.stringify(_mempool));
+  } catch (e) { console.warn('chain.js: failed to save mempool to localStorage:', e); }
 }
 
 // Per-network relay listener state: { running, reconnectTimer }
 let _relayListeners = {};
 
-// --- IndexedDB helpers ---
-
-function filterDbLoad(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_filters', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('files');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('files', 'readonly');
-      const get = tx.objectStore('files').get(key);
-      get.onsuccess = () => { req.result.close(); resolve(get.result || null); };
-      get.onerror = () => { req.result.close(); reject(get.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function syncerDbLoad(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readonly');
-      const get = tx.objectStore('cache').get(key);
-      get.onsuccess = () => { req.result.close(); resolve(get.result || null); };
-      get.onerror = () => { req.result.close(); reject(get.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function syncerDbSave(key, data) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readwrite');
-      tx.objectStore('cache').put(data, key);
-      tx.oncomplete = () => { req.result.close(); resolve(); };
-      tx.onerror = () => { req.result.close(); reject(tx.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// --- OPFS (Origin Private File System) for large binary data ---
-// IndexedDB reads fail for large values in Chrome ("Failed to read large IndexedDB value").
-// OPFS is designed for large file storage and doesn't have this limitation.
-
-async function opfsSave(key, data) {
-  const root = await navigator.storage.getDirectory();
-  const fileHandle = await root.getFileHandle(key, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(data);
-  await writable.close();
-}
-
-async function opfsLoad(key) {
-  try {
-    const root = await navigator.storage.getDirectory();
-    const fileHandle = await root.getFileHandle(key);
-    const file = await fileHandle.getFile();
-    const buffer = await file.arrayBuffer();
-    return new Uint8Array(buffer);
-  } catch (e) {
-    // NotFoundError means no cached file
-    return null;
-  }
-}
-
-async function opfsDelete(key) {
-  try {
-    const root = await navigator.storage.getDirectory();
-    await root.removeEntry(key);
-  } catch (e) {
-    // Ignore if not found
-  }
-}
-
-// Chunked storage for large blobs — splits data into 2MB pieces to avoid
-// Chrome's "Failed to read large IndexedDB value" error in workers.
-const CHUNK_MAX = 2 * 1024 * 1024; // 2MB per chunk
-
-async function syncerDbSaveChunked(key, data) {
-  const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
-  if (arr.byteLength <= CHUNK_MAX) {
-    // Small enough — save directly
-    await syncerDbSave(key, arr);
-    return;
-  }
-  const numChunks = Math.ceil(arr.byteLength / CHUNK_MAX);
-  // Use a single DB connection for all chunks
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  try {
-    // Save metadata
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('cache', 'readwrite');
-      tx.objectStore('cache').put({ chunked: true, totalSize: arr.byteLength, numChunks }, key);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-    // Save all chunks in a single transaction
-    await new Promise((resolve, reject) => {
-      const tx = db.transaction('cache', 'readwrite');
-      const store = tx.objectStore('cache');
-      for (let i = 0; i < numChunks; i++) {
-        const start = i * CHUNK_MAX;
-        const end = Math.min(start + CHUNK_MAX, arr.byteLength);
-        store.put(arr.slice(start, end), key + ':chunk:' + i);
-      }
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-    });
-  } finally {
-    db.close();
-  }
-}
-
-async function syncerDbLoadChunked(key) {
-  const meta = await syncerDbLoad(key);
-  if (!meta) return null;
-  // Handle non-chunked legacy data
-  if (!(meta.chunked)) return meta;
-  const { numChunks } = meta;
-  // Read all chunks in a single transaction, assemble via Blob
-  const db = await new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  try {
-    const chunkParts = await new Promise((resolve, reject) => {
-      const tx = db.transaction('cache', 'readonly');
-      const store = tx.objectStore('cache');
-      const parts = new Array(numChunks);
-      let loaded = 0;
-      for (let i = 0; i < numChunks; i++) {
-        const get = store.get(key + ':chunk:' + i);
-        get.onsuccess = () => {
-          parts[i] = get.result ? (get.result instanceof Uint8Array ? get.result : new Uint8Array(get.result)) : null;
-          loaded++;
-          if (loaded === numChunks) resolve(parts);
-        };
-        get.onerror = () => reject(get.error);
-      }
-      if (numChunks === 0) resolve([]);
-    });
-    // Check for missing chunks
-    for (let i = 0; i < numChunks; i++) {
-      if (!chunkParts[i]) throw new Error(`Missing chunk ${i} for key ${key}`);
-    }
-    const blob = new Blob(chunkParts, { type: 'application/octet-stream' });
-    const buffer = await blob.arrayBuffer();
-    return new Uint8Array(buffer);
-  } finally {
-    db.close();
-  }
-}
-
-async function syncerDbDeleteChunked(key) {
-  const meta = await syncerDbLoad(key);
-  if (meta && meta.chunked) {
-    for (let i = 0; i < meta.numChunks; i++) {
-      await syncerDbDelete(key + ':chunk:' + i);
-    }
-  }
-  await syncerDbDelete(key);
-}
-
-function syncerDbDelete(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readwrite');
-      const del = tx.objectStore('cache').delete(key);
-      del.onsuccess = () => { req.result.close(); resolve(); };
-      del.onerror = () => { req.result.close(); reject(del.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function filterDbDelete(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_filters', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('files');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('files', 'readwrite');
-      const del = tx.objectStore('files').delete(key);
-      del.onsuccess = () => { req.result.close(); resolve(); };
-      del.onerror = () => { req.result.close(); reject(del.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
+// IndexedDB/OPFS helpers imported from db-helpers.js
 
 function netKey(net, key) {
   return net + ':' + key;
@@ -333,7 +153,7 @@ function loadNetworkConfigs() {
       }
       saveNetworkConfigs(configs);
       return configs;
-    } catch (e) { /* fall through */ }
+    } catch (e) { console.warn('chain.js: failed to parse saved network configs, resetting:', e); }
   }
   // Migrate from old single-network keys if present
   const oldPeer = localStorage.getItem('chain:peerUrl');
@@ -454,10 +274,12 @@ export function getUtxoPrefixCount() { return _utxoPrefixCount; }
 // UTXO pre-filter: O(log N) binary search on sorted unique address prefixes
 export function checkUtxoPrefilter(addressHex) {
   if (!_utxoPrefixes || _utxoPrefixCount === 0) return false;
+  // Need at least 16 hex chars (8 bytes) for a valid prefix lookup
+  if (!addressHex || addressHex.length < 16) return false;
   // Parse first 8 bytes of address hex
   const hex = addressHex.length > 16 ? addressHex.slice(0, 16) : addressHex;
   const target = new Uint8Array(8);
-  for (let i = 0; i < 8; i++) target[i] = parseInt(hex.substr(i * 2, 2), 16);
+  for (let i = 0; i < 8; i++) target[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
 
   let lo = 0, hi = _utxoPrefixCount;
   while (lo < hi) {
@@ -870,9 +692,10 @@ export async function exploreAddress(addr, logFn) {
     config.peerUrl, getGenesisHex(), addr, _filterBlobUrl,
     logFn || (() => {}),
     config.certHash || undefined,
-    1000
+    DEFAULT_FILTER_MATCH_LIMIT
   );
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse address scan result: ' + e.message); }
 }
 
 export async function exploreAddressUnlimited(addr, logFn) {
@@ -886,7 +709,8 @@ export async function exploreAddressUnlimited(addr, logFn) {
     config.certHash || undefined,
     null
   );
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse address scan result: ' + e.message); }
 }
 
 export async function lookupTransaction(txid, logFn) {
@@ -901,7 +725,8 @@ export async function lookupTransaction(txid, logFn) {
   );
 
   if (resultJson === 'not_found') return null;
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse transaction result: ' + e.message); }
 }
 
 export async function exploreQuery(query, logFn) {
@@ -915,7 +740,8 @@ export async function exploreQuery(query, logFn) {
     config.certHash || undefined
   );
 
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse query result: ' + e.message); }
 }
 
 export async function lookupUtxos(address, logFn) {
@@ -929,7 +755,8 @@ export async function lookupUtxos(address, logFn) {
     config.certHash || undefined
   );
 
-  return JSON.parse(resultJson);
+  try { return JSON.parse(resultJson); }
+  catch (e) { throw new Error('Failed to parse UTXO result: ' + e.message); }
 }
 
 // --- Public API: Attestation Index ---
@@ -945,9 +772,16 @@ export async function loadAttestationEntries() {
   if (arr[0] !== 0x53 || arr[1] !== 0x41 || arr[2] !== 0x50 || arr[3] !== 0x49) return [];
   const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
   const count = view.getUint32(8, true);
+  // Validate count against available data (44 bytes per entry: 32 + 8 + 4)
+  const maxEntries = Math.floor((arr.length - 16) / 44);
+  if (count > maxEntries) {
+    console.warn('Attestation index: count', count, 'exceeds available data, capping at', maxEntries);
+  }
+  const safeCount = Math.min(count, maxEntries);
   const entries = [];
   let pos = 16;
-  for (let i = 0; i < count; i++) {
+  for (let i = 0; i < safeCount; i++) {
+    if (pos + 44 > arr.length) break;
     const pubkeyHex = bytesToHex(arr, pos, 32); pos += 32;
     const keyHashHex = bytesToHex(arr, pos, 8); pos += 8;
     const height = view.getUint32(pos, true); pos += 4;
@@ -958,8 +792,9 @@ export async function loadAttestationEntries() {
 
 function bytesToHex(arr, offset, len) {
   let hex = '';
-  for (let i = 0; i < len; i++) {
-    hex += arr[offset + i].toString(16).padStart(2, '0');
+  const end = Math.min(offset + len, arr.length);
+  for (let i = offset; i < end; i++) {
+    hex += arr[i].toString(16).padStart(2, '0');
   }
   return hex;
 }
@@ -1135,6 +970,7 @@ async function startRelayListener(net) {
 
   _relayListeners[net] = { running: true, reconnectTimer: null };
   _emitSyncLog(net, 'Relay listener connecting...', 'info');
+  _restartSyncInterval(); // switch to longer interval while relay is active
   _notifyImmediate();
 
   let syncDebounce = null;
@@ -1195,6 +1031,7 @@ async function startRelayListener(net) {
   }
 
   _relayListeners[net].running = false;
+  _restartSyncInterval(); // switch back to shorter interval if no relays active
   _notifyImmediate();
 
   // Auto-reconnect after 10 seconds if still enabled
@@ -1347,8 +1184,10 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
 // --- Sync ---
 
 async function syncNetwork(net) {
-  const config = _networks[net];
-  if (!config || !config.peerUrl || !config.enabled) return;
+  const live = _networks[net];
+  if (!live || !live.peerUrl || !live.enabled) return;
+  // Snapshot config so mid-sync user edits don't cause mixed state
+  const config = { ...live };
 
   const prev = _syncState[net] || {};
   if (prev.status === 'syncing') return; // already running
@@ -1460,8 +1299,19 @@ async function runSyncCycle() {
 export function startSync() {
   if (_syncInterval) return;
   runSyncCycle(); // run immediately
-  const interval = hasActiveRelay() ? SYNC_INTERVAL_RELAY_MS : SYNC_INTERVAL_MS;
-  _syncInterval = setInterval(runSyncCycle, interval);
+  _syncInterval = setInterval(runSyncCycle, _currentSyncInterval());
+}
+
+// Recalculate sync interval based on relay state.
+// Call after relay connects/disconnects to adjust the timer.
+function _currentSyncInterval() {
+  return hasActiveRelay() ? SYNC_INTERVAL_RELAY_MS : SYNC_INTERVAL_MS;
+}
+
+function _restartSyncInterval() {
+  if (!_syncInterval) return; // sync not running
+  clearInterval(_syncInterval);
+  _syncInterval = setInterval(runSyncCycle, _currentSyncInterval());
 }
 
 export function stopSync() {
@@ -1509,7 +1359,7 @@ export async function init(wasmFunctions) {
         }
       }
     } catch (e) {
-      // Non-fatal — explorer will fall back to syncing headers
+      console.warn(`[chain] Failed to load cached headers for ${net} (non-fatal):`, e);
     }
   }
 

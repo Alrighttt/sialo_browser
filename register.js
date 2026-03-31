@@ -25,6 +25,14 @@ export function initRegistrationWizard(helpers) {
   let regBuilder = null;
   let regAppId = null;
 
+  function setStatus(el, text, cls) {
+    el.textContent = '';
+    const span = document.createElement('span');
+    span.className = cls;
+    span.textContent = text;
+    el.appendChild(span);
+  }
+
   // --- Step navigation ---
 
   function showStep(n) {
@@ -96,10 +104,17 @@ export function initRegistrationWizard(helpers) {
       showStep(3);
 
       // Set after showStep so the status-clear doesn't wipe it
-      document.getElementById('wiz-approval-link').innerHTML =
-        `<a href="${responseUrl}" target="_blank" rel="noopener" class="wizard-link">${responseUrl}</a>`;
+      const linkContainer = document.getElementById('wiz-approval-link');
+      linkContainer.textContent = '';
+      const a = document.createElement('a');
+      a.href = responseUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'wizard-link';
+      a.textContent = responseUrl;
+      linkContainer.appendChild(a);
     } catch (e) {
-      status.innerHTML = `<span class="fail">Failed: ${e.message}</span>`;
+      setStatus(status, 'Failed: ' + e.message, 'fail');
       btn.textContent = 'Request Connection';
       btn.disabled = false;
     }
@@ -112,7 +127,7 @@ export function initRegistrationWizard(helpers) {
     const status = document.getElementById('wiz-status-approve');
 
     if (!regBuilder) {
-      status.innerHTML = '<span class="fail">Go back and request a connection first.</span>';
+      setStatus(status, 'Go back and request a connection first.', 'fail');
       return;
     }
 
@@ -124,12 +139,12 @@ export function initRegistrationWizard(helpers) {
       await regBuilder.waitForApproval();
 
       btn.textContent = 'Approved!';
-      status.innerHTML = '<span class="pass">Connection approved!</span>';
+      setStatus(status, 'Connection approved!', 'pass');
       showStep(4);
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Check for Approval';
-      status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+      setStatus(status, 'Error: ' + e.message, 'fail');
     }
   });
 
@@ -145,11 +160,11 @@ export function initRegistrationWizard(helpers) {
     const mnemonic = document.getElementById('wiz-mnemonic').value.trim();
 
     if (!regBuilder) {
-      status.innerHTML = '<span class="fail">Complete the previous steps first.</span>';
+      setStatus(status, 'Complete the previous steps first.', 'fail');
       return;
     }
     if (!mnemonic) {
-      status.innerHTML = '<span class="fail">Enter or generate a recovery phrase.</span>';
+      setStatus(status, 'Enter or generate a recovery phrase.', 'fail');
       return;
     }
 
@@ -171,18 +186,28 @@ export function initRegistrationWizard(helpers) {
       showStep(5);
 
       // Set after showStep so the status-clear doesn't wipe it
-      document.getElementById('wiz-key-display').innerHTML =
-        `<strong>Recovery Phrase:</strong>\n${mnemonic}\n\n<strong>App Key Seed:</strong>\n${seed}\n\n<strong>Public Key:</strong>\n${pubkey}`;
+      const keyDisplay = document.getElementById('wiz-key-display');
+      keyDisplay.textContent = '';
+      for (const [label, value] of [['Recovery Phrase', mnemonic], ['App Key Seed', seed], ['Public Key', pubkey]]) {
+        const b = document.createElement('strong');
+        b.textContent = label + ':';
+        keyDisplay.appendChild(b);
+        keyDisplay.appendChild(document.createTextNode('\n' + value + '\n\n'));
+      }
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Register';
-      status.innerHTML = `<span class="fail">Error: ${e.message}</span>`;
+      setStatus(status, 'Error: ' + e.message, 'fail');
     }
   });
 
   // --- Step 5: Start Browsing ---
 
   document.getElementById('wiz-btn-start').addEventListener('click', () => {
+    // Clear sensitive data from the DOM before navigating away
+    document.getElementById('wiz-key-display').textContent = '';
+    document.getElementById('wiz-mnemonic').value = '';
+
     // Find the register tab and close it
     const registerTab = tabs.find(t => t.type === 'internal' && t.panelName === 'register');
     // Find the Homepage browser tab

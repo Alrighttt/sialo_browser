@@ -9,14 +9,7 @@
 
 import init, { AppKey, Builder, DownloadOptions, setLogLevel } from './pkg/indexd_wasm.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
-
-function fromHex(h) {
-  const bytes = new Uint8Array(h.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(h.substr(i * 2, 2), 16);
-  }
-  return bytes;
-}
+import { fromHex } from './worker-utils.js';
 
 // Module-level mp4box reference for seek access across message handlers
 let _mp4box = null;
@@ -310,8 +303,10 @@ self.onmessage = async (e) => {
       const _flushT0 = performance.now();
       mp4box.flush();
       _dbg(`[worker-perf] mp4box.flush() took ${(performance.now() - _flushT0).toFixed(1)}ms`);
+      _mp4box = null;
       self.postMessage({ type: 'stream-complete' });
     } catch (err) {
+      _mp4box = null;
       self.postMessage({ type: 'stream-error', message: err.message || String(err) });
     }
   }

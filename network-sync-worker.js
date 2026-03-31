@@ -4,90 +4,21 @@
 
 import init, { sync_headers, generate_filters, generate_txindex }
   from './pkg/syncer_wasm.js';
+import {
+  syncerDbLoad, syncerDbSave, syncerDbSaveChunked, syncerDbDelete,
+  opfsLoad,
+} from './db-helpers.js';
 
 const DEFAULT_NUM_WORKERS = 10;
 const CHUNK_SIZE = 1000; // blocks per work unit — kept small to avoid Chrome's IndexedDB value size limits in workers
 
-// --- OPFS helpers (Origin Private File System — reliable for large binary data) ---
-
-async function opfsLoad(key) {
-  try {
-    const root = await navigator.storage.getDirectory();
-    const fh = await root.getFileHandle(key);
-    const file = await fh.getFile();
-    const buffer = await file.arrayBuffer();
-    return new Uint8Array(buffer);
-  } catch (e) {
-    return null;
-  }
-}
+// IndexedDB/OPFS helpers imported from db-helpers.js
 
 // Load data: try OPFS first, fall back to IndexedDB
 async function loadData(key) {
   const opfs = await opfsLoad(key);
   if (opfs && opfs.byteLength > 0) return opfs;
   return syncerDbLoad(key);
-}
-
-// --- IndexedDB helpers (same as chain.js, available in workers) ---
-
-function syncerDbLoad(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readonly');
-      const get = tx.objectStore('cache').get(key);
-      get.onsuccess = () => { req.result.close(); resolve(get.result || null); };
-      get.onerror = () => { req.result.close(); reject(get.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-function syncerDbSave(key, data) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readwrite');
-      tx.objectStore('cache').put(data, key);
-      tx.oncomplete = () => { req.result.close(); resolve(); };
-      tx.onerror = () => { req.result.close(); reject(tx.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
-}
-
-// Chunked save for large blobs — splits into 2MB pieces
-const CHUNK_MAX = 2 * 1024 * 1024;
-async function syncerDbSaveChunked(key, data, logFn) {
-  const arr = data instanceof Uint8Array ? data : new Uint8Array(data);
-  const numChunks = Math.ceil(arr.byteLength / CHUNK_MAX);
-  const sizeMB = (arr.byteLength / 1024 / 1024).toFixed(1);
-  if (logFn) logFn(`Saving ${sizeMB} MB in ${numChunks} chunks...`, 'data');
-  await syncerDbSave(key, { chunked: true, totalSize: arr.byteLength, numChunks });
-  for (let i = 0; i < numChunks; i++) {
-    const start = i * CHUNK_MAX;
-    const end = Math.min(start + CHUNK_MAX, arr.byteLength);
-    await syncerDbSave(key + ':chunk:' + i, arr.slice(start, end));
-    if (logFn && (i + 1) % 10 === 0) logFn(`Saved chunk ${i + 1}/${numChunks}`, 'data');
-  }
-  if (logFn) logFn(`Saved ${numChunks} chunks (${sizeMB} MB)`, 'data');
-}
-
-function syncerDbDelete(key) {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open('sia_syncer', 1);
-    req.onupgradeneeded = () => req.result.createObjectStore('cache');
-    req.onsuccess = () => {
-      const tx = req.result.transaction('cache', 'readwrite');
-      const del = tx.objectStore('cache').delete(key);
-      del.onsuccess = () => { req.result.close(); resolve(); };
-      del.onerror = () => { req.result.close(); reject(del.error); };
-    };
-    req.onerror = () => reject(req.error);
-  });
 }
 
 // --- Binary helpers ---
@@ -209,37 +140,60 @@ function bytesToHex(bytes) {
 }
 
 function parseChunkResult(data) {
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const len = data.byteLength;
+  const view = new DataView(data.buffer, data.byteOffset, len);
   let pos = 0;
 
-  const filterCount = view.getUint32(pos, true); pos += 4;
+  // Max reasonable count to prevent integer overflow in multiplication (256M entries)
+  const MAX_COUNT = 0x10000000;
+
+  function check(needed) {
+    if (pos + needed > len) throw new Error(`parseChunkResult: truncated data at offset ${pos}, need ${needed} bytes, have ${len - pos}`);
+  }
+
+  function safeCount(count, label) {
+    if (count > MAX_COUNT) throw new Error(`parseChunkResult: ${label} count ${count} exceeds safety limit`);
+    return count;
+  }
+
+  check(4);
+  const filterCount = safeCount(view.getUint32(pos, true), 'filter'); pos += 4;
   const filters = [];
   for (let i = 0; i < filterCount; i++) {
+    check(46); // 8 + 32 + 2 + 4 = 46 fixed bytes per filter entry
     const height = Number(view.getBigUint64(pos, true)); pos += 8;
     const blockId = data.slice(pos, pos + 32); pos += 32;
     const addrCount = view.getUint16(pos, true); pos += 2;
     const dataLen = view.getUint32(pos, true); pos += 4;
+    check(dataLen);
     const filterData = data.slice(pos, pos + dataLen); pos += dataLen;
     filters.push({ height, blockId, addrCount, filterData });
   }
 
-  // txindex entries — return as raw binary (12 bytes per entry: 8 prefix + 4 height)
-  const txindexCount = view.getUint32(pos, true); pos += 4;
+  // txindex entries — raw binary (12 bytes per entry: 8 prefix + 4 height)
+  check(4);
+  const txindexCount = safeCount(view.getUint32(pos, true), 'txindex'); pos += 4;
+  check(txindexCount * 12);
   const txindexBytes = data.subarray(pos, pos + txindexCount * 12); pos += txindexCount * 12;
 
-  // UTXO created entries — return as raw binary (20 bytes per entry: 8 addrPrefix + 8 oidPrefix + 4 height)
-  const utxoCreatedCount = view.getUint32(pos, true); pos += 4;
+  // UTXO created entries — raw binary (20 bytes per entry: 8 addrPrefix + 8 oidPrefix + 4 height)
+  check(4);
+  const utxoCreatedCount = safeCount(view.getUint32(pos, true), 'utxoCreated'); pos += 4;
+  check(utxoCreatedCount * 20);
   const utxoCreatedBytes = data.subarray(pos, pos + utxoCreatedCount * 20); pos += utxoCreatedCount * 20;
 
-  // UTXO spent entries — return as raw binary (16 bytes per entry: 8 addrPrefix + 8 oidPrefix)
-  const utxoSpentCount = view.getUint32(pos, true); pos += 4;
+  // UTXO spent entries — raw binary (16 bytes per entry: 8 addrPrefix + 8 oidPrefix)
+  check(4);
+  const utxoSpentCount = safeCount(view.getUint32(pos, true), 'utxoSpent'); pos += 4;
+  check(utxoSpentCount * 16);
   const utxoSpentBytes = data.subarray(pos, pos + utxoSpentCount * 16); pos += utxoSpentCount * 16;
 
   // Attestation entries (may be absent in older chunks)
   const attestations = [];
-  if (pos < data.byteLength) {
-    const attCount = view.getUint32(pos, true); pos += 4;
+  if (pos + 4 <= len) {
+    const attCount = safeCount(view.getUint32(pos, true), 'attestation'); pos += 4;
     for (let i = 0; i < attCount; i++) {
+      check(44); // 32 + 8 + 4
       const pubkey = data.slice(pos, pos + 32); pos += 32;
       const keyHash = data.slice(pos, pos + 8); pos += 8;
       const height = view.getUint32(pos, true); pos += 4;
@@ -252,15 +206,20 @@ function parseChunkResult(data) {
 
 function parseExistingFilters(data) {
   const arr = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+  const len = arr.byteLength;
+  if (len < 24) throw new Error(`parseExistingFilters: data too short (${len} bytes, need >= 24)`);
+  const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
+  if (count > 0x10000000) throw new Error(`parseExistingFilters: count ${count} exceeds safety limit`);
   let pos = 24; // skip header: magic(4) + version(4) + count(4) + p(4) + tipHeight(8)
   const entries = [];
   for (let i = 0; i < count; i++) {
+    if (pos + 46 > len) throw new Error(`parseExistingFilters: truncated at entry ${i}/${count}, offset ${pos}`);
     const height = Number(view.getBigUint64(pos, true)); pos += 8;
     const blockId = arr.slice(pos, pos + 32); pos += 32;
     const addrCount = view.getUint16(pos, true); pos += 2;
     const dataLen = view.getUint32(pos, true); pos += 4;
+    if (pos + dataLen > len) throw new Error(`parseExistingFilters: filter data overflows at entry ${i}, need ${dataLen} bytes at offset ${pos}`);
     const filterData = arr.slice(pos, pos + dataLen); pos += dataLen;
     entries.push({ height, blockId, addrCount, filterData });
   }
@@ -269,17 +228,26 @@ function parseExistingFilters(data) {
 
 function parseExistingTxindexBinary(data) {
   const arr = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+  const len = arr.byteLength;
+  if (len < 16) throw new Error(`parseExistingTxindexBinary: data too short (${len} bytes, need >= 16)`);
+  const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
-  // entries start at offset 16 (header: magic(4) + version(4) + count(4) + tipHeight(4))
-  return { bytes: arr.slice(16, 16 + count * 12), count };
+  if (count > 0x10000000) throw new Error(`parseExistingTxindexBinary: count ${count} exceeds safety limit`);
+  const needed = 16 + count * 12;
+  if (len < needed) throw new Error(`parseExistingTxindexBinary: truncated (${len} bytes, need ${needed} for ${count} entries)`);
+  return { bytes: arr.slice(16, needed), count };
 }
 
 function parseExistingUtxoIndex(data) {
   const arr = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+  const len = arr.byteLength;
+  if (len < 16) throw new Error(`parseExistingUtxoIndex: data too short (${len} bytes, need >= 16)`);
+  const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
-  let pos = 16; // skip header: magic(4) + version(4) + count(4) + tipHeight(4)
+  if (count > 0x10000000) throw new Error(`parseExistingUtxoIndex: count ${count} exceeds safety limit`);
+  const needed = 16 + count * 20;
+  if (len < needed) throw new Error(`parseExistingUtxoIndex: truncated (${len} bytes, need ${needed} for ${count} entries)`);
+  let pos = 16;
   const entries = [];
   for (let i = 0; i < count; i++) {
     const addrPrefix = arr.slice(pos, pos + 8); pos += 8;
@@ -292,9 +260,14 @@ function parseExistingUtxoIndex(data) {
 
 function parseExistingAttestationIndex(data) {
   const arr = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
-  const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+  const len = arr.byteLength;
+  if (len < 16) throw new Error(`parseExistingAttestationIndex: data too short (${len} bytes, need >= 16)`);
+  const view = new DataView(arr.buffer, arr.byteOffset, len);
   const count = view.getUint32(8, true);
-  let pos = 16; // skip header: magic(4) + version(4) + count(4) + tipHeight(4)
+  if (count > 0x10000000) throw new Error(`parseExistingAttestationIndex: count ${count} exceeds safety limit`);
+  const needed = 16 + count * 44;
+  if (len < needed) throw new Error(`parseExistingAttestationIndex: truncated (${len} bytes, need ${needed} for ${count} entries)`);
+  let pos = 16;
   const entries = [];
   for (let i = 0; i < count; i++) {
     const pubkey = arr.slice(pos, pos + 32); pos += 32;
@@ -306,7 +279,7 @@ function parseExistingAttestationIndex(data) {
 }
 
 function serializeFilterFile(entries, tipHeight) {
-  const p = 19;
+  const p = 19; // GCS (Golomb-coded set) parameter — controls false-positive rate (1/2^p)
   let totalDataLen = 0;
   for (const e of entries) totalDataLen += e.filterData.length;
   const headerSize = 24;
