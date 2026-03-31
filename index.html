@@ -5588,10 +5588,14 @@
       s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
       s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
       s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+      // Protocol whitelist for URLs in markdown (blocks javascript:, data:, vbscript:, etc.)
+      function _safeUrl(url) { return /^(https?:\/\/|sia:\/\/|\/|#|\.\.?\/)/.test(url); }
       // Images (before links)
-      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img src="$2" alt="$1" style="max-width:100%;">');
+      s = s.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, src) =>
+        _safeUrl(src) ? `<img src="${src}" alt="${alt}" style="max-width:100%;">` : `[image: ${alt}]`);
       // Links
-      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, href) =>
+        _safeUrl(href) ? `<a href="${href}">${text}</a>` : text);
       // Blockquotes
       s = s.replace(/^&gt;\s+(.+)$/gm, '<blockquote>$1</blockquote>');
       // Unordered lists
