@@ -2,6 +2,10 @@
 
 import * as chain from './chain.js';
 
+// --- Constants ---
+
+const MATURITY_DELAY = 144; // blocks before miner/contract payouts become spendable
+
 // --- UI-only state ---
 
 let queryHistory = [];     // [{type, query, label}]  type: 'address'|'block'|'transaction'
@@ -21,6 +25,11 @@ function log(msg, cls) {
 }
 
 // --- Helpers ---
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 function truncateAddr(addr) {
   if (!addr || addr.length < 16) return addr || '';
@@ -575,21 +584,14 @@ function buildMinerPayoutCard(payouts, height) {
       '<span>' + payouts.length + ' Output' + (payouts.length !== 1 ? 's' : '') + '</span>' +
       '<span class="txn-chevron">\u25B8</span>' +
     '</div>';
-  header.addEventListener('click', () => card.classList.toggle('expanded'));
-  card.appendChild(header);
-
-  const summary = document.createElement('div');
-  summary.className = 'txn-summary';
-  summary.textContent = 'Reward: ' + formatHastings(totalReward) + ' \u2022 Matures at height ' + (height + 144).toLocaleString();
-  card.appendChild(summary);
-
   const body = document.createElement('div');
   body.className = 'txn-body';
   let rendered = false;
-  const observer = new MutationObserver(() => {
+
+  header.addEventListener('click', () => {
+    card.classList.toggle('expanded');
     if (card.classList.contains('expanded') && !rendered) {
       rendered = true;
-      observer.disconnect();
       const title = document.createElement('div');
       title.className = 'io-column-title';
       title.textContent = 'Outputs';
@@ -606,7 +608,12 @@ function buildMinerPayoutCard(payouts, height) {
       }
     }
   });
-  observer.observe(card, { attributes: true, attributeFilter: ['class'] });
+  card.appendChild(header);
+
+  const summary = document.createElement('div');
+  summary.className = 'txn-summary';
+  summary.textContent = 'Reward: ' + formatHastings(totalReward) + ' \u2022 Matures at height ' + (height + MATURITY_DELAY).toLocaleString();
+  card.appendChild(summary);
   card.appendChild(body);
 
   return card;
@@ -635,6 +642,10 @@ export function buildTransactionCard(txn, index, highlight) {
       '<span>' + inputCount + ' Input' + (inputCount !== 1 ? 's' : '') + ' | ' + outputCount + ' Output' + (outputCount !== 1 ? 's' : '') + '</span>' +
       '<span class="txn-chevron">\u25B8</span>' +
     '</div>';
+  const body = document.createElement('div');
+  body.className = 'txn-body';
+  let rendered = false;
+
   header.addEventListener('click', (e) => {
     // Copy txid if clicking the txid span
     if (e.target.classList.contains('txn-txid') && txid) {
@@ -645,6 +656,10 @@ export function buildTransactionCard(txn, index, highlight) {
       return;
     }
     card.classList.toggle('expanded');
+    if (card.classList.contains('expanded') && !rendered) {
+      rendered = true;
+      body.appendChild(buildTransactionBody(txn, cls));
+    }
   });
   card.appendChild(header);
 
@@ -652,24 +667,16 @@ export function buildTransactionCard(txn, index, highlight) {
   summary.className = 'txn-summary';
   summary.textContent = buildTransactionSummaryText(txn, cls);
   card.appendChild(summary);
-
-  const body = document.createElement('div');
-  body.className = 'txn-body';
-  let rendered = false;
-  const observer = new MutationObserver(() => {
-    if (card.classList.contains('expanded') && !rendered) {
-      rendered = true;
-      observer.disconnect();
-      body.appendChild(buildTransactionBody(txn, cls));
-    }
-  });
-  observer.observe(card, { attributes: true, attributeFilter: ['class'] });
   card.appendChild(body);
 
   // Auto-expand and highlight the searched-for transaction
   if (highlight) {
     card.style.borderColor = 'var(--color-accent)';
     card.classList.add('expanded');
+    if (!rendered) {
+      rendered = true;
+      body.appendChild(buildTransactionBody(txn, cls));
+    }
   }
 
   return card;
@@ -750,9 +757,9 @@ function buildTransactionBody(txn, cls) {
       let decodedValue = '';
       try { decodedValue = atob(att.value); } catch (_) { decodedValue = att.value; }
       box.innerHTML =
-        '<span class="detail-label">Public Key</span><span class="detail-value">' + truncHash(att.publicKey, 12) + '</span>' +
-        '<span class="detail-label">Key</span><span class="detail-value" style="font-family:inherit;">' + (att.key || '') + '</span>' +
-        '<span class="detail-label">Value</span><span class="detail-value">' + decodedValue + '</span>';
+        '<span class="detail-label">Public Key</span><span class="detail-value">' + escapeHtml(truncHash(att.publicKey, 12)) + '</span>' +
+        '<span class="detail-label">Key</span><span class="detail-value" style="font-family:inherit;">' + escapeHtml(att.key || '') + '</span>' +
+        '<span class="detail-label">Value</span><span class="detail-value">' + escapeHtml(decodedValue) + '</span>';
       frag.appendChild(box);
     }
     appendIOAndFee();
@@ -770,7 +777,7 @@ function buildTransactionBody(txn, cls) {
       '<div style="color:var(--text-secondary); margin-bottom:0.35rem;">Arbitrary Data' +
       (isNonSia ? ' <span class="badge badge-orange">NonSia marker</span>' : '') + '</div>' +
       '<div style="color:var(--text-primary); word-break:break-all; font-family:var(--font-mono);">' +
-      decoded.replace(/</g, '&lt;') + '</div>';
+      escapeHtml(decoded) + '</div>';
     frag.appendChild(box);
     appendIOAndFee();
     return frag;
@@ -1188,7 +1195,7 @@ function populateStatsTab(result) {
   const el = document.getElementById('exp-tab-stats');
   const utxos = result.utxos || [];
   const tipHeight = result.filterTipHeight + result.tailBlocksScanned;
-  const MATURITY_DELAY = 144;
+  // MATURITY_DELAY is defined at module scope
 
   // Spent IDs set (reuse UTXO logic)
   const spentIds = new Set();
