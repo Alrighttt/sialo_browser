@@ -6986,6 +6986,7 @@ p{margin:0.8em 0;}
       _walletEntropy = null;
       _lastWalletScanResult = null;
       if (_walletLockTimer) { clearTimeout(_walletLockTimer); _walletLockTimer = null; }
+      if (_seedDisplayTimer) { clearTimeout(_seedDisplayTimer); _seedDisplayTimer = null; }
       document.getElementById('wallet-mnemonic').value = '';
       document.getElementById('wallet-password-unlock').value = '';
       document.getElementById('wallet-seed-display').style.display = 'none';
@@ -7061,6 +7062,7 @@ p{margin:0.8em 0;}
         _walletEntropy = entropyHex;
         _walletHasSaved = true;
         document.getElementById('wallet-password').value = '';
+        document.getElementById('wallet-mnemonic').value = '';
         walletUpdateUI();
         walletResetLockTimer();
         walletScanUtxos();
@@ -7094,15 +7096,24 @@ p{margin:0.8em 0;}
       }
     }
 
+    let _seedDisplayTimer = null;
     function walletExportSeed() {
       if (!_walletEntropy) { walletLog('Wallet is locked.', 'err'); return; }
       try {
         const phrase = entropy_to_mnemonic(_walletEntropy);
         const display = document.getElementById('wallet-seed-display');
-        document.getElementById('wallet-seed-phrase').value = phrase;
+        const seedInput = document.getElementById('wallet-seed-phrase');
+        seedInput.value = phrase;
         display.style.display = '';
         walletResetLockTimer();
-        walletLog('Seed phrase displayed. Copy it and store safely.', 'info');
+        walletLog('Seed phrase displayed. It will be hidden after 60 seconds.', 'info');
+        // Auto-hide seed phrase after 60 seconds
+        if (_seedDisplayTimer) clearTimeout(_seedDisplayTimer);
+        _seedDisplayTimer = setTimeout(() => {
+          seedInput.value = '';
+          display.style.display = 'none';
+          _seedDisplayTimer = null;
+        }, 60_000);
       } catch (e) {
         walletLog('Error: ' + e, 'err');
       }
