@@ -204,6 +204,10 @@ export function initRegistrationWizard(helpers) {
   // --- Step 5: Start Browsing ---
 
   document.getElementById('wiz-btn-start').addEventListener('click', () => {
+    // Clear sensitive data from the DOM before navigating away
+    document.getElementById('wiz-key-display').textContent = '';
+    document.getElementById('wiz-mnemonic').value = '';
+
     // Find the register tab and close it
     const registerTab = tabs.find(t => t.type === 'internal' && t.panelName === 'register');
     // Find the Homepage browser tab
