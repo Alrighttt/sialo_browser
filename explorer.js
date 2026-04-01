@@ -16,7 +16,7 @@ let lastExplorerAddress = null;
 // --- Cached DOM elements (populated in initExplorer) ---
 
 let $query, $btnLookup, $addressResult, $txResult, $balanceBox,
-    $stats, $utxoWrap, $txJson, $historyBody, $utxoBody, $log;
+  $stats, $utxoWrap, $txJson, $historyBody, $utxoBody, $log;
 
 // --- Logging ---
 
@@ -236,6 +236,7 @@ async function showAddressResult(addr) {
       return formatHastings(sum);
     })();
 
+
     // Show balance
     $balanceBox.style.display = 'block';
     document.getElementById('exp-balance-value').textContent = utxoBalance;
@@ -246,6 +247,13 @@ async function showAddressResult(addr) {
       result.tailBlocksScanned + ' tail blocks, ' +
       result.falsePositives + ' false positives | ' + elapsed + 's';
 
+    // DEBUG: Log balance calculation details
+    const spentIds = new Set();
+    for (const u of result.utxos) {
+      if (u.direction === 'sent' && u.outputId) {
+        spentIds.add(u.outputId);
+      }
+    }
     // Show stats
     $stats.style.display = 'block';
     document.getElementById('exp-stat-summary').textContent =
@@ -551,16 +559,16 @@ function buildBlockHeaderCard(result) {
 
   card.innerHTML =
     '<div class="block-card-header">' +
-      '<span class="block-card-title">Block ' + escapeHtml(result.blockHeight.toLocaleString()) + '</span>' +
-      '<span class="block-card-subtitle">Miner Reward: ' + escapeHtml(formatHastings(minerReward)) + '</span>' +
+    '<span class="block-card-title">Block ' + escapeHtml(result.blockHeight.toLocaleString()) + '</span>' +
+    '<span class="block-card-subtitle">Miner Reward: ' + escapeHtml(formatHastings(minerReward)) + '</span>' +
     '</div>' +
     '<div class="block-card-row">' +
-      '<span style="color:var(--color-orange);">' + escapeHtml(new Date(ts).toLocaleString()) + '</span>' +
-      '<span>Total Fees: ' + escapeHtml(formatHastings(totalFees)) + '</span>' +
+    '<span style="color:var(--color-orange);">' + escapeHtml(new Date(ts).toLocaleString()) + '</span>' +
+    '<span>Total Fees: ' + escapeHtml(formatHastings(totalFees)) + '</span>' +
     '</div>' +
     '<div class="block-card-row">' +
-      '<span class="block-card-hash" title="' + escapeHtml(block.parentID || '') + '">Parent: ' + escapeHtml(truncHash(block.parentID)) + '</span>' +
-      '<span>Nonce: ' + escapeHtml(String(block.nonce)) + '</span>' +
+    '<span class="block-card-hash" title="' + escapeHtml(block.parentID || '') + '">Parent: ' + escapeHtml(truncHash(block.parentID)) + '</span>' +
+    '<span>Nonce: ' + escapeHtml(String(block.nonce)) + '</span>' +
     '</div>' +
     (v1Count > 0 ? '<div class="block-card-row"><span></span><span>' + v1Count + ' V1 Transaction' + (v1Count !== 1 ? 's' : '') + '</span></div>' : '') +
     (v2Count > 0 ? '<div class="block-card-row"><span></span><span>' + v2Count + ' V2 Transaction' + (v2Count !== 1 ? 's' : '') + '</span></div>' : '');
@@ -578,13 +586,13 @@ function buildMinerPayoutCard(payouts, height) {
   header.className = 'txn-card-header';
   header.innerHTML =
     '<div class="txn-card-left">' +
-      '<span class="txn-type-dot dot-miner"></span>' +
-      '<span class="txn-type-label">Miner Payout</span>' +
-      '<span class="badge badge-orange">coinbase</span>' +
+    '<span class="txn-type-dot dot-miner"></span>' +
+    '<span class="txn-type-label">Miner Payout</span>' +
+    '<span class="badge badge-orange">coinbase</span>' +
     '</div>' +
     '<div class="txn-card-right">' +
-      '<span>' + payouts.length + ' Output' + (payouts.length !== 1 ? 's' : '') + '</span>' +
-      '<span class="txn-chevron">\u25B8</span>' +
+    '<span>' + payouts.length + ' Output' + (payouts.length !== 1 ? 's' : '') + '</span>' +
+    '<span class="txn-chevron">\u25B8</span>' +
     '</div>';
   const body = document.createElement('div');
   body.className = 'txn-body';
@@ -636,13 +644,13 @@ export function buildTransactionCard(txn, index, highlight) {
   header.className = 'txn-card-header';
   header.innerHTML =
     '<div class="txn-card-left">' +
-      '<span class="txn-type-dot ' + cls.dot + '"></span>' +
-      '<span class="txn-txid" title="' + escapeHtml(txid) + '">' + escapeHtml(txid ? truncHash(txid, 6) : 'Txn ' + (index + 1)) + '</span>' +
-      '<span class="txn-type-label">' + escapeHtml(cls.type) + '</span>' +
+    '<span class="txn-type-dot ' + cls.dot + '"></span>' +
+    '<span class="txn-txid" title="' + escapeHtml(txid) + '">' + escapeHtml(txid ? truncHash(txid, 6) : 'Txn ' + (index + 1)) + '</span>' +
+    '<span class="txn-type-label">' + escapeHtml(cls.type) + '</span>' +
     '</div>' +
     '<div class="txn-card-right">' +
-      '<span>' + inputCount + ' Input' + (inputCount !== 1 ? 's' : '') + ' | ' + outputCount + ' Output' + (outputCount !== 1 ? 's' : '') + '</span>' +
-      '<span class="txn-chevron">\u25B8</span>' +
+    '<span>' + inputCount + ' Input' + (inputCount !== 1 ? 's' : '') + ' | ' + outputCount + ' Output' + (outputCount !== 1 ? 's' : '') + '</span>' +
+    '<span class="txn-chevron">\u25B8</span>' +
     '</div>';
   const body = document.createElement('div');
   body.className = 'txn-body';
@@ -922,9 +930,9 @@ function buildFileContractDetail(fc, title, contractId) {
   renter.innerHTML =
     '<div class="contract-party-header" style="background:rgba(74,222,128,0.1); color:var(--color-green);">Renter</div>' +
     '<div class="contract-party-body">' +
-      '<div>' + escapeHtml(truncHash(renterKey.replace('ed25519:', ''), 10)) + '</div>' +
-      '<div>Renter Payout: <span>' + escapeHtml(renterPayout) + '</span></div>' +
-      '<div>' + (hasSig ? '\u2714\uFE0F Signed' : '\u274C Not signed') + '</div>' +
+    '<div>' + escapeHtml(truncHash(renterKey.replace('ed25519:', ''), 10)) + '</div>' +
+    '<div>Renter Payout: <span>' + escapeHtml(renterPayout) + '</span></div>' +
+    '<div>' + (hasSig ? '\u2714\uFE0F Signed' : '\u274C Not signed') + '</div>' +
     '</div>';
 
   // Host panel
@@ -937,10 +945,10 @@ function buildFileContractDetail(fc, title, contractId) {
   host.innerHTML =
     '<div class="contract-party-header" style="background:rgba(245,158,11,0.1); color:var(--color-orange);">Host</div>' +
     '<div class="contract-party-body">' +
-      '<div>' + escapeHtml(truncHash(hostKey.replace('ed25519:', ''), 10)) + '</div>' +
-      '<div>Host Payout: <span>' + escapeHtml(hostPayout) + '</span></div>' +
-      '<div>Missed: <span>' + escapeHtml(missedHost) + '</span></div>' +
-      '<div>Total Collateral: <span>' + escapeHtml(totalColl) + '</span></div>' +
+    '<div>' + escapeHtml(truncHash(hostKey.replace('ed25519:', ''), 10)) + '</div>' +
+    '<div>Host Payout: <span>' + escapeHtml(hostPayout) + '</span></div>' +
+    '<div>Missed: <span>' + escapeHtml(missedHost) + '</span></div>' +
+    '<div>Total Collateral: <span>' + escapeHtml(totalColl) + '</span></div>' +
     '</div>';
 
   parties.append(renter, host);
