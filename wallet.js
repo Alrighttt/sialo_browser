@@ -6,6 +6,7 @@ import { kdfEncrypt, kdfDecrypt } from './kdf.js';
 import { openOrActivateInternalTab } from './tabs.js';
 import {
   getActiveNetwork, getNetworkConfig, getGenesisHex,
+  getFilterUrl, getUtxoIndexUrl,
   getMempool, getMempoolTransactions, onMempoolChange, addToMempool,
   onChange as chainOnChange, getSyncState,
 } from './chain.js';
@@ -738,6 +739,19 @@ onMempoolChange((net, pool) => {
     txbRefreshFromMempool();
   }
 });
+
+// --- SC/Hastings conversion ---
+const SC_HASTINGS = 1000000000000000000000000n; // 10^24
+
+function hastingsToSC(hastingsStr) {
+  if (!hastingsStr) return '0';
+  const h = BigInt(hastingsStr);
+  const whole = h / SC_HASTINGS;
+  const frac = h % SC_HASTINGS;
+  if (frac === 0n) return whole.toString();
+  const fracStr = (frac * 10000n / SC_HASTINGS).toString().padStart(4, '0');
+  return `${whole}.${fracStr}`;
+}
 
 // --- Transaction Builder ---
 function scToHastings(sc) {
