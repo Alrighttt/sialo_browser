@@ -19,7 +19,7 @@ import {
   compute_utxo_proofs, v2_output_id,
 } from './pkg/syncer_wasm.js';
 import {
-  getWalletEntropy, getWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
+  getWalletEntropy, setWalletEntropy, getWalletHasSaved, setWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
   walletDbLoad, walletUpdateUI, walletResetLockTimer, walletScanUtxos,
 } from './wallet.js';
 
@@ -93,8 +93,8 @@ async function mfstUnlock() {
     const encrypted = await walletDbLoad('encrypted_entropy');
     if (!encrypted) { mfstLog('No saved wallet found.', 'err'); return; }
     const entropyHex = await kdfDecrypt(encrypted, password);
-    getWalletEntropy() = entropyHex;
-    getWalletHasSaved() = true;
+    setWalletEntropy(entropyHex);
+    setWalletHasSaved(true);
     document.getElementById('mfst-password').value = '';
     walletUpdateUI();
     walletResetLockTimer();

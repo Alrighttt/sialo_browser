@@ -4,7 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' https:; frame-src blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self' https://*.github.io https://*.sia.storage; frame-src blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
   <title>Sia Browser</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -19,29 +20,42 @@
       <button id="gear-btn" title="Menu">&#9881;</button>
       <div id="gear-menu" style="display:none;">
         <div class="gear-menu-header">Browse</div>
-        <button class="gear-menu-item" data-panel="dashboard"><span class="gear-menu-icon">&#128202;</span> Dashboard</button>
-        <button class="gear-menu-item" data-panel="objects"><span class="gear-menu-icon">&#128193;</span> My Objects</button>
-        <button class="gear-menu-item" data-panel="history"><span class="gear-menu-icon">&#128220;</span> History</button>
+        <button class="gear-menu-item" data-panel="dashboard"><span class="gear-menu-icon">&#128202;</span>
+          Dashboard</button>
+        <button class="gear-menu-item" data-panel="objects"><span class="gear-menu-icon">&#128193;</span> My
+          Objects</button>
+        <button class="gear-menu-item" data-panel="history"><span class="gear-menu-icon">&#128220;</span>
+          History</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Transfer</div>
-        <button class="gear-menu-item" data-panel="upload-file"><span class="gear-menu-icon">&#128228;</span> Upload File</button>
-        <button class="gear-menu-item" data-panel="upload-text"><span class="gear-menu-icon">&#128221;</span> Upload Text</button>
-        <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span> Download</button>
-        <button class="gear-menu-item" data-panel="benchmark"><span class="gear-menu-icon">&#9201;</span> Benchmark</button>
+        <button class="gear-menu-item" data-panel="upload-file"><span class="gear-menu-icon">&#128228;</span> Upload
+          File</button>
+        <button class="gear-menu-item" data-panel="upload-text"><span class="gear-menu-icon">&#128221;</span> Upload
+          Text</button>
+        <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span>
+          Download</button>
+        <button class="gear-menu-item" data-panel="benchmark"><span class="gear-menu-icon">&#9201;</span>
+          Benchmark</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Share</div>
-        <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share Object</button>
+        <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share
+          Object</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Blockchain</div>
-        <button class="gear-menu-item" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span> Syncer</button>
-        <button class="gear-menu-item" data-panel="explorer"><span class="gear-menu-icon">&#128269;</span> Explorer</button>
+        <button class="gear-menu-item" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span>
+          Syncer</button>
+        <button class="gear-menu-item" data-panel="explorer"><span class="gear-menu-icon">&#128269;</span>
+          Explorer</button>
         <button class="gear-menu-item" data-panel="wallet"><span class="gear-menu-icon">&#128176;</span> Wallet</button>
-        <button class="gear-menu-item" data-panel="manifest"><span class="gear-menu-icon">&#128220;</span> Manifest</button>
+        <button class="gear-menu-item" data-panel="manifest"><span class="gear-menu-icon">&#128220;</span>
+          Manifest</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">System</div>
         <button class="gear-menu-item" data-panel="setup"><span class="gear-menu-icon">&#9881;</span> Settings</button>
-        <button class="gear-menu-item" data-panel="register"><span class="gear-menu-icon">&#128273;</span> Register</button>
-        <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS Diagnostics</button>
+        <button class="gear-menu-item" data-panel="register"><span class="gear-menu-icon">&#128273;</span>
+          Register</button>
+        <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS
+          Diagnostics</button>
       </div>
       <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
       <input type="text" id="chrome-address-bar" placeholder="Paste Sia share URL or object ID..."
@@ -68,9 +82,12 @@
       <!-- Browser: shared video container (used by streaming browser tabs) -->
       <div id="video-container" class="viewport-panel" data-panel="browser"
         style="background:#0a0a0a; position:relative; overflow:hidden;">
-        <canvas id="stream-canvas" style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
-        <div id="video-controls" style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s;">
-          <button id="vc-playpause" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 8px;">&#9654;</button>
+        <canvas id="stream-canvas"
+          style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
+        <div id="video-controls"
+          style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s;">
+          <button id="vc-playpause"
+            style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 8px;">&#9654;</button>
           <span id="vc-time" style="color:#ccc; font-size:12px; font-family:monospace; min-width:60px;">0:00</span>
           <div id="vc-seekbar">
             <div id="vc-seek-track">
@@ -80,9 +97,11 @@
             </div>
           </div>
           <input id="vc-volume" type="range" min="0" max="1" step="0.01" value="1" class="vc-vol-slider">
-          <button id="vc-fullscreen" style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 8px;">&#x26F6;</button>
+          <button id="vc-fullscreen"
+            style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 8px;">&#x26F6;</button>
         </div>
-        <video id="mse-video" controls controlsList="nodownload" autoplay style="width:100%; height:100%; background:#000; display:none;"></video>
+        <video id="mse-video" controls controlsList="nodownload" autoplay
+          style="width:100%; height:100%; background:#000; display:none;"></video>
       </div>
 
       <!-- Panel: Registration Wizard (first-run only) -->
@@ -100,8 +119,11 @@
             <!-- Step 1: Welcome + Indexer URL -->
             <div class="wizard-step active" data-step="1">
               <h1 class="wizard-heading">Welcome to Sia Browser</h1>
-              <p class="wizard-subtext">Connect to an indexer to get started. You'll need the URL of the indexer you want to register with.</p>
-              <p class="wizard-subtext" style="margin-top: 0.75rem; font-size: 0.85rem; opacity: 0.7;">Already have an app key? Skip registration &mdash; open <strong>Settings</strong> from the gear menu and paste your key directly.</p>
+              <p class="wizard-subtext">Connect to an indexer to get started. You'll need the URL of the indexer you
+                want to register with.</p>
+              <p class="wizard-subtext" style="margin-top: 0.75rem; font-size: 0.85rem; opacity: 0.7;">Already have an
+                app key? Skip registration &mdash; open <strong>Settings</strong> from the gear menu and paste your key
+                directly.</p>
               <div class="wizard-field">
                 <label class="label" for="wiz-url">Indexer URL</label>
                 <input id="wiz-url" type="text" placeholder="https://indexer.example.com" />
@@ -122,7 +144,8 @@
             <div class="wizard-step" data-step="3">
               <button class="wizard-back" data-back="2">Back</button>
               <h1 class="wizard-heading">Approve Connection</h1>
-              <p class="wizard-subtext">Open the link below to approve the connection request, then click the button to continue.</p>
+              <p class="wizard-subtext">Open the link below to approve the connection request, then click the button to
+                continue.</p>
               <div id="wiz-approval-link" class="wizard-status"></div>
               <button id="wiz-btn-approve" class="wizard-btn" style="margin-top:1rem;">Check for Approval</button>
               <div id="wiz-status-approve" class="wizard-status"></div>
@@ -132,7 +155,8 @@
             <div class="wizard-step" data-step="4">
               <button class="wizard-back" data-back="3">Back</button>
               <h1 class="wizard-heading">Recovery Phrase</h1>
-              <p class="wizard-subtext">Generate a new recovery phrase or enter an existing one. This phrase is used to derive your cryptographic keys — save it securely.</p>
+              <p class="wizard-subtext">Generate a new recovery phrase or enter an existing one. This phrase is used to
+                derive your cryptographic keys — save it securely.</p>
               <div class="wizard-field">
                 <label class="label" for="wiz-mnemonic">Recovery Phrase</label>
                 <div class="row">
@@ -151,7 +175,8 @@
                 <p class="wizard-subtext">Your app is registered and your key has been saved.</p>
               </div>
               <div id="wiz-key-display" class="wizard-key-display"></div>
-              <p style="color:#fbbf24; font-size:0.85rem; margin-bottom:1.5rem; text-align:center;">Save your recovery phrase and app key seed securely!</p>
+              <p style="color:#fbbf24; font-size:0.85rem; margin-bottom:1.5rem; text-align:center;">Save your recovery
+                phrase and app key seed securely!</p>
               <div style="text-align:center;">
                 <button id="wiz-btn-start" class="wizard-btn">Start Browsing</button>
               </div>
@@ -165,55 +190,67 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Configuration</h2>
-      <label class="label" for="cfg-url">Indexer URL</label>
-      <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
-      <label class="label" for="cfg-key">App Key (hex seed)</label>
-      <div style="position:relative; margin-bottom:0.5rem;">
-        <input id="cfg-key" type="password" placeholder="e.g. ab12cd34..." style="width:100%; padding-right:2.5rem;" />
-        <button id="cfg-key-toggle" type="button" style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; font-size:0.8rem; padding:2px 6px;" title="Show/hide key">show</button>
-      </div>
+            <label class="label" for="cfg-url">Indexer URL</label>
+            <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
+            <label class="label" for="cfg-key">App Key (hex seed)</label>
+            <div style="position:relative; margin-bottom:0.5rem;">
+              <input id="cfg-key" type="password" placeholder="e.g. ab12cd34..."
+                style="width:100%; padding-right:2.5rem;" />
+              <button id="cfg-key-toggle" type="button"
+                style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; font-size:0.8rem; padding:2px 6px;"
+                title="Show/hide key">show</button>
+            </div>
           </div><!-- /panel-section: Configuration -->
 
           <div class="panel-section">
             <h2>Performance</h2>
-      <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem;">
-        <button id="preset-conservative"
-          style="flex:1; padding:0.6rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-          Conservative<br><span style="font-size:0.7rem; opacity:0.9;">Most Stable</span>
-        </button>
-        <button id="preset-balanced"
-          style="flex:1; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-          Balanced<br><span style="font-size:0.7rem; opacity:0.9;">Recommended</span>
-        </button>
-        <button id="preset-fast"
-          style="flex:1; padding:0.6rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
-          Fast<br><span style="font-size:0.7rem; opacity:0.9;">May Be Unstable</span>
-        </button>
-      </div>
-      <div
-        style="display:grid; grid-template-columns: 2fr 1fr; gap:0.5rem; align-items:center;">
-        <label style="font-size:0.85rem; color:#999;">Max Downloads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector downloads per worker. Higher values increase throughput but use more connections.</span></span></label>
-        <input id="cfg-max-downloads" type="number" min="1" value="8"
-          style="padding:0.4rem; text-align:center;" />
-        <label style="font-size:0.85rem; color:#999;">Max Uploads: <span class="info-tip">&#9432;<span class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase throughput but use more connections.</span></span></label>
-        <input id="cfg-max-uploads" type="number" min="1" value="8"
-          style="padding:0.4rem; text-align:center;" />
-        <label style="font-size:0.85rem; color:#999;">Download Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab downloads. More workers allow multiple slabs to download simultaneously, improving speed for large files.</span></span></label>
-        <input id="cfg-download-workers" type="number" min="1" value="8"
-          style="padding:0.4rem; text-align:center;" />
-        <label style="font-size:0.85rem; color:#999;">Upload Workers: <span class="info-tip">&#9432;<span class="info-tip-text">Number of Web Workers for parallel slab uploads. More workers allow multiple slabs to upload simultaneously, improving speed for large files.</span></span></label>
-        <input id="cfg-upload-workers" type="number" min="1" value="8"
-          style="padding:0.4rem; text-align:center;" />
-        <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output is written to the browser console (open DevTools to view).</span></span></label>
-        <input id="cfg-debug-logging" type="checkbox" style="cursor:pointer; justify-self:center;" />
-      </div>
+            <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem;">
+              <button id="preset-conservative"
+                style="flex:1; padding:0.6rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+                Conservative<br><span style="font-size:0.7rem; opacity:0.9;">Most Stable</span>
+              </button>
+              <button id="preset-balanced"
+                style="flex:1; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+                Balanced<br><span style="font-size:0.7rem; opacity:0.9;">Recommended</span>
+              </button>
+              <button id="preset-fast"
+                style="flex:1; padding:0.6rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">
+                Fast<br><span style="font-size:0.7rem; opacity:0.9;">May Be Unstable</span>
+              </button>
+            </div>
+            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:0.5rem; align-items:center;">
+              <label style="font-size:0.85rem; color:#999;">Max Downloads: <span class="info-tip">&#9432;<span
+                    class="info-tip-text">Maximum concurrent sector downloads per worker. Higher values increase
+                    throughput but use more connections.</span></span></label>
+              <input id="cfg-max-downloads" type="number" min="1" value="8"
+                style="padding:0.4rem; text-align:center;" />
+              <label style="font-size:0.85rem; color:#999;">Max Uploads: <span class="info-tip">&#9432;<span
+                    class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase
+                    throughput but use more connections.</span></span></label>
+              <input id="cfg-max-uploads" type="number" min="1" value="8" style="padding:0.4rem; text-align:center;" />
+              <label style="font-size:0.85rem; color:#999;">Download Workers: <span class="info-tip">&#9432;<span
+                    class="info-tip-text">Number of Web Workers for parallel slab downloads. More workers allow multiple
+                    slabs to download simultaneously, improving speed for large files.</span></span></label>
+              <input id="cfg-download-workers" type="number" min="1" value="8"
+                style="padding:0.4rem; text-align:center;" />
+              <label style="font-size:0.85rem; color:#999;">Upload Workers: <span class="info-tip">&#9432;<span
+                    class="info-tip-text">Number of Web Workers for parallel slab uploads. More workers allow multiple
+                    slabs to upload simultaneously, improving speed for large files.</span></span></label>
+              <input id="cfg-upload-workers" type="number" min="1" value="8"
+                style="padding:0.4rem; text-align:center;" />
+              <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span
+                  class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output
+                    is written to the browser console (open DevTools to view).</span></span></label>
+              <input id="cfg-debug-logging" type="checkbox" style="cursor:pointer; justify-self:center;" />
+            </div>
           </div><!-- /panel-section: Performance -->
 
-    <div class="panel-section">
-      <h2>Browser Compatibility</h2>
-      <div id="compat-checks" style="display:grid; grid-template-columns: 1fr auto; gap:0.4rem 1rem; align-items:center; font-size:0.85rem;">
-      </div>
-    </div><!-- /panel-section: Browser Compatibility -->
+          <div class="panel-section">
+            <h2>Browser Compatibility</h2>
+            <div id="compat-checks"
+              style="display:grid; grid-template-columns: 1fr auto; gap:0.4rem 1rem; align-items:center; font-size:0.85rem;">
+            </div>
+          </div><!-- /panel-section: Browser Compatibility -->
 
         </div><!-- /internal-page-content -->
       </div><!-- /panel-setup -->
@@ -223,130 +260,145 @@
         <div class="internal-page-content">
           <div class="panel-section" id="account-dashboard">
             <h2>Account Dashboard</h2>
-      <div class="row" style="margin-bottom:1rem;">
-        <button id="btn-refresh-account">Load Account Data</button>
-      </div>
-
-      <!-- Storage Usage Bar -->
-      <div style="margin-bottom:1.5rem;">
-        <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:baseline;">
-          <span style="font-weight:500;">Storage Usage</span>
-          <span id="account-storage-text" style="color:#888; font-size:0.9rem;">Loading...</span>
-        </div>
-        <div
-          style="width:100%; height:24px; background:#0a0a0a; border-radius:6px; overflow:hidden; border:1px solid #222;">
-          <div id="account-storage-bar"
-            style="width:0%; height:100%; background:linear-gradient(90deg, #10b981, #059669); transition:width 0.3s;">
-          </div>
-        </div>
-        <div style="display:flex; justify-content:space-between; margin-top:0.25rem; font-size:0.85rem; color:#666;">
-          <span id="account-used-label">Used: 0 GB</span>
-          <span id="account-free-label">Free: 0 GB</span>
-        </div>
-
-        <!-- Prune Slabs -->
-        <div style="margin-top:1rem; padding:1rem; background:#0a0a0a; border-radius:6px; border:1px solid #222;">
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
-            <div style="flex:1;">
-              <div style="font-weight:500; margin-bottom:0.25rem; color:#e0e0e0;">Clean Up Storage</div>
-              <div style="color:#888; font-size:0.85rem;">Remove unused slabs to reclaim space</div>
+            <div class="row" style="margin-bottom:1rem;">
+              <button id="btn-refresh-account">Load Account Data</button>
             </div>
-            <button id="btn-prune-slabs"
-              style="padding:0.5rem 1rem; background:#8b5cf6; color:white; border:none; border-radius:4px; cursor:pointer; white-space:nowrap; font-size:0.9rem; font-weight:500;">
-              🧹 Prune Slabs
-            </button>
-          </div>
-        </div>
-      </div>
 
-      <!-- Quick Stats Grid -->
-      <div
-        style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
-        <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
-          <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Objects Stored</div>
-          <div id="account-objects-count" style="font-size:1.75rem; font-weight:600; color:#10b981;">-</div>
-        </div>
-        <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
-          <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Pinned Data</div>
-          <div id="account-pinned-data" style="font-size:1.75rem; font-weight:600; color:#3b82f6;">-</div>
-        </div>
-        <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
-          <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Capacity</div>
-          <div id="account-capacity-percent" style="font-size:1.75rem; font-weight:600; color:#8b5cf6;">-</div>
-        </div>
-      </div>
+            <!-- Storage Usage Bar -->
+            <div style="margin-bottom:1.5rem;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:0.5rem; align-items:baseline;">
+                <span style="font-weight:500;">Storage Usage</span>
+                <span id="account-storage-text" style="color:#888; font-size:0.9rem;">Loading...</span>
+              </div>
+              <div
+                style="width:100%; height:24px; background:#0a0a0a; border-radius:6px; overflow:hidden; border:1px solid #222;">
+                <div id="account-storage-bar"
+                  style="width:0%; height:100%; background:linear-gradient(90deg, #10b981, #059669); transition:width 0.3s;">
+                </div>
+              </div>
+              <div
+                style="display:flex; justify-content:space-between; margin-top:0.25rem; font-size:0.85rem; color:#666;">
+                <span id="account-used-label">Used: 0 GB</span>
+                <span id="account-free-label">Free: 0 GB</span>
+              </div>
 
-      <!-- Account Details -->
-      <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
-        <h3 style="margin:0 0 1rem 0; font-size:1rem; color:#e0e0e0;">Account Details</h3>
-        <div style="display:grid; gap:0.75rem; font-size:0.9rem;">
-          <div style="display:flex; justify-content:space-between;">
-            <span style="color:#888;">App Name:</span>
-            <span id="account-app-name" style="color:#e0e0e0; font-family:monospace;">-</span>
-          </div>
-          <div style="display:flex; justify-content:space-between;">
-            <span style="color:#888;">Account Key:</span>
-            <span id="account-key" style="color:#e0e0e0; font-family:monospace; font-size:0.8rem;" title="">-</span>
-          </div>
-          <div style="display:flex; justify-content:space-between;">
-            <span style="color:#888;">Last Used:</span>
-            <span id="account-last-used" style="color:#e0e0e0;">-</span>
-          </div>
-          <div style="display:flex; justify-content:space-between;">
-            <span style="color:#888;">Storage Limit:</span>
-            <span id="account-max-storage" style="color:#e0e0e0;">-</span>
-          </div>
-        </div>
-      </div>
+              <!-- Prune Slabs -->
+              <div style="margin-top:1rem; padding:1rem; background:#0a0a0a; border-radius:6px; border:1px solid #222;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem;">
+                  <div style="flex:1;">
+                    <div style="font-weight:500; margin-bottom:0.25rem; color:#e0e0e0;">Clean Up Storage</div>
+                    <div style="color:#888; font-size:0.85rem;">Remove unused slabs to reclaim space</div>
+                  </div>
+                  <button id="btn-prune-slabs"
+                    style="padding:0.5rem 1rem; background:#8b5cf6; color:white; border:none; border-radius:4px; cursor:pointer; white-space:nowrap; font-size:0.9rem; font-weight:500;">
+                    🧹 Prune Slabs
+                  </button>
+                </div>
+              </div>
+            </div>
 
-      <!-- Host Balances -->
-      <div style="margin-top:1.5rem;">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-          <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Host Balances</h3>
-          <button id="btn-check-balances"
-            style="padding:0.4rem 0.8rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.8rem;">
-            Check Balances
-          </button>
-        </div>
-        <!-- Summary cards -->
-        <div id="host-balance-summary" style="display:none; margin-bottom:1rem;">
-          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:0.75rem;">
-            <div style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-              <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Funded</div>
-              <div id="hosts-funded-count" style="font-size:1.5rem; font-weight:600; color:#10b981;">-</div>
+            <!-- Quick Stats Grid -->
+            <div
+              style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:1rem; margin-bottom:1.5rem;">
+              <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
+                <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Objects Stored</div>
+                <div id="account-objects-count" style="font-size:1.75rem; font-weight:600; color:#10b981;">-</div>
+              </div>
+              <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
+                <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Pinned Data</div>
+                <div id="account-pinned-data" style="font-size:1.75rem; font-weight:600; color:#3b82f6;">-</div>
+              </div>
+              <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
+                <div style="color:#888; font-size:0.85rem; margin-bottom:0.5rem;">Capacity</div>
+                <div id="account-capacity-percent" style="font-size:1.75rem; font-weight:600; color:#8b5cf6;">-</div>
+              </div>
             </div>
-            <div style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-              <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Unfunded</div>
-              <div id="hosts-unfunded-count" style="font-size:1.5rem; font-weight:600; color:#f59e0b;">-</div>
-            </div>
-            <div style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-              <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Errors</div>
-              <div id="hosts-error-count" style="font-size:1.5rem; font-weight:600; color:#ef4444;">-</div>
-            </div>
-            <div style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-              <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Total Download</div>
-              <div id="hosts-total-download" style="font-size:1.5rem; font-weight:600; color:#38bdf8;">-</div>
-            </div>
-          </div>
-        </div>
-        <!-- Host table -->
-        <div id="host-balance-table" style="display:none; background:#0a0a0a; border-radius:6px; border:1px solid #222; overflow:hidden; max-height:400px; overflow-y:auto;">
-          <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-            <thead>
-              <tr style="background:#111; position:sticky; top:0; z-index:1;">
-                <th style="padding:0.6rem 0.75rem; text-align:left; color:#888; font-weight:500; border-bottom:1px solid #222;">Host</th>
-                <th style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">Balance (SC)</th>
-                <th style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">Download Left</th>
-                <th style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">Upload Left</th>
-              </tr>
-            </thead>
-            <tbody id="host-balance-rows"></tbody>
-          </table>
-        </div>
-        <div id="host-balance-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
-      </div>
 
-      <div class="output" id="account-status" style="margin-top:1rem;"></div>
+            <!-- Account Details -->
+            <div style="background:#0a0a0a; padding:1.25rem; border-radius:6px; border:1px solid #222;">
+              <h3 style="margin:0 0 1rem 0; font-size:1rem; color:#e0e0e0;">Account Details</h3>
+              <div style="display:grid; gap:0.75rem; font-size:0.9rem;">
+                <div style="display:flex; justify-content:space-between;">
+                  <span style="color:#888;">App Name:</span>
+                  <span id="account-app-name" style="color:#e0e0e0; font-family:monospace;">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between;">
+                  <span style="color:#888;">Account Key:</span>
+                  <span id="account-key" style="color:#e0e0e0; font-family:monospace; font-size:0.8rem;"
+                    title="">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between;">
+                  <span style="color:#888;">Last Used:</span>
+                  <span id="account-last-used" style="color:#e0e0e0;">-</span>
+                </div>
+                <div style="display:flex; justify-content:space-between;">
+                  <span style="color:#888;">Storage Limit:</span>
+                  <span id="account-max-storage" style="color:#e0e0e0;">-</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Host Balances -->
+            <div style="margin-top:1.5rem;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+                <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Host Balances</h3>
+                <button id="btn-check-balances"
+                  style="padding:0.4rem 0.8rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.8rem;">
+                  Check Balances
+                </button>
+              </div>
+              <!-- Summary cards -->
+              <div id="host-balance-summary" style="display:none; margin-bottom:1rem;">
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:0.75rem;">
+                  <div
+                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
+                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Funded</div>
+                    <div id="hosts-funded-count" style="font-size:1.5rem; font-weight:600; color:#10b981;">-</div>
+                  </div>
+                  <div
+                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
+                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Unfunded</div>
+                    <div id="hosts-unfunded-count" style="font-size:1.5rem; font-weight:600; color:#f59e0b;">-</div>
+                  </div>
+                  <div
+                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
+                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Errors</div>
+                    <div id="hosts-error-count" style="font-size:1.5rem; font-weight:600; color:#ef4444;">-</div>
+                  </div>
+                  <div
+                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
+                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Total Download</div>
+                    <div id="hosts-total-download" style="font-size:1.5rem; font-weight:600; color:#38bdf8;">-</div>
+                  </div>
+                </div>
+              </div>
+              <!-- Host table -->
+              <div id="host-balance-table"
+                style="display:none; background:#0a0a0a; border-radius:6px; border:1px solid #222; overflow:hidden; max-height:400px; overflow-y:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                  <thead>
+                    <tr style="background:#111; position:sticky; top:0; z-index:1;">
+                      <th
+                        style="padding:0.6rem 0.75rem; text-align:left; color:#888; font-weight:500; border-bottom:1px solid #222;">
+                        Host</th>
+                      <th
+                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
+                        Balance (SC)</th>
+                      <th
+                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
+                        Download Left</th>
+                      <th
+                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
+                        Upload Left</th>
+                    </tr>
+                  </thead>
+                  <tbody id="host-balance-rows"></tbody>
+                </table>
+              </div>
+              <div id="host-balance-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
+            </div>
+
+            <div class="output" id="account-status" style="margin-top:1rem;"></div>
           </div><!-- /panel-section: Dashboard -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-dashboard -->
@@ -374,14 +426,14 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Upload Text</h2>
-      <div class="label">Text to upload</div>
-      <textarea id="ul-text" rows="4" placeholder="Type or paste text here..."></textarea>
-      <div class="row" style="margin-top:0.5rem">
-        <button id="btn-upload-text-workers">Upload ( web workers )</button>
-        <button id="btn-upload">Upload ( single-threaded )</button>
-      </div>
-      <progress id="ul-progress" max="100" value="0" style="display:none"></progress>
-      <div class="output" id="ul-status"></div>
+            <div class="label">Text to upload</div>
+            <textarea id="ul-text" rows="4" placeholder="Type or paste text here..."></textarea>
+            <div class="row" style="margin-top:0.5rem">
+              <button id="btn-upload-text-workers">Upload ( web workers )</button>
+              <button id="btn-upload">Upload ( single-threaded )</button>
+            </div>
+            <progress id="ul-progress" max="100" value="0" style="display:none"></progress>
+            <div class="output" id="ul-status"></div>
           </div><!-- /panel-section: Upload Text -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-text -->
@@ -394,18 +446,21 @@
 
             <!-- File selection + info card -->
             <div style="display:flex; gap:1rem; margin-bottom:1rem;">
-              <div class="dropzone" id="uf-dropzone" style="flex:0 0 200px; min-height:120px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+              <div class="dropzone" id="uf-dropzone"
+                style="flex:0 0 200px; min-height:120px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
                 <div style="font-size:2rem; margin-bottom:0.5rem; opacity:0.4;">&#x2191;</div>
                 <div style="font-size:0.8rem; color:#666;">Drop a file here or click to select</div>
                 <input type="file" id="uf-file" style="display:none" />
               </div>
-              <div id="uf-info-card" style="flex:1; display:none; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; padding:1rem;">
+              <div id="uf-info-card"
+                style="flex:1; display:none; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; padding:1rem;">
                 <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
                   <span style="color:#4ade80; font-size:1.1rem;">&#x2191;</span>
                   <span id="uf-card-filename" style="font-weight:600; font-size:1rem;"></span>
                   <span id="uf-card-size" style="color:#888; font-size:0.85rem;"></span>
                 </div>
-                <progress id="uf-progress" max="100" value="0" style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
+                <progress id="uf-progress" max="100" value="0"
+                  style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
                 <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.25rem;">
                   <span id="uf-card-speed" style="font-size:0.85rem; color:#4ade80;">0 MB/s</span>
                   <span style="color:#444;">&#x2022;</span>
@@ -435,7 +490,8 @@
             </div>
 
             <!-- Host table -->
-            <div id="uf-host-table" style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+            <div id="uf-host-table"
+              style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
               <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
                 <thead>
                   <tr style="border-bottom:1px solid #222; color:#888;">
@@ -459,7 +515,8 @@
           <div class="panel-section">
             <h2>Download File</h2>
             <div class="label">Object ID or Share URL</div>
-            <input id="dl-url" type="text" placeholder="Paste sia:// URL or object ID (hex)" style="margin-bottom:0.5rem" />
+            <input id="dl-url" type="text" placeholder="Paste sia:// URL or object ID (hex)"
+              style="margin-bottom:0.5rem" />
             <div class="label">Filename</div>
             <div class="row">
               <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
@@ -478,51 +535,71 @@
           <div class="panel-section">
             <h2>Upload Benchmark</h2>
             <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
-              Upload dummy data of various sizes using different methods and concurrency settings. Results are displayed in a comparison table.
+              Upload dummy data of various sizes using different methods and concurrency settings. Results are displayed
+              in a comparison table.
             </p>
 
             <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
               <div>
                 <div class="label">File Sizes</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-10" checked> 10 MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-50" checked> 50 MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-100"> 100 MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-500"> 500 MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-10" checked> 10
+                  MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-50" checked> 50
+                  MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-100"> 100
+                  MB</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-500"> 500
+                  MB</label>
               </div>
               <div>
                 <div class="label">Methods</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-single" checked> Single-threaded</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-workers" checked> Web Workers</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encode" checked> Encode Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-single"
+                    checked> Single-threaded</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-workers"
+                    checked> Web Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encode"
+                    checked> Encode Workers</label>
               </div>
               <div>
                 <div class="label">Max Inflight</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-4" checked> 4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-8" checked> 8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-16"> 16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-24"> 24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-4" checked>
+                  4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-8" checked>
+                  8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-16">
+                  16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-24">
+                  24</label>
               </div>
               <div>
                 <div class="label">Workers (web/encode only)</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-4" checked> 4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-8" checked> 8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-16"> 16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-24"> 24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-4" checked>
+                  4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-8" checked>
+                  8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-16">
+                  16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-24">
+                  24</label>
               </div>
             </div>
 
             <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
               <button id="btn-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Benchmark</button>
               <button id="btn-bench-stop" style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
-              <button id="btn-bench-clear" style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear Results</button>
+              <button id="btn-bench-clear"
+                style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear
+                Results</button>
             </div>
 
             <div id="bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
-            <progress id="bench-progress" max="100" value="0" style="width:100%; display:none; margin-bottom:1rem;"></progress>
+            <progress id="bench-progress" max="100" value="0"
+              style="width:100%; display:none; margin-bottom:1rem;"></progress>
 
             <!-- Results Table -->
             <div id="bench-results" style="display:none;">
-              <table style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+              <table
+                style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
                 <thead>
                   <tr style="border-bottom:1px solid #222; color:#888;">
                     <th style="text-align:left; padding:0.6rem 0.75rem; font-weight:500;">Size</th>
@@ -540,50 +617,69 @@
           </div>
 
           <!-- Download Benchmark -->
-          <div class="panel-section" style="margin-top:2rem; border-top:1px solid var(--border-subtle,#1a1a1a); padding-top:1.5rem;">
+          <div class="panel-section"
+            style="margin-top:2rem; border-top:1px solid var(--border-subtle,#1a1a1a); padding-top:1.5rem;">
             <h2>Download Benchmark</h2>
             <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
-              Download an existing object using different methods and concurrency settings. Provide an object ID or share URL.
+              Download an existing object using different methods and concurrency settings. Provide an object ID or
+              share URL.
             </p>
 
             <div style="margin-bottom:1rem;">
               <div class="label">Object ID or Share URL</div>
-              <input type="text" id="dl-bench-url" placeholder="Object ID (hex) or sia:// share URL" style="width:100%; padding:0.5rem; font-size:0.85rem; background:var(--bg-card,#151515); border:1px solid var(--border-default,#2a2a2a); color:var(--text-primary,#e2e8f0); border-radius:4px;" />
+              <input type="text" id="dl-bench-url" placeholder="Object ID (hex) or sia:// share URL"
+                style="width:100%; padding:0.5rem; font-size:0.85rem; background:var(--bg-card,#151515); border:1px solid var(--border-default,#2a2a2a); color:var(--text-primary,#e2e8f0); border-radius:4px;" />
             </div>
 
             <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
               <div>
                 <div class="label">Methods</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-workers" checked> Web Workers</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-single" checked> Single Worker</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-workers"
+                    checked> Web Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-single"
+                    checked> Single Worker</label>
               </div>
               <div>
                 <div class="label">Max Inflight</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-4" checked> 4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-8" checked> 8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-16"> 16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-24"> 24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-4"
+                    checked> 4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-8"
+                    checked> 8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-16">
+                  16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-24">
+                  24</label>
               </div>
               <div>
                 <div class="label">Workers (web workers only)</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-4" checked> 4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-8" checked> 8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-16"> 16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-24"> 24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-4" checked>
+                  4</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-8" checked>
+                  8</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-16">
+                  16</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-24">
+                  24</label>
               </div>
             </div>
 
             <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
-              <button id="btn-dl-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Download Benchmark</button>
-              <button id="btn-dl-bench-stop" style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
-              <button id="btn-dl-bench-clear" style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear Results</button>
+              <button id="btn-dl-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Download
+                Benchmark</button>
+              <button id="btn-dl-bench-stop"
+                style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
+              <button id="btn-dl-bench-clear"
+                style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear
+                Results</button>
             </div>
 
             <div id="dl-bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
-            <progress id="dl-bench-progress" max="100" value="0" style="width:100%; display:none; margin-bottom:1rem;"></progress>
+            <progress id="dl-bench-progress" max="100" value="0"
+              style="width:100%; display:none; margin-bottom:1rem;"></progress>
 
             <div id="dl-bench-results" style="display:none;">
-              <table style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
+              <table
+                style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
                 <thead>
                   <tr style="border-bottom:1px solid #222; color:#888;">
                     <th style="text-align:left; padding:0.6rem 0.5rem; font-weight:500;">Method</th>
@@ -608,7 +704,8 @@
             <h2>My Objects</h2>
             <div class="row">
               <button id="btn-list-objects">Refresh List</button>
-              <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem" placeholder="Limit" />
+              <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem"
+                placeholder="Limit" />
             </div>
             <div class="output" id="list-status"></div>
             <div id="objects-list" style="margin-top:1rem; max-height:none; overflow-y:visible;">
@@ -654,691 +751,796 @@
       <!-- Panel: Explorer -->
       <div id="panel-explorer" class="viewport-panel internal-page has-net-bar" data-panel="explorer">
         <div class="internal-page-scroll">
-        <div class="net-bar"></div>
-        <!-- Shown when no coin networks are active -->
-        <div id="exp-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
-          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
-            <h2 style="color:var(--text-secondary,#888);">Explorer Unavailable</h2>
-            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Explorer.
-            </p>
+          <div class="net-bar"></div>
+          <!-- Shown when no coin networks are active -->
+          <div id="exp-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+            <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+              <h2 style="color:var(--text-secondary,#888);">Explorer Unavailable</h2>
+              <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+                Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Explorer.
+              </p>
+            </div>
           </div>
-        </div>
-        <div id="exp-main-content" class="internal-page-content" style="max-width:900px;">
+          <div id="exp-main-content" class="internal-page-content" style="max-width:900px;">
 
-          <!-- Explorer -->
-          <div class="panel-section">
-            <h2>Explorer</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Enter a block height, block ID, transaction ID, or address.
-            </p>
-            <div class="row">
-              <input id="exp-query" type="text" placeholder="Block height, block/tx ID (64 hex), or address (76 hex)" style="flex:1;">
-              <button id="exp-btn-lookup">Lookup</button>
-            </div>
-
-            <!-- Navigation / History -->
-            <div id="exp-nav" style="display:none; margin-top:0.75rem;">
-              <div class="row" style="align-items:center;">
-                <button id="exp-btn-back" disabled style="padding:0.3rem 0.6rem; font-size:0.8rem;">&#8592; Back</button>
-                <div id="exp-breadcrumbs" style="display:flex; gap:4px; flex-wrap:wrap; font-size:0.75rem;"></div>
+            <!-- Explorer -->
+            <div class="panel-section">
+              <h2>Explorer</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Enter a block height, block ID, transaction ID, or address.
+              </p>
+              <div class="row">
+                <input id="exp-query" type="text" placeholder="Block height, block/tx ID (64 hex), or address (76 hex)"
+                  style="flex:1;">
+                <button id="exp-btn-lookup">Lookup</button>
               </div>
-            </div>
 
-            <!-- Address results -->
-            <div id="exp-address-result" style="display:none;">
-              <div id="exp-balance-box" style="display:none; margin-top:1rem; padding:1rem; background:#0d0d0d; border:2px solid #10b981; border-radius:8px; text-align:center;">
-                <div style="color:#888; font-size:0.85rem;">Balance</div>
-                <div id="exp-balance-value" style="color:#10b981; font-size:1.8rem; margin-top:4px;">—</div>
-                <div style="margin-top:4px; font-size:0.8rem;">
-                  <span style="color:#4ade80;" id="exp-received">+0 SC</span>
-                  <span style="color:#888;"> / </span>
-                  <span style="color:#f87171;" id="exp-sent">-0 SC</span>
+              <!-- Navigation / History -->
+              <div id="exp-nav" style="display:none; margin-top:0.75rem;">
+                <div class="row" style="align-items:center;">
+                  <button id="exp-btn-back" disabled style="padding:0.3rem 0.6rem; font-size:0.8rem;">&#8592;
+                    Back</button>
+                  <div id="exp-breadcrumbs" style="display:flex; gap:4px; flex-wrap:wrap; font-size:0.75rem;"></div>
                 </div>
-                <div id="exp-scan-meta" style="color:#666; font-size:0.75rem; margin-top:4px;"></div>
               </div>
-              <div id="exp-stats" style="display:none; margin-top:0.75rem; font-size:0.8rem; color:#888;">
-                <span id="exp-stat-summary"></span>
-                <button id="exp-btn-save-json" style="margin-left:0.75rem; padding:0.2rem 0.5rem; font-size:0.75rem;" title="Save address history to JSON">Save JSON</button>
-              </div>
-              <div id="exp-utxo-wrap" style="display:none; margin-top:0.75rem;">
-                <div id="exp-tabs" style="display:flex; gap:0; border-bottom:1px solid #2a2a2a;">
-                  <button class="exp-tab active" data-tab="history" style="padding:6px 16px; background:#151515; border:1px solid #2a2a2a; border-bottom:none; border-radius:6px 6px 0 0; color:#10b981; cursor:pointer; font-size:0.8rem;">History</button>
-                  <button class="exp-tab" data-tab="utxos" style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">UTXOs</button>
-                  <button class="exp-tab" data-tab="stats" style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">Stats</button>
+
+              <!-- Address results -->
+              <div id="exp-address-result" style="display:none;">
+                <div id="exp-balance-box"
+                  style="display:none; margin-top:1rem; padding:1rem; background:#0d0d0d; border:2px solid #10b981; border-radius:8px; text-align:center;">
+                  <div style="color:#888; font-size:0.85rem;">Balance</div>
+                  <div id="exp-balance-value" style="color:#10b981; font-size:1.8rem; margin-top:4px;">—</div>
+                  <div style="margin-top:4px; font-size:0.8rem;">
+                    <span style="color:#4ade80;" id="exp-received">+0 SC</span>
+                    <span style="color:#888;"> / </span>
+                    <span style="color:#f87171;" id="exp-sent">-0 SC</span>
+                  </div>
+                  <div id="exp-scan-meta" style="color:#666; font-size:0.75rem; margin-top:4px;"></div>
                 </div>
-                <div id="exp-tab-history" style="max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
-                  <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                    <thead>
-                      <tr style="background:#151515; position:sticky; top:0;">
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;"></th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">TxID</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody id="exp-history-body"></tbody>
-                  </table>
+                <div id="exp-stats" style="display:none; margin-top:0.75rem; font-size:0.8rem; color:#888;">
+                  <span id="exp-stat-summary"></span>
+                  <button id="exp-btn-save-json" style="margin-left:0.75rem; padding:0.2rem 0.5rem; font-size:0.75rem;"
+                    title="Save address history to JSON">Save JSON</button>
                 </div>
-                <div id="exp-tab-utxos" style="display:none; max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
-                  <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                    <thead>
-                      <tr style="background:#151515; position:sticky; top:0;">
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Output ID</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody id="exp-utxo-body"></tbody>
-                  </table>
+                <div id="exp-utxo-wrap" style="display:none; margin-top:0.75rem;">
+                  <div id="exp-tabs" style="display:flex; gap:0; border-bottom:1px solid #2a2a2a;">
+                    <button class="exp-tab active" data-tab="history"
+                      style="padding:6px 16px; background:#151515; border:1px solid #2a2a2a; border-bottom:none; border-radius:6px 6px 0 0; color:#10b981; cursor:pointer; font-size:0.8rem;">History</button>
+                    <button class="exp-tab" data-tab="utxos"
+                      style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">UTXOs</button>
+                    <button class="exp-tab" data-tab="stats"
+                      style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">Stats</button>
+                  </div>
+                  <div id="exp-tab-history"
+                    style="max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                      <thead>
+                        <tr style="background:#151515; position:sticky; top:0;">
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;"></th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">TxID</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
+                        </tr>
+                      </thead>
+                      <tbody id="exp-history-body"></tbody>
+                    </table>
+                  </div>
+                  <div id="exp-tab-utxos"
+                    style="display:none; max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                      <thead>
+                        <tr style="background:#151515; position:sticky; top:0;">
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Output ID</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
+                        </tr>
+                      </thead>
+                      <tbody id="exp-utxo-body"></tbody>
+                    </table>
+                  </div>
+                  <div id="exp-tab-stats"
+                    style="display:none; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px; padding:1rem; font-size:0.8rem;">
+                  </div>
                 </div>
-                <div id="exp-tab-stats" style="display:none; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px; padding:1rem; font-size:0.8rem;"></div>
+              </div>
+
+              <!-- Block/Transaction results -->
+              <div id="exp-tx-result" style="display:none; margin-top:0.75rem;">
+                <div id="exp-block-header"></div>
+                <div id="exp-block-txns"></div>
+                <div style="margin-top:0.75rem; text-align:right;">
+                  <button id="exp-btn-toggle-json" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Show Raw
+                    JSON</button>
+                </div>
+                <div id="exp-tx-json"
+                  style="display:none; margin-top:0.5rem; background:#0d0d0d; border:1px solid #222; border-radius:6px; padding:0.75rem; max-height:400px; overflow-y:auto; white-space:pre-wrap; font-size:0.75rem; color:#f59e0b;">
+                </div>
               </div>
             </div>
 
-            <!-- Block/Transaction results -->
-            <div id="exp-tx-result" style="display:none; margin-top:0.75rem;">
-              <div id="exp-block-header"></div>
-              <div id="exp-block-txns"></div>
-              <div style="margin-top:0.75rem; text-align:right;">
-                <button id="exp-btn-toggle-json" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Show Raw JSON</button>
+            <!-- Mempool -->
+            <div class="panel-section" id="exp-mempool-section">
+              <div class="row" style="justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Mempool</h2>
+                <div style="display:flex; align-items:center; gap:0.5rem;">
+                  <span id="exp-mempool-count" style="color:#888; font-size:0.8rem;">0 pending</span>
+                  <button id="exp-mempool-rebroadcast"
+                    style="font-size:0.75rem; padding:2px 8px; display:none;">Rebroadcast</button>
+                  <button id="exp-mempool-clear"
+                    style="font-size:0.75rem; padding:2px 8px; display:none;">Clear</button>
+                </div>
               </div>
-              <div id="exp-tx-json" style="display:none; margin-top:0.5rem; background:#0d0d0d; border:1px solid #222; border-radius:6px; padding:0.75rem; max-height:400px; overflow-y:auto; white-space:pre-wrap; font-size:0.75rem; color:#f59e0b;"></div>
+              <div id="exp-mempool-status" style="display:none; margin-top:0.4rem; font-size:0.78rem;"></div>
+              <div id="exp-mempool-body" style="margin-top:0.5rem; max-height:500px; overflow-y:auto;"></div>
             </div>
-          </div>
 
-          <!-- Mempool -->
-          <div class="panel-section" id="exp-mempool-section">
-            <div class="row" style="justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Mempool</h2>
-              <div style="display:flex; align-items:center; gap:0.5rem;">
-                <span id="exp-mempool-count" style="color:#888; font-size:0.8rem;">0 pending</span>
-                <button id="exp-mempool-rebroadcast" style="font-size:0.75rem; padding:2px 8px; display:none;">Rebroadcast</button>
-                <button id="exp-mempool-clear" style="font-size:0.75rem; padding:2px 8px; display:none;">Clear</button>
+            <!-- Attestations -->
+            <div class="panel-section" id="exp-attestation-section">
+              <h2>Attestations</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Search attestations by key (e.g. "HostAnnouncement") or by public key (64 hex chars).
+              </p>
+              <div class="row" style="gap:0.5rem;">
+                <input id="att-query" type="text" placeholder='Key string or pubkey hex (64 chars)' style="flex:1;">
+                <button id="att-btn-search">Search</button>
+              </div>
+              <div id="att-summary" style="display:none; margin-top:0.5rem; font-size:0.8rem; color:#888;"></div>
+              <div id="att-results"
+                style="display:none; margin-top:0.75rem; max-height:500px; overflow-y:auto; border:1px solid #2a2a2a; border-radius:6px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                  <thead>
+                    <tr style="background:#151515; position:sticky; top:0;">
+                      <th style="padding:6px 8px; text-align:left; color:#888;">Public Key</th>
+                      <th style="padding:6px 8px; text-align:right; color:#888;">Height</th>
+                      <th style="padding:6px 8px; text-align:left; color:#888;">Key</th>
+                      <th style="padding:6px 8px; text-align:left; color:#888;">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="att-results-body"></tbody>
+                </table>
               </div>
             </div>
-            <div id="exp-mempool-status" style="display:none; margin-top:0.4rem; font-size:0.78rem;"></div>
-            <div id="exp-mempool-body" style="margin-top:0.5rem; max-height:500px; overflow-y:auto;"></div>
-          </div>
 
-          <!-- Attestations -->
-          <div class="panel-section" id="exp-attestation-section">
-            <h2>Attestations</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Search attestations by key (e.g. "HostAnnouncement") or by public key (64 hex chars).
-            </p>
-            <div class="row" style="gap:0.5rem;">
-              <input id="att-query" type="text" placeholder='Key string or pubkey hex (64 chars)' style="flex:1;">
-              <button id="att-btn-search">Search</button>
+            <!-- Log -->
+            <div class="panel-section">
+              <div class="row" style="justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Log</h2>
+                <button id="exp-btn-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
+              </div>
+              <div id="exp-log" class="output"
+                style="margin-top:0.5rem; max-height:300px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
             </div>
-            <div id="att-summary" style="display:none; margin-top:0.5rem; font-size:0.8rem; color:#888;"></div>
-            <div id="att-results" style="display:none; margin-top:0.75rem; max-height:500px; overflow-y:auto; border:1px solid #2a2a2a; border-radius:6px;">
-              <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                <thead>
-                  <tr style="background:#151515; position:sticky; top:0;">
-                    <th style="padding:6px 8px; text-align:left; color:#888;">Public Key</th>
-                    <th style="padding:6px 8px; text-align:right; color:#888;">Height</th>
-                    <th style="padding:6px 8px; text-align:left; color:#888;">Key</th>
-                    <th style="padding:6px 8px; text-align:left; color:#888;">Value</th>
-                  </tr>
-                </thead>
-                <tbody id="att-results-body"></tbody>
-              </table>
-            </div>
-          </div>
 
-          <!-- Log -->
-          <div class="panel-section">
-            <div class="row" style="justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Log</h2>
-              <button id="exp-btn-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
-            </div>
-            <div id="exp-log" class="output" style="margin-top:0.5rem; max-height:300px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
-          </div>
-
-        </div><!-- /exp-main-content -->
+          </div><!-- /exp-main-content -->
         </div>
       </div><!-- /panel-explorer -->
 
       <!-- Panel: Wallet -->
       <div id="panel-wallet" class="viewport-panel internal-page has-net-bar" data-panel="wallet">
         <div class="internal-page-scroll">
-        <div class="net-bar"></div>
-        <!-- Shown when no coin networks are active -->
-        <div id="wallet-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
-          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
-            <h2 style="color:var(--text-secondary,#888);">Wallet Unavailable</h2>
-            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Wallet.
-            </p>
+          <div class="net-bar"></div>
+          <!-- Shown when no coin networks are active -->
+          <div id="wallet-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+            <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+              <h2 style="color:var(--text-secondary,#888);">Wallet Unavailable</h2>
+              <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+                Enable and sync at least one coin network in the <strong>Syncer</strong> page to use the Wallet.
+              </p>
+            </div>
           </div>
-        </div>
-        <div id="wallet-main-content" class="internal-page-content" style="max-width:900px;">
+          <div id="wallet-main-content" class="internal-page-content" style="max-width:900px;">
 
-          <!-- Wallet Status + Seed Management -->
-          <div class="panel-section">
-            <div class="row" style="align-items:center; gap:0.75rem;">
-              <h2 style="margin:0;">Wallet</h2>
-              <div id="wallet-status" class="wallet-status wallet-locked">
-                <span id="wallet-lock-icon">&#x1F512;</span>
-                <span id="wallet-status-text">Locked</span>
+            <!-- Wallet Status + Seed Management -->
+            <div class="panel-section">
+              <div class="row" style="align-items:center; gap:0.75rem;">
+                <h2 style="margin:0;">Wallet</h2>
+                <div id="wallet-status" class="wallet-status wallet-locked">
+                  <span id="wallet-lock-icon">&#x1F512;</span>
+                  <span id="wallet-status-text">Locked</span>
+                </div>
               </div>
+
+              <!-- Compact unlock UI (shown when saved seed exists) -->
+              <div id="wallet-unlock-ui" style="display:none; margin-top:0.75rem;">
+                <div class="row" style="gap:0.5rem; align-items:center;">
+                  <input id="wallet-password-unlock" type="password" placeholder="Password" style="flex:1;">
+                  <button id="btn-wallet-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+                </div>
+                <div style="margin-top:0.4rem;">
+                  <span id="btn-wallet-show-setup" style="color:#60a5fa; font-size:0.75rem; cursor:pointer;">New /
+                    Import</span>
+                </div>
+              </div>
+
+              <!-- Full setup UI (shown when no saved seed or user clicks New/Import) -->
+              <div id="wallet-setup-ui" style="display:none; margin-top:0.75rem;">
+                <textarea id="wallet-mnemonic" rows="3" placeholder="Enter or generate a BIP39 mnemonic phrase..."
+                  style="width:100%; resize:vertical; font-size:0.85rem;"></textarea>
+                <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
+                  <button id="btn-wallet-gen24" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Generate
+                    24-word</button>
+                  <button id="btn-wallet-gen12" style="font-size:0.8rem; padding:0.3rem 0.6rem;">12-word</button>
+                </div>
+                <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
+                  <input id="wallet-password" type="password" placeholder="Encryption password" style="flex:1;">
+                  <button id="btn-wallet-save" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Encrypt &amp;
+                    Save</button>
+                </div>
+              </div>
+
+              <!-- Active wallet controls (shown when unlocked) -->
+              <div id="wallet-active-ui" style="display:none; margin-top:0.75rem;">
+                <div class="row" style="gap:0.5rem;">
+                  <button id="btn-wallet-lock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Lock</button>
+                  <button id="btn-wallet-export" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Export Seed</button>
+                  <button id="btn-wallet-delete"
+                    style="font-size:0.8rem; padding:0.3rem 0.6rem; background:#991b1b; border-color:#7f1d1d; color:#fca5a5;">Delete
+                    Wallet</button>
+                </div>
+                <div id="wallet-seed-display" style="display:none; margin-top:0.5rem;">
+                  <textarea id="wallet-seed-phrase" readonly rows="3"
+                    style="width:100%; font-family:monospace; font-size:0.82rem; background:#111; color:#e2e8f0; border:1px solid #333; border-radius:4px; padding:0.5rem; resize:none;"></textarea>
+                  <button id="btn-wallet-hide-seed"
+                    style="font-size:0.75rem; padding:0.2rem 0.5rem; margin-top:0.3rem;">Hide Seed</button>
+                </div>
+              </div>
+
+              <!-- Wallet Scanner (shown when unlocked) -->
+              <div id="wallet-utxo-section"
+                style="display:none; margin-top:1.25rem; border-top:1px solid #2a2a2a; padding-top:1rem;">
+                <input id="wallet-account" type="hidden" value="0">
+                <div id="wallet-balance-box"
+                  style="display:none; padding:1rem; background:#0d0d0d; border:2px solid #10b981; border-radius:8px; text-align:center;">
+                  <div id="wallet-balance-value" style="color:#10b981; font-size:1.8rem; margin-top:4px;">—</div>
+                  <div style="margin-top:4px; font-size:0.8rem;">
+                    <span style="color:#4ade80;" id="wallet-received">+0 SC</span>
+                    <span style="color:#888;"> / </span>
+                    <span style="color:#f87171;" id="wallet-sent">-0 SC</span>
+                  </div>
+                  <div id="wallet-scan-meta" style="color:#666; font-size:0.75rem; margin-top:4px;"></div>
+                </div>
+
+                <!-- Stats -->
+                <div id="wallet-scan-stats" style="display:none; margin-top:0.75rem; font-size:0.8rem; color:#888;">
+                  <span id="wallet-stat-summary"></span>
+                  <button id="btn-wallet-save-json"
+                    style="margin-left:0.75rem; padding:0.2rem 0.5rem; font-size:0.75rem;"
+                    title="Save wallet history to JSON">Save JSON</button>
+                </div>
+
+                <!-- Tabbed Results -->
+                <div id="wallet-tab-wrap" style="display:none; margin-top:0.75rem;">
+                  <div id="wallet-tabs" style="display:flex; gap:0; border-bottom:1px solid #2a2a2a;">
+                    <button class="wscan-tab active" data-tab="history"
+                      style="padding:6px 16px; background:#151515; border:1px solid #2a2a2a; border-bottom:none; border-radius:6px 6px 0 0; color:#10b981; cursor:pointer; font-size:0.8rem;">History</button>
+                    <button class="wscan-tab" data-tab="utxos"
+                      style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">UTXOs</button>
+                    <button class="wscan-tab" data-tab="stats"
+                      style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">Stats</button>
+                  </div>
+                  <div id="wallet-tab-history"
+                    style="max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                      <thead>
+                        <tr style="background:#151515; position:sticky; top:0;">
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Addr</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;"></th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">TxID</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
+                        </tr>
+                      </thead>
+                      <tbody id="wallet-history-body"></tbody>
+                    </table>
+                  </div>
+                  <div id="wallet-tab-utxos"
+                    style="display:none; max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
+                      <thead>
+                        <tr style="background:#151515; position:sticky; top:0;">
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Addr</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Output ID</th>
+                          <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
+                        </tr>
+                      </thead>
+                      <tbody id="wallet-utxo-body"></tbody>
+                    </table>
+                  </div>
+                  <div id="wallet-tab-stats"
+                    style="display:none; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px; padding:1rem; font-size:0.8rem;">
+                  </div>
+                </div>
+
+              </div>
+
             </div>
 
-            <!-- Compact unlock UI (shown when saved seed exists) -->
-            <div id="wallet-unlock-ui" style="display:none; margin-top:0.75rem;">
+            <!-- Transaction Builder -->
+            <div id="wallet-txbuilder-section" class="panel-section" style="display:none;">
+              <h2>Transaction Builder</h2>
+
+              <!-- UTXO Selection -->
+              <div class="label">Select Inputs</div>
+              <div id="txb-utxo-list" class="txb-utxo-list">
+                <div style="padding:0.75rem; color:#666; font-size:0.8rem; text-align:center;">No UTXOs available. Scan
+                  wallet first.</div>
+              </div>
+              <div id="txb-selected-summary" style="margin-top:0.4rem; font-size:0.8rem; color:#888;">0 selected · 0 SC
+              </div>
+
+              <!-- Merkle Proofs -->
+              <div id="txb-proof-section"
+                style="margin-top:0.75rem; padding:0.5rem 0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-size:0.8rem; display:none;">
+                <span id="txb-proof-status" style="color:#888;">Merkle proofs not computed.</span>
+                <button id="txb-btn-compute-proofs"
+                  style="margin-left:0.5rem; font-size:0.75rem; padding:0.2rem 0.5rem;">Compute Proofs</button>
+              </div>
+
+              <!-- Outputs -->
+              <div class="label" style="margin-top:1rem;">Outputs</div>
+              <div id="txb-outputs"></div>
+              <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
+                <button id="txb-btn-add-output" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Add Output</button>
+                <button id="txb-btn-add-change" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Add Change</button>
+              </div>
+
+              <!-- Attestations -->
+              <div class="label" style="margin-top:1rem;">Attestations</div>
+              <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
+                <button id="txb-btn-att-private" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Private
+                  Manifest</button>
+                <input type="checkbox" id="txb-att-private" style="display:none;">
+              </div>
+              <div id="txb-attestation-section"
+                style="padding:0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; margin-top:0.5rem; display:none;">
+                <div id="txb-att-private-fields">
+                  <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
+                    <span style="color:#888; font-size:0.8rem;">Account:</span>
+                    <input id="txb-att-account" type="number" value="0" min="0" style="width:60px; font-size:0.8rem;">
+                  </div>
+                  <div style="margin-bottom:0.5rem;">
+                    <div class="label">Message</div>
+                    <input id="txb-att-url" type="text" placeholder="Text, URL, or sia:// link"
+                      style="width:100%; font-size:0.8rem;">
+                  </div>
+                  <div id="txb-att-info" style="font-size:0.75rem; color:#888;"></div>
+                </div>
+              </div>
+
+              <!-- Miner Fee -->
+              <div class="label" style="margin-top:1rem;">Miner Fee</div>
+              <div style="display:flex; gap:0.5rem; align-items:center;">
+                <input id="txb-miner-fee" type="text" value="0.01" placeholder="0" style="width:200px;">
+                <span style="color:#666; font-size:0.75rem;">SC</span>
+              </div>
+
+              <!-- Balance Summary -->
+              <div id="txb-balance-summary"
+                style="margin-top:1rem; font-size:0.8rem; padding:0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; display:none;">
+              </div>
+
+              <!-- Build Button -->
+              <button id="txb-btn-build" style="margin-top:0.75rem; padding:0.4rem 0.8rem; font-size:0.85rem;">Build
+                &amp; Sign Transaction</button>
+
+              <!-- Result -->
+              <div id="txb-result" style="display:none; margin-top:1rem;">
+                <div id="txb-txn-card"></div>
+                <div style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
+                  <button id="txb-btn-broadcast"
+                    style="padding:0.4rem 0.8rem; font-size:0.85rem; background:#10b981; color:#0a0a0a; font-weight:600; border:none; border-radius:4px; cursor:pointer;">Broadcast
+                    Transaction</button>
+                  <div style="display:flex; gap:0.5rem;">
+                    <button id="txb-btn-toggle-json" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Show Raw
+                      JSON</button>
+                    <button id="txb-btn-copy" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Copy JSON</button>
+                  </div>
+                </div>
+                <pre id="txb-txn-json"
+                  style="display:none; margin-top:0.5rem; max-height:400px; overflow-y:auto; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:0.75rem; color:#f59e0b; white-space:pre-wrap; word-break:break-all; font-size:0.75rem;"></pre>
+              </div>
+
+              <!-- Status -->
+              <div id="txb-status" style="margin-top:0.5rem; font-size:0.8rem; color:#888;"></div>
+            </div>
+
+            <!-- Address Derivation -->
+            <div id="wallet-derive-section" class="panel-section" style="display:none;">
+              <h2>Address Derivation</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Derive Sia V2 addresses from your seed. Path: <code
+                  style="color:#f59e0b;">m/44'/1991'/0'/0'/{index}'</code>
+              </p>
               <div class="row" style="gap:0.5rem; align-items:center;">
-                <input id="wallet-password-unlock" type="password" placeholder="Password" style="flex:1;">
-                <button id="btn-wallet-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+                <span style="color:#888; font-size:0.85rem;">Start:</span>
+                <input id="wallet-derive-start" type="number" value="0" min="0" style="width:60px;">
+                <span style="color:#888; font-size:0.85rem;">Count:</span>
+                <input id="wallet-derive-count" type="number" value="5" min="1" max="50" style="width:60px;">
+                <button id="btn-wallet-derive" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Derive</button>
               </div>
-              <div style="margin-top:0.4rem;">
-                <span id="btn-wallet-show-setup" style="color:#60a5fa; font-size:0.75rem; cursor:pointer;">New / Import</span>
+              <div id="wallet-addresses" style="margin-top:0.75rem; max-height:400px; overflow-y:auto;"></div>
+            </div>
+
+            <!-- Scan Log -->
+            <div id="wallet-log-section" class="panel-section" style="display:none;">
+              <div class="row" style="justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Scan Log</h2>
+                <button id="btn-wallet-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
               </div>
+              <div id="wallet-scan-log" class="output"
+                style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
             </div>
 
-            <!-- Full setup UI (shown when no saved seed or user clicks New/Import) -->
-            <div id="wallet-setup-ui" style="display:none; margin-top:0.75rem;">
-              <textarea id="wallet-mnemonic" rows="3" placeholder="Enter or generate a BIP39 mnemonic phrase..." style="width:100%; resize:vertical; font-size:0.85rem;"></textarea>
-              <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-                <button id="btn-wallet-gen24" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Generate 24-word</button>
-                <button id="btn-wallet-gen12" style="font-size:0.8rem; padding:0.3rem 0.6rem;">12-word</button>
-              </div>
-              <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-                <input id="wallet-password" type="password" placeholder="Encryption password" style="flex:1;">
-                <button id="btn-wallet-save" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Encrypt &amp; Save</button>
-              </div>
-            </div>
-
-            <!-- Active wallet controls (shown when unlocked) -->
-            <div id="wallet-active-ui" style="display:none; margin-top:0.75rem;">
-              <div class="row" style="gap:0.5rem;">
-                <button id="btn-wallet-lock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Lock</button>
-                <button id="btn-wallet-export" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Export Seed</button>
-                <button id="btn-wallet-delete" style="font-size:0.8rem; padding:0.3rem 0.6rem; background:#991b1b; border-color:#7f1d1d; color:#fca5a5;">Delete Wallet</button>
-              </div>
-              <div id="wallet-seed-display" style="display:none; margin-top:0.5rem;">
-                <textarea id="wallet-seed-phrase" readonly rows="3" style="width:100%; font-family:monospace; font-size:0.82rem; background:#111; color:#e2e8f0; border:1px solid #333; border-radius:4px; padding:0.5rem; resize:none;"></textarea>
-                <button id="btn-wallet-hide-seed" style="font-size:0.75rem; padding:0.2rem 0.5rem; margin-top:0.3rem;">Hide Seed</button>
-              </div>
-            </div>
-
-            <!-- Wallet Scanner (shown when unlocked) -->
-            <div id="wallet-utxo-section" style="display:none; margin-top:1.25rem; border-top:1px solid #2a2a2a; padding-top:1rem;">
-              <input id="wallet-account" type="hidden" value="0">
-              <div id="wallet-balance-box" style="display:none; padding:1rem; background:#0d0d0d; border:2px solid #10b981; border-radius:8px; text-align:center;">
-                <div id="wallet-balance-value" style="color:#10b981; font-size:1.8rem; margin-top:4px;">—</div>
-                <div style="margin-top:4px; font-size:0.8rem;">
-                  <span style="color:#4ade80;" id="wallet-received">+0 SC</span>
-                  <span style="color:#888;"> / </span>
-                  <span style="color:#f87171;" id="wallet-sent">-0 SC</span>
-                </div>
-                <div id="wallet-scan-meta" style="color:#666; font-size:0.75rem; margin-top:4px;"></div>
-              </div>
-
-              <!-- Stats -->
-              <div id="wallet-scan-stats" style="display:none; margin-top:0.75rem; font-size:0.8rem; color:#888;">
-                <span id="wallet-stat-summary"></span>
-                <button id="btn-wallet-save-json" style="margin-left:0.75rem; padding:0.2rem 0.5rem; font-size:0.75rem;" title="Save wallet history to JSON">Save JSON</button>
-              </div>
-
-              <!-- Tabbed Results -->
-              <div id="wallet-tab-wrap" style="display:none; margin-top:0.75rem;">
-                <div id="wallet-tabs" style="display:flex; gap:0; border-bottom:1px solid #2a2a2a;">
-                  <button class="wscan-tab active" data-tab="history" style="padding:6px 16px; background:#151515; border:1px solid #2a2a2a; border-bottom:none; border-radius:6px 6px 0 0; color:#10b981; cursor:pointer; font-size:0.8rem;">History</button>
-                  <button class="wscan-tab" data-tab="utxos" style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">UTXOs</button>
-                  <button class="wscan-tab" data-tab="stats" style="padding:6px 16px; background:#0a0a0a; border:1px solid #1a1a1a; border-bottom:none; border-radius:6px 6px 0 0; color:#888; cursor:pointer; font-size:0.8rem;">Stats</button>
-                </div>
-                <div id="wallet-tab-history" style="max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
-                  <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                    <thead>
-                      <tr style="background:#151515; position:sticky; top:0;">
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Addr</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;"></th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">TxID</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody id="wallet-history-body"></tbody>
-                  </table>
-                </div>
-                <div id="wallet-tab-utxos" style="display:none; max-height:400px; overflow-y:auto; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px;">
-                  <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                    <thead>
-                      <tr style="background:#151515; position:sticky; top:0;">
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Height</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Addr</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Amount</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Output ID</th>
-                        <th style="padding:6px 8px; text-align:left; color:#888;">Source</th>
-                      </tr>
-                    </thead>
-                    <tbody id="wallet-utxo-body"></tbody>
-                  </table>
-                </div>
-                <div id="wallet-tab-stats" style="display:none; border:1px solid #2a2a2a; border-top:none; border-radius:0 0 6px 6px; padding:1rem; font-size:0.8rem;"></div>
-              </div>
-
-            </div>
-
-          </div>
-
-          <!-- Transaction Builder -->
-          <div id="wallet-txbuilder-section" class="panel-section" style="display:none;">
-            <h2>Transaction Builder</h2>
-
-            <!-- UTXO Selection -->
-            <div class="label">Select Inputs</div>
-            <div id="txb-utxo-list" class="txb-utxo-list">
-              <div style="padding:0.75rem; color:#666; font-size:0.8rem; text-align:center;">No UTXOs available. Scan wallet first.</div>
-            </div>
-            <div id="txb-selected-summary" style="margin-top:0.4rem; font-size:0.8rem; color:#888;">0 selected · 0 SC</div>
-
-            <!-- Merkle Proofs -->
-            <div id="txb-proof-section" style="margin-top:0.75rem; padding:0.5rem 0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-size:0.8rem; display:none;">
-              <span id="txb-proof-status" style="color:#888;">Merkle proofs not computed.</span>
-              <button id="txb-btn-compute-proofs" style="margin-left:0.5rem; font-size:0.75rem; padding:0.2rem 0.5rem;">Compute Proofs</button>
-            </div>
-
-            <!-- Outputs -->
-            <div class="label" style="margin-top:1rem;">Outputs</div>
-            <div id="txb-outputs"></div>
-            <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
-              <button id="txb-btn-add-output" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Add Output</button>
-              <button id="txb-btn-add-change" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Add Change</button>
-            </div>
-
-            <!-- Attestations -->
-            <div class="label" style="margin-top:1rem;">Attestations</div>
-            <div style="display:flex; gap:0.5rem; margin-top:0.25rem;">
-              <button id="txb-btn-att-private" style="font-size:0.8rem; padding:0.3rem 0.6rem;">+ Private Manifest</button>
-              <input type="checkbox" id="txb-att-private" style="display:none;">
-            </div>
-            <div id="txb-attestation-section" style="padding:0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; margin-top:0.5rem; display:none;">
-              <div id="txb-att-private-fields">
-                <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:0.5rem;">
-                  <span style="color:#888; font-size:0.8rem;">Account:</span>
-                  <input id="txb-att-account" type="number" value="0" min="0" style="width:60px; font-size:0.8rem;">
-                </div>
-                <div style="margin-bottom:0.5rem;">
-                  <div class="label">Message</div>
-                  <input id="txb-att-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%; font-size:0.8rem;">
-                </div>
-                <div id="txb-att-info" style="font-size:0.75rem; color:#888;"></div>
-              </div>
-            </div>
-
-            <!-- Miner Fee -->
-            <div class="label" style="margin-top:1rem;">Miner Fee</div>
-            <div style="display:flex; gap:0.5rem; align-items:center;">
-              <input id="txb-miner-fee" type="text" value="0.01" placeholder="0" style="width:200px;">
-              <span style="color:#666; font-size:0.75rem;">SC</span>
-            </div>
-
-            <!-- Balance Summary -->
-            <div id="txb-balance-summary" style="margin-top:1rem; font-size:0.8rem; padding:0.6rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; display:none;"></div>
-
-            <!-- Build Button -->
-            <button id="txb-btn-build" style="margin-top:0.75rem; padding:0.4rem 0.8rem; font-size:0.85rem;">Build &amp; Sign Transaction</button>
-
-            <!-- Result -->
-            <div id="txb-result" style="display:none; margin-top:1rem;">
-              <div id="txb-txn-card"></div>
-              <div style="margin-top:0.75rem; display:flex; justify-content:space-between; align-items:center;">
-                <button id="txb-btn-broadcast" style="padding:0.4rem 0.8rem; font-size:0.85rem; background:#10b981; color:#0a0a0a; font-weight:600; border:none; border-radius:4px; cursor:pointer;">Broadcast Transaction</button>
-                <div style="display:flex; gap:0.5rem;">
-                  <button id="txb-btn-toggle-json" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Show Raw JSON</button>
-                  <button id="txb-btn-copy" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Copy JSON</button>
-                </div>
-              </div>
-              <pre id="txb-txn-json" style="display:none; margin-top:0.5rem; max-height:400px; overflow-y:auto; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; padding:0.75rem; color:#f59e0b; white-space:pre-wrap; word-break:break-all; font-size:0.75rem;"></pre>
-            </div>
-
-            <!-- Status -->
-            <div id="txb-status" style="margin-top:0.5rem; font-size:0.8rem; color:#888;"></div>
-          </div>
-
-          <!-- Address Derivation -->
-          <div id="wallet-derive-section" class="panel-section" style="display:none;">
-            <h2>Address Derivation</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Derive Sia V2 addresses from your seed. Path: <code style="color:#f59e0b;">m/44'/1991'/0'/0'/{index}'</code>
-            </p>
-            <div class="row" style="gap:0.5rem; align-items:center;">
-              <span style="color:#888; font-size:0.85rem;">Start:</span>
-              <input id="wallet-derive-start" type="number" value="0" min="0" style="width:60px;">
-              <span style="color:#888; font-size:0.85rem;">Count:</span>
-              <input id="wallet-derive-count" type="number" value="5" min="1" max="50" style="width:60px;">
-              <button id="btn-wallet-derive" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Derive</button>
-            </div>
-            <div id="wallet-addresses" style="margin-top:0.75rem; max-height:400px; overflow-y:auto;"></div>
-          </div>
-
-          <!-- Scan Log -->
-          <div id="wallet-log-section" class="panel-section" style="display:none;">
-            <div class="row" style="justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Scan Log</h2>
-              <button id="btn-wallet-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
-            </div>
-            <div id="wallet-scan-log" class="output" style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
-          </div>
-
-        </div><!-- /wallet-main-content -->
+          </div><!-- /wallet-main-content -->
         </div>
       </div><!-- /panel-wallet -->
 
       <!-- Panel: Manifest -->
       <div id="panel-manifest" class="viewport-panel internal-page has-net-bar" data-panel="manifest">
         <div class="internal-page-scroll">
-        <div class="net-bar"></div>
-        <!-- Shown when no coin networks are active -->
-        <div id="manifest-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
-          <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
-            <h2 style="color:var(--text-secondary,#888);">Manifest Unavailable</h2>
-            <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
-              Enable and sync at least one coin network in the <strong>Syncer</strong> page to use Manifests.
-            </p>
-          </div>
-        </div>
-        <div id="manifest-main-content" class="internal-page-content" style="max-width:900px;">
-
-          <!-- Wallet Status -->
-          <div class="panel-section">
-            <div class="row" style="align-items:center; gap:0.75rem;">
-              <h2 style="margin:0;">Manifest Pointers</h2>
-              <div id="mfst-wallet-status" style="font-size:0.8rem; color:#888;"></div>
+          <div class="net-bar"></div>
+          <!-- Shown when no coin networks are active -->
+          <div id="manifest-disabled-overlay" class="internal-page-content" style="max-width:900px; display:none;">
+            <div class="panel-section" style="text-align:center; padding:3rem 1rem;">
+              <h2 style="color:var(--text-secondary,#888);">Manifest Unavailable</h2>
+              <p style="color:var(--text-muted,#666); margin-top:0.5rem;">
+                Enable and sync at least one coin network in the <strong>Syncer</strong> page to use Manifests.
+              </p>
             </div>
-            <p style="color:#888; font-size:0.85rem; margin-top:0.5rem;">
-              Publish and resolve on-chain pointers using v2 attestations.
-              Each attestation stores a public key, key string, and value (URL, possibly encrypted).
-            </p>
-            <!-- Inline unlock (shown when wallet is locked) -->
-            <div id="mfst-unlock-ui" style="display:none; margin-top:0.75rem;">
-              <div class="row" style="gap:0.5rem; align-items:center;">
-                <input id="mfst-password" type="password" placeholder="Wallet password" style="flex:1;">
-                <button id="btn-mfst-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+          </div>
+          <div id="manifest-main-content" class="internal-page-content" style="max-width:900px;">
+
+            <!-- Wallet Status -->
+            <div class="panel-section">
+              <div class="row" style="align-items:center; gap:0.75rem;">
+                <h2 style="margin:0;">Manifest Pointers</h2>
+                <div id="mfst-wallet-status" style="font-size:0.8rem; color:#888;"></div>
               </div>
-              <div id="mfst-unlock-hint" style="margin-top:0.4rem; font-size:0.75rem; color:#666;">Unlock your wallet to use manifest pointers.</div>
-            </div>
-          </div>
-
-          <!-- Create -->
-          <div id="mfst-create-section" class="panel-section" style="display:none;">
-            <h2>Create Manifest Pointer</h2>
-            <div style="margin-bottom:0.75rem;">
-              <div class="label">Type</div>
-              <select id="mfst-type" style="width:200px;">
-                <option value="private">Private</option>
-                <option value="public">Public</option>
-                <option value="channel">Channel</option>
-                <option value="group">Group</option>
-              </select>
-            </div>
-            <div class="row" style="gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
-              <span style="color:#888; font-size:0.85rem;">Account:</span>
-              <input id="mfst-account" type="number" value="0" min="0" style="width:60px;">
-            </div>
-            <div id="mfst-pubkey-display" style="padding:0.5rem 0.75rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-family:monospace; font-size:0.75rem; word-break:break-all; color:#10b981; margin-bottom:0.75rem;"></div>
-            <div id="mfst-address-index-row" style="margin-bottom:0.75rem; display:none;">
-              <div class="label">Address Index</div>
-              <input id="mfst-address-index" type="number" value="0" min="0" style="width:80px;">
-              <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">Wallet key index for signing</span>
-            </div>
-            <div id="mfst-channel-fields" style="display:none; margin-bottom:0.75rem;">
-              <div class="label">Channel Name</div>
-              <input id="mfst-channel-name" type="text" placeholder="e.g. premium" style="width:200px; margin-bottom:0.5rem;">
-              <div class="label">Channel Key (32-byte hex)</div>
-              <input id="mfst-channel-key" type="text" placeholder="64 hex characters" style="width:100%;">
-            </div>
-            <div id="mfst-group-fields" style="display:none; margin-bottom:0.75rem;">
-              <div class="label">Group Secret (32-byte hex)</div>
-              <input id="mfst-group-secret" type="text" placeholder="64 hex characters" style="width:100%;">
-            </div>
-            <div style="margin-bottom:0.75rem;">
-              <div class="label">Message</div>
-              <input id="mfst-share-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%;">
-            </div>
-            <div style="margin-bottom:0.75rem;">
-              <div class="label">Miner Fee (hastings)</div>
-              <input id="mfst-miner-fee" type="text" value="0" placeholder="0" style="width:200px;">
-              <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">0 for testing</span>
-            </div>
-            <button id="btn-mfst-build" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Build Transaction</button>
-          </div>
-
-          <!-- Transaction Output -->
-          <div id="mfst-output-section" class="panel-section" style="display:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Transaction JSON</h2>
-              <button id="btn-mfst-copy" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Copy</button>
-            </div>
-            <p style="color:#888; font-size:0.85rem; margin:0.5rem 0;">
-              Unsigned transaction with signed attestation. Add siacoin inputs to cover the miner fee and sign them before broadcasting.
-            </p>
-            <pre id="mfst-txn-json" class="output" style="max-height:400px; overflow-y:auto; color:#f59e0b; white-space:pre-wrap; word-break:break-all;"></pre>
-          </div>
-
-          <!-- Resolve -->
-          <div id="mfst-resolve-section" class="panel-section" style="display:none;">
-            <h2>Resolve Manifest</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Look up attestations from the local attestation index, download the blocks, and extract manifest URLs.
-            </p>
-            <div style="margin-bottom:0.75rem;">
-              <div class="label">Resolve Type</div>
-              <select id="mfst-resolve-type" style="width:200px;">
-                <option value="private">Private (from seed)</option>
-                <option value="public">Public (by pubkey)</option>
-                <option value="channel">Channel (pubkey + key)</option>
-                <option value="group">Group (by secret)</option>
-              </select>
-            </div>
-            <div id="mfst-resolve-pubkey-row" style="margin-bottom:0.75rem; display:none;">
-              <div class="label">Publisher Public Key (ed25519:hex)</div>
-              <input id="mfst-resolve-pubkey" type="text" placeholder="ed25519:abcd1234..." style="width:100%;">
-            </div>
-            <div id="mfst-resolve-channel-fields" style="display:none; margin-bottom:0.75rem;">
-              <div class="label">Channel Name</div>
-              <input id="mfst-resolve-channel-name" type="text" placeholder="e.g. premium" style="width:200px; margin-bottom:0.5rem;">
-              <div class="label">Channel Key (32-byte hex)</div>
-              <input id="mfst-resolve-channel-key" type="text" placeholder="64 hex characters" style="width:100%;">
-            </div>
-            <div id="mfst-resolve-group-fields" style="display:none; margin-bottom:0.75rem;">
-              <div class="label">Group Secret (32-byte hex)</div>
-              <input id="mfst-resolve-group-secret" type="text" placeholder="64 hex characters" style="width:100%;">
-            </div>
-            <button id="btn-mfst-resolve" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Resolve</button>
-            <div id="mfst-resolve-results" style="margin-top:0.75rem; display:none;">
-              <div class="label">Results</div>
-              <div id="mfst-resolve-body" style="padding:0.75rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-size:0.8rem; max-height:300px; overflow-y:auto;"></div>
-            </div>
-          </div>
-
-          <!-- Backup & Restore -->
-          <div id="mfst-backup-section" class="panel-section" style="display:none;">
-            <h2>Backup & Restore</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Upload sync data to Sia or restore from a share URL or on-chain manifest.
-            </p>
-
-            <!-- Backup -->
-            <div style="margin-bottom:1rem;">
-              <div class="label">Backup</div>
-              <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">Upload the active network's sync data to Sia. Returns a share URL you can use to restore on any device.</p>
-              <button id="btn-mfst-backup" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Backup to Sia</button>
-            </div>
-            <div id="mfst-backup-result" style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
-              <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your backup):</div>
-              <div id="mfst-backup-share-url" style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;" title="Click to copy"></div>
-              <div style="margin-top:0.5rem;">
-                <button id="btn-mfst-copy-url" style="font-size:0.75rem; padding:0.25rem 0.5rem;">Copy URL</button>
-                <button id="btn-mfst-save-onchain" style="font-size:0.75rem; padding:0.25rem 0.5rem; margin-left:0.25rem;">Save on-chain with manifest pointer</button>
+              <p style="color:#888; font-size:0.85rem; margin-top:0.5rem;">
+                Publish and resolve on-chain pointers using v2 attestations.
+                Each attestation stores a public key, key string, and value (URL, possibly encrypted).
+              </p>
+              <!-- Inline unlock (shown when wallet is locked) -->
+              <div id="mfst-unlock-ui" style="display:none; margin-top:0.75rem;">
+                <div class="row" style="gap:0.5rem; align-items:center;">
+                  <input id="mfst-password" type="password" placeholder="Wallet password" style="flex:1;">
+                  <button id="btn-mfst-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+                </div>
+                <div id="mfst-unlock-hint" style="margin-top:0.4rem; font-size:0.75rem; color:#666;">Unlock your wallet
+                  to use manifest pointers.</div>
               </div>
             </div>
 
-            <!-- Restore -->
-            <div style="margin-bottom:0.75rem;">
-              <div class="label">Restore</div>
-              <div style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0 0.5rem;">
-                <select id="mfst-restore-mode" style="font-size:0.85rem; padding:0.3rem 0.5rem;">
-                  <option value="url">From share URL</option>
-                  <option value="manifest">From on-chain manifest</option>
+            <!-- Create -->
+            <div id="mfst-create-section" class="panel-section" style="display:none;">
+              <h2>Create Manifest Pointer</h2>
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Type</div>
+                <select id="mfst-type" style="width:200px;">
+                  <option value="private">Private</option>
+                  <option value="public">Public</option>
+                  <option value="channel">Channel</option>
+                  <option value="group">Group</option>
                 </select>
-                <button id="btn-mfst-restore" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Restore</button>
               </div>
-              <input id="mfst-restore-url" type="text" placeholder="sia://app.sia.storage/objects/.../shared?..." style="width:100%; font-size:0.85rem; margin-bottom:0.5rem; display:block;">
+              <div class="row" style="gap:0.5rem; align-items:center; margin-bottom:0.75rem;">
+                <span style="color:#888; font-size:0.85rem;">Account:</span>
+                <input id="mfst-account" type="number" value="0" min="0" style="width:60px;">
+              </div>
+              <div id="mfst-pubkey-display"
+                style="padding:0.5rem 0.75rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-family:monospace; font-size:0.75rem; word-break:break-all; color:#10b981; margin-bottom:0.75rem;">
+              </div>
+              <div id="mfst-address-index-row" style="margin-bottom:0.75rem; display:none;">
+                <div class="label">Address Index</div>
+                <input id="mfst-address-index" type="number" value="0" min="0" style="width:80px;">
+                <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">Wallet key index for signing</span>
+              </div>
+              <div id="mfst-channel-fields" style="display:none; margin-bottom:0.75rem;">
+                <div class="label">Channel Name</div>
+                <input id="mfst-channel-name" type="text" placeholder="e.g. premium"
+                  style="width:200px; margin-bottom:0.5rem;">
+                <div class="label">Channel Key (32-byte hex)</div>
+                <input id="mfst-channel-key" type="text" placeholder="64 hex characters" style="width:100%;">
+              </div>
+              <div id="mfst-group-fields" style="display:none; margin-bottom:0.75rem;">
+                <div class="label">Group Secret (32-byte hex)</div>
+                <input id="mfst-group-secret" type="text" placeholder="64 hex characters" style="width:100%;">
+              </div>
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Message</div>
+                <input id="mfst-share-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%;">
+              </div>
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Miner Fee (hastings)</div>
+                <input id="mfst-miner-fee" type="text" value="0" placeholder="0" style="width:200px;">
+                <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">0 for testing</span>
+              </div>
+              <button id="btn-mfst-build" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Build Transaction</button>
             </div>
 
-            <div id="mfst-backup-status" style="font-size:0.8rem; color:#888;"></div>
-            <progress id="mfst-backup-progress" style="width:100%; display:none; margin-top:0.5rem;"></progress>
-            <div id="mfst-txn-preview" style="margin-top:0.5rem;"></div>
-          </div>
-
-          <!-- Log -->
-          <div id="mfst-log-section" class="panel-section" style="display:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Log</h2>
-              <button id="btn-mfst-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
+            <!-- Transaction Output -->
+            <div id="mfst-output-section" class="panel-section" style="display:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Transaction JSON</h2>
+                <button id="btn-mfst-copy" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Copy</button>
+              </div>
+              <p style="color:#888; font-size:0.85rem; margin:0.5rem 0;">
+                Unsigned transaction with signed attestation. Add siacoin inputs to cover the miner fee and sign them
+                before broadcasting.
+              </p>
+              <pre id="mfst-txn-json" class="output"
+                style="max-height:400px; overflow-y:auto; color:#f59e0b; white-space:pre-wrap; word-break:break-all;"></pre>
             </div>
-            <div id="mfst-log" class="output" style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
-          </div>
 
-        </div><!-- /manifest-main-content -->
+            <!-- Resolve -->
+            <div id="mfst-resolve-section" class="panel-section" style="display:none;">
+              <h2>Resolve Manifest</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Look up attestations from the local attestation index, download the blocks, and extract manifest URLs.
+              </p>
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Resolve Type</div>
+                <select id="mfst-resolve-type" style="width:200px;">
+                  <option value="private">Private (from seed)</option>
+                  <option value="public">Public (by pubkey)</option>
+                  <option value="channel">Channel (pubkey + key)</option>
+                  <option value="group">Group (by secret)</option>
+                </select>
+              </div>
+              <div id="mfst-resolve-pubkey-row" style="margin-bottom:0.75rem; display:none;">
+                <div class="label">Publisher Public Key (ed25519:hex)</div>
+                <input id="mfst-resolve-pubkey" type="text" placeholder="ed25519:abcd1234..." style="width:100%;">
+              </div>
+              <div id="mfst-resolve-channel-fields" style="display:none; margin-bottom:0.75rem;">
+                <div class="label">Channel Name</div>
+                <input id="mfst-resolve-channel-name" type="text" placeholder="e.g. premium"
+                  style="width:200px; margin-bottom:0.5rem;">
+                <div class="label">Channel Key (32-byte hex)</div>
+                <input id="mfst-resolve-channel-key" type="text" placeholder="64 hex characters" style="width:100%;">
+              </div>
+              <div id="mfst-resolve-group-fields" style="display:none; margin-bottom:0.75rem;">
+                <div class="label">Group Secret (32-byte hex)</div>
+                <input id="mfst-resolve-group-secret" type="text" placeholder="64 hex characters" style="width:100%;">
+              </div>
+              <button id="btn-mfst-resolve" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Resolve</button>
+              <div id="mfst-resolve-results" style="margin-top:0.75rem; display:none;">
+                <div class="label">Results</div>
+                <div id="mfst-resolve-body"
+                  style="padding:0.75rem; background:#0d0d0d; border:1px solid #2a2a2a; border-radius:6px; font-size:0.8rem; max-height:300px; overflow-y:auto;">
+                </div>
+              </div>
+            </div>
+
+            <!-- Backup & Restore -->
+            <div id="mfst-backup-section" class="panel-section" style="display:none;">
+              <h2>Backup & Restore</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Upload sync data to Sia or restore from a share URL or on-chain manifest.
+              </p>
+
+              <!-- Backup -->
+              <div style="margin-bottom:1rem;">
+                <div class="label">Backup</div>
+                <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">Upload the active network's sync data
+                  to Sia. Returns a share URL you can use to restore on any device.</p>
+                <button id="btn-mfst-backup" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Backup to Sia</button>
+              </div>
+              <div id="mfst-backup-result"
+                style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
+                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your
+                  backup):</div>
+                <div id="mfst-backup-share-url"
+                  style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;" title="Click to copy">
+                </div>
+                <div style="margin-top:0.5rem;">
+                  <button id="btn-mfst-copy-url" style="font-size:0.75rem; padding:0.25rem 0.5rem;">Copy URL</button>
+                  <button id="btn-mfst-save-onchain"
+                    style="font-size:0.75rem; padding:0.25rem 0.5rem; margin-left:0.25rem;">Save on-chain with manifest
+                    pointer</button>
+                </div>
+              </div>
+
+              <!-- Restore -->
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Restore</div>
+                <div style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0 0.5rem;">
+                  <select id="mfst-restore-mode" style="font-size:0.85rem; padding:0.3rem 0.5rem;">
+                    <option value="url">From share URL</option>
+                    <option value="manifest">From on-chain manifest</option>
+                  </select>
+                  <button id="btn-mfst-restore" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Restore</button>
+                </div>
+                <input id="mfst-restore-url" type="text" placeholder="sia://app.sia.storage/objects/.../shared?..."
+                  style="width:100%; font-size:0.85rem; margin-bottom:0.5rem; display:block;">
+              </div>
+
+              <div id="mfst-backup-status" style="font-size:0.8rem; color:#888;"></div>
+              <progress id="mfst-backup-progress" style="width:100%; display:none; margin-top:0.5rem;"></progress>
+              <div id="mfst-txn-preview" style="margin-top:0.5rem;"></div>
+            </div>
+
+            <!-- Log -->
+            <div id="mfst-log-section" class="panel-section" style="display:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Log</h2>
+                <button id="btn-mfst-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
+              </div>
+              <div id="mfst-log" class="output"
+                style="margin-top:0.5rem; max-height:200px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
+            </div>
+
+          </div><!-- /manifest-main-content -->
         </div>
       </div><!-- /panel-manifest -->
 
       <!-- Panel: Syncer Config -->
       <div id="panel-syncer-config" class="viewport-panel internal-page has-net-bar" data-panel="syncer-config">
         <div class="internal-page-scroll">
-        <div class="net-bar"></div>
-        <div class="internal-page-content" style="max-width:900px;">
+          <div class="net-bar"></div>
+          <div class="internal-page-content" style="max-width:900px;">
 
-          <!-- Connection Config -->
-          <div class="panel-section">
-            <h2>Syncer</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
-              Connect to a Sia P2P node to sync block headers, filters, and transaction index in the background.
-            </p>
+            <!-- Connection Config -->
+            <div class="panel-section">
+              <h2>Syncer</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
+                Connect to a Sia P2P node to sync block headers, filters, and transaction index in the background.
+              </p>
 
-            <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
-              <div>
-                <div class="label">Network</div>
-                <select id="sc-network">
-                  <option value="mainnet">Mainnet</option>
-                  <option value="mainnet_v2">V2-only</option>
-                  <option value="zen">Zen Testnet</option>
-                </select>
+              <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
+                <div>
+                  <div class="label">Network</div>
+                  <select id="sc-network">
+                    <option value="mainnet">Mainnet</option>
+                    <option value="mainnet_v2">V2-only</option>
+                    <option value="zen">Zen Testnet</option>
+                  </select>
+                </div>
+                <div style="flex:1; min-width:250px;">
+                  <div class="label">Peer URL</div>
+                  <input id="sc-peer-url" type="text" placeholder="https://host:9984/sia/syncer" style="width:100%;">
+                </div>
+                <div style="min-width:200px;">
+                  <div class="label">Cert Hash (optional)</div>
+                  <input id="sc-cert-hash" type="text" placeholder="For self-signed certs" style="width:100%;">
+                </div>
               </div>
-              <div style="flex:1; min-width:250px;">
-                <div class="label">Peer URL</div>
-                <input id="sc-peer-url" type="text" placeholder="https://host:9984/sia/syncer" style="width:100%;">
-              </div>
-              <div style="min-width:200px;">
-                <div class="label">Cert Hash (optional)</div>
-                <input id="sc-cert-hash" type="text" placeholder="For self-signed certs" style="width:100%;">
+
+              <div style="display:flex; align-items:center; gap:1rem; margin-top:1rem;">
+                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9rem; color:#ccc;">
+                  <input type="checkbox" id="sc-auto-sync"> Auto-sync in background
+                </label>
+                <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:#aaa;">
+                  Workers <input id="sc-num-workers" type="number" min="1" max="16" value="10"
+                    style="width:3rem; text-align:center;">
+                  <span class="info-tip">&#9432;<span class="info-tip-text">Number of parallel WASM workers for filter
+                      generation. More workers sync faster but each uses ~1–2 GB of memory.</span></span>
+                </label>
+                <button id="sc-btn-sync-now">Sync Now</button>
               </div>
             </div>
 
-            <div style="display:flex; align-items:center; gap:1rem; margin-top:1rem;">
-              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:0.9rem; color:#ccc;">
-                <input type="checkbox" id="sc-auto-sync"> Auto-sync in background
-              </label>
-              <label style="display:flex; align-items:center; gap:4px; font-size:0.85rem; color:#aaa;">
-                Workers <input id="sc-num-workers" type="number" min="1" max="16" value="10" style="width:3rem; text-align:center;">
-                <span class="info-tip">&#9432;<span class="info-tip-text">Number of parallel WASM workers for filter generation. More workers sync faster but each uses ~1–2 GB of memory.</span></span>
-              </label>
-              <button id="sc-btn-sync-now">Sync Now</button>
+            <!-- Sync Status (all networks) -->
+            <div class="panel-section">
+              <h2>Status</h2>
+              <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
+                <div id="sc-net-status-mainnet" class="sc-net-status-card">
+                  <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
+                    <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
+                    <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">Mainnet</span>
+                    <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
+                  </div>
+                  <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;">
+                  </div>
+                  <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off
+                  </div>
+                  <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
+                    <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity
+                          index built from block headers</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs
+                          to block heights for fast lookup</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction
+                          outputs by address prefix</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public
+                          keys to attestation entries</span></span></span>
+                  </div>
+                  <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
+                </div>
+                <div id="sc-net-status-mainnet_v2" class="sc-net-status-card">
+                  <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
+                    <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
+                    <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">V2-only</span>
+                    <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
+                  </div>
+                  <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;">
+                  </div>
+                  <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off
+                  </div>
+                  <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
+                    <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity
+                          index built from block headers</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs
+                          to block heights for fast lookup</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction
+                          outputs by address prefix</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public
+                          keys to attestation entries</span></span></span>
+                  </div>
+                  <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
+                </div>
+                <div id="sc-net-status-zen" class="sc-net-status-card">
+                  <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
+                    <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
+                    <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">Zen</span>
+                    <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
+                  </div>
+                  <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;">
+                  </div>
+                  <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off
+                  </div>
+                  <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
+                    <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity
+                          index built from block headers</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs
+                          to block heights for fast lookup</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction
+                          outputs by address prefix</span></span></span>
+                    <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span
+                        class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public
+                          keys to attestation entries</span></span></span>
+                  </div>
+                  <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
+                </div>
+              </div>
             </div>
+
+            <!-- Data Management -->
+            <div class="panel-section">
+              <h2>Data Management</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Clear cached sync data for the selected network. Useful if data becomes corrupted or you want to re-sync
+                from scratch.
+              </p>
+              <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem;">
+                <button id="sc-btn-rebuild-filters">Rebuild Filters</button>
+                <button id="sc-btn-rebuild-txindex">Rebuild TxIndex</button>
+                <button id="sc-btn-rebuild-utxoindex">Rebuild UTXO Index</button>
+              </div>
+              <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                <button id="sc-btn-clear-filters">Clear Filters</button>
+                <button id="sc-btn-clear-txindex">Clear TX Index</button>
+                <button id="sc-btn-clear-utxoindex">Clear UTXO Index</button>
+                <button id="sc-btn-clear-all" style="background:#991b1b;">Reset Network</button>
+              </div>
+              <div id="sc-clear-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
+            </div>
+
+            <!-- Sync Log -->
+            <div class="panel-section">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h2 style="margin:0;">Sync Log</h2>
+                <button id="sc-btn-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
+              </div>
+              <div id="sc-log" class="output"
+                style="margin-top:0.5rem; height:400px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
+            </div>
+
           </div>
-
-          <!-- Sync Status (all networks) -->
-          <div class="panel-section">
-            <h2>Status</h2>
-            <div style="display:flex; gap:1.5rem; flex-wrap:wrap;">
-              <div id="sc-net-status-mainnet" class="sc-net-status-card">
-                <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
-                  <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
-                  <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">Mainnet</span>
-                  <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
-                </div>
-                <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;"></div>
-                <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off</div>
-                <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
-                  <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity index built from block headers</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs to block heights for fast lookup</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction outputs by address prefix</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public keys to attestation entries</span></span></span>
-                </div>
-                <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
-              </div>
-              <div id="sc-net-status-mainnet_v2" class="sc-net-status-card">
-                <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
-                  <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
-                  <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">V2-only</span>
-                  <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
-                </div>
-                <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;"></div>
-                <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off</div>
-                <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
-                  <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity index built from block headers</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs to block heights for fast lookup</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction outputs by address prefix</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public keys to attestation entries</span></span></span>
-                </div>
-                <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
-              </div>
-              <div id="sc-net-status-zen" class="sc-net-status-card">
-                <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
-                  <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
-                  <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">Zen</span>
-                  <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
-                </div>
-                <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;"></div>
-                <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off</div>
-                <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
-                  <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity index built from block headers</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs to block heights for fast lookup</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction outputs by address prefix</span></span></span>
-                  <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public keys to attestation entries</span></span></span>
-                </div>
-                <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Data Management -->
-          <div class="panel-section">
-            <h2>Data Management</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-              Clear cached sync data for the selected network. Useful if data becomes corrupted or you want to re-sync from scratch.
-            </p>
-            <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.75rem;">
-              <button id="sc-btn-rebuild-filters">Rebuild Filters</button>
-              <button id="sc-btn-rebuild-txindex">Rebuild TxIndex</button>
-              <button id="sc-btn-rebuild-utxoindex">Rebuild UTXO Index</button>
-            </div>
-            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-              <button id="sc-btn-clear-filters">Clear Filters</button>
-              <button id="sc-btn-clear-txindex">Clear TX Index</button>
-              <button id="sc-btn-clear-utxoindex">Clear UTXO Index</button>
-              <button id="sc-btn-clear-all" style="background:#991b1b;">Reset Network</button>
-            </div>
-            <div id="sc-clear-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
-          </div>
-
-          <!-- Sync Log -->
-          <div class="panel-section">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-              <h2 style="margin:0;">Sync Log</h2>
-              <button id="sc-btn-clear-log" style="padding:0.2rem 0.5rem; font-size:0.75rem;">Clear</button>
-            </div>
-            <div id="sc-log" class="output" style="margin-top:0.5rem; height:400px; overflow-y:auto; font-size:0.8rem; line-height:1.6;"></div>
-          </div>
-
-        </div>
         </div>
       </div><!-- /panel-syncer-config -->
 
@@ -1352,7 +1554,8 @@
       <span class="status-dot" id="sync-height-dot" style="display:none;"></span>
       <span id="sync-height-indicator" style="cursor:pointer; display:none;" title="Click to open Syncer"></span>
       <span style="flex:1;"></span>
-      <span id="iframe-status" style="color:#888; font-size:0.75rem; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+      <span id="iframe-status"
+        style="color:#888; font-size:0.75rem; max-width:60%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
     </div>
 
   </div><!-- /app -->
@@ -1398,7 +1601,7 @@
       compute_utxo_proofs, v2_output_id, attestation_key_hash,
       set_cached_header_ids,
     } from './pkg/syncer_wasm.js';
-        import { init as chainInit, onChange as chainOnChange, isSyncing, getSyncState, getEnabledNetworks, getNetworkConfig, getGenesisHex, getFilterUrl, getTxindexUrl, getUtxoIndexUrl, getAttestationIndexUrl, getActiveNetwork, setActiveNetwork, getRelayState, getMempool, getMempoolTransactions, onMempoolChange, addToMempool, clearMempool, loadAttestationEntries, exploreQuery as chainExploreQuery, exportNetworkData, importNetworkData, getStorageSizes, isReady } from './chain.js';
+    import { init as chainInit, onChange as chainOnChange, isSyncing, getSyncState, getEnabledNetworks, getNetworkConfig, getGenesisHex, getFilterUrl, getTxindexUrl, getUtxoIndexUrl, getAttestationIndexUrl, getActiveNetwork, setActiveNetwork, getRelayState, getMempool, getMempoolTransactions, onMempoolChange, addToMempool, clearMempool, loadAttestationEntries, exploreQuery as chainExploreQuery, exportNetworkData, importNetworkData, getStorageSizes, isReady } from './chain.js';
     import { initExplorer, explore as explorerQuery, exploreTransaction, buildTransactionCard, highlightMempoolTxn } from './explorer.js';
     import { initSyncerConfig } from './syncer-config.js';
     import { createNetSelector } from './net-selector.js';
@@ -1584,7 +1787,7 @@
           let fetched = 0;
           for (const h of uniqueHeights) {
             try {
-              const result = await chainExploreQuery(String(h), () => {});
+              const result = await chainExploreQuery(String(h), () => { });
               if (result?.type === 'block' && result.block?.v2?.transactions) {
                 // Collect all attestations from this block
                 const atts = [];
@@ -2559,24 +2762,24 @@
       // All routes from the Go server, with the method that triggers preflight
       const tests = [
         // CORS-enabled routes (should pass)
-        { method: 'POST',   path: '/auth/connect',                       expect: true },
-        { method: 'GET',    path: `/auth/connect/${fakeReqId}/status`,   expect: true },
-        { method: 'POST',   path: `/auth/connect/${fakeReqId}/register`, expect: true },
-        { method: 'GET',    path: '/auth/check',                         expect: true },
-        { method: 'GET',    path: '/hosts',                              expect: true },
-        { method: 'GET',    path: '/objects',                            expect: true },
-        { method: 'GET',    path: `/objects/${fakeId}`,                  expect: true },
-        { method: 'GET',    path: `/objects/${fakeId}/shared`,           expect: true },
-        { method: 'POST',   path: '/objects',                            expect: true },
-        { method: 'DELETE', path: `/objects/${fakeId}`,                  expect: true },
-        { method: 'GET',    path: '/slabs',                              expect: true },
-        { method: 'POST',   path: '/slabs',                              expect: true },
-        { method: 'POST',   path: '/slabs/prune',                        expect: true },
-        { method: 'GET',    path: `/slabs/${fakeId}`,                    expect: true },
-        { method: 'DELETE', path: `/slabs/${fakeId}`,                    expect: true },
+        { method: 'POST', path: '/auth/connect', expect: true },
+        { method: 'GET', path: `/auth/connect/${fakeReqId}/status`, expect: true },
+        { method: 'POST', path: `/auth/connect/${fakeReqId}/register`, expect: true },
+        { method: 'GET', path: '/auth/check', expect: true },
+        { method: 'GET', path: '/hosts', expect: true },
+        { method: 'GET', path: '/objects', expect: true },
+        { method: 'GET', path: `/objects/${fakeId}`, expect: true },
+        { method: 'GET', path: `/objects/${fakeId}/shared`, expect: true },
+        { method: 'POST', path: '/objects', expect: true },
+        { method: 'DELETE', path: `/objects/${fakeId}`, expect: true },
+        { method: 'GET', path: '/slabs', expect: true },
+        { method: 'POST', path: '/slabs', expect: true },
+        { method: 'POST', path: '/slabs/prune', expect: true },
+        { method: 'GET', path: `/slabs/${fakeId}`, expect: true },
+        { method: 'DELETE', path: `/slabs/${fakeId}`, expect: true },
         // CORS-disabled routes (should fail)
-        { method: 'GET',    path: `/auth/connect/${fakeReqId}`,          expect: false, note: 'CORS intentionally disabled (UI route)' },
-        { method: 'POST',   path: `/auth/connect/${fakeReqId}`,          expect: false, note: 'CORS intentionally disabled (UI route)' },
+        { method: 'GET', path: `/auth/connect/${fakeReqId}`, expect: false, note: 'CORS intentionally disabled (UI route)' },
+        { method: 'POST', path: `/auth/connect/${fakeReqId}`, expect: false, note: 'CORS intentionally disabled (UI route)' },
       ];
 
       btn.disabled = true;
@@ -3018,7 +3221,7 @@
         if (writable) {
           console.log('Using download path: File System Access API');
           const sdk = await connectSdk(status);
-          if (!sdk) { try { await writable.abort(); } catch (_) {} return; }
+          if (!sdk) { try { await writable.abort(); } catch (_) { } return; }
 
           status.innerHTML += '\nFetching object metadata...';
           const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
@@ -3034,7 +3237,7 @@
               (bytes) => { bytesDownloaded = bytes; }, undefined, workerStatus, hostStats);
             await writable.close();
           } catch (e) {
-            try { await writable.abort(); } catch (_) {}
+            try { await writable.abort(); } catch (_) { }
             throw e;
           }
         } else if (await getActiveServiceWorker()) {
@@ -3441,7 +3644,7 @@
               if (!sdk) continue;
               const ulOpts = new UploadOptions();
               ulOpts.maxInflight = inflight;
-              const upload = sdk.streamingUpload(file.size, ulOpts, () => {});
+              const upload = sdk.streamingUpload(file.size, ulOpts, () => { });
               const CHUNK_SIZE = 128 * 1024 * 1024;
               const data = new Uint8Array(await file.arrayBuffer());
               (async () => {
@@ -3661,7 +3864,7 @@
               });
             } else if (method === 'workers') {
               document.getElementById('cfg-download-workers').value = workers;
-              const dummyStatus = { set textContent(_) {}, set innerHTML(_) {} };
+              const dummyStatus = { set textContent(_) { }, set innerHTML(_) { } };
               const dummyProgress = document.createElement('progress');
               dummyProgress.style.display = 'none';
               const result = await parallelDownload(urlInput, dummyStatus, dummyProgress, null, workers);

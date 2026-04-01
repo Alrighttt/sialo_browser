@@ -1723,7 +1723,9 @@ chainOnChange(() => {
 
 // State accessors (read-only for importers via getters)
 export function getWalletEntropy() { return _walletEntropy; }
+export function setWalletEntropy(v) { _walletEntropy = v; }
 export function getWalletHasSaved() { return _walletHasSaved; }
+export function setWalletHasSaved(v) { _walletHasSaved = v; }
 export function getWalletLockSuspended() { return _walletLockSuspended; }
 export function setWalletLockSuspended(v) { _walletLockSuspended = v; }
 

@@ -12,6 +12,7 @@ import {
   pushTabNav, updateNavButtons, isNavInProgress, setNavInProgress,
   setBrowserView, setStreamingTabId, setLastBrowserUrl, setLoadContentInProgress,
   saveTabState, goBack, createTab, openOrActivateInternalTab,
+  activePanel
 } from './tabs.js';
 import {
   streamingDownload, parallelDownload, parallelDownloadViaSW,
@@ -407,7 +408,7 @@ async function handleSiaStreamRequest(url, sessionId, sourceTab) {
       if (aborted) return;
       aborted = true;
       worker.terminate();
-      try { mp4box.flush(); } catch (e) {}
+      try { mp4box.flush(); } catch (e) { }
     }
   };
 
@@ -1170,7 +1171,10 @@ async function loadContentWithAutoDetect() {
 }
 
 // Go button - checks pseudo-URLs first, then auto-detects
-document.getElementById('btn-go').addEventListener('click', handleChromeBarNavigation);
+// handleChromeBarNavigation is defined in index.html, so we need to reference it from window
+if (window.handleChromeBarNavigation) {
+  document.getElementById('btn-go').addEventListener('click', window.handleChromeBarNavigation);
+}
 
 // Back/Forward buttons
 document.getElementById('btn-back').addEventListener('click', goBack);
