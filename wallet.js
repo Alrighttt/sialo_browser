@@ -8,13 +8,13 @@ import {
   getActiveNetwork, getNetworkConfig, getGenesisHex,
   getFilterUrl, getUtxoIndexUrl,
   getMempool, getMempoolTransactions, onMempoolChange, addToMempool,
-  onChange as chainOnChange, getSyncState,
+  onChange as chainOnChange, getSyncState, loadFilters, syncNow,
 } from './chain.js';
 import { explore as explorerQuery, exploreTransaction, buildTransactionCard, highlightMempoolTxn } from './explorer.js';
 import {
   generate_mnemonic, mnemonic_to_entropy, entropy_to_mnemonic,
   derive_addresses, build_v2_transaction, broadcast_v2_transaction,
-  compute_utxo_proofs, v2_output_id,
+  compute_utxo_proofs, v2_output_id, build_private_manifest_transaction,
 } from './pkg/syncer_wasm.js';
 
 // ========== Wallet ==========
@@ -56,7 +56,9 @@ function walletScanLog(msg, type) {
     div.textContent = prefix + msg;
     el.appendChild(div);
   }
-  el.scrollTop = el.scrollHeight;
+  // Only auto-scroll if user is already near the bottom
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
 }
 
 function walletUpdateUI() {
@@ -773,6 +775,7 @@ function txbFormatSC(hastingsStr) {
 let _txbUtxos = []; // current unspent UTXOs available for selection
 let _txbBaseUtxos = []; // base UTXOs from wallet scan (before mempool adjustments)
 let _utxoProofs = {}; // outputId -> { leafIndex, merkleProof }
+const _txbUsedAttIndices = new Set(); // tracks attestation indices used in this session
 
 function txbPopulateUtxos(allUtxos) {
   // Store base UTXOs for mempool-aware refresh
@@ -952,6 +955,7 @@ async function txbComputeProofs() {
       config.peerUrl,
       genesisHex,
       (msg, cls) => {
+        console.log('[compute-proofs]', cls, msg);
         statusEl.textContent = msg;
         statusEl.style.color = cls === 'err' ? '#f87171' : cls === 'ok' ? '#4ade80' : '#f59e0b';
       },
@@ -1249,8 +1253,13 @@ async function txbBuildTransaction() {
         return 'mainnet';
       })();
       const attAccount = parseInt(document.getElementById('txb-att-account', 10).value) || 0;
-      // Find next unused manifest index by scanning the attestation index
-      const attIndex = await mfstFindNextIndex(attAccount);
+      // Find next unused manifest index, skipping indices already used in
+      // this session (not yet confirmed on-chain).
+      let attIndex = await window.mfstFindNextIndex(attAccount);
+      while (_txbUsedAttIndices.has(`${attAccount}:${attIndex}`)) {
+        attIndex++;
+      }
+      _txbUsedAttIndices.add(`${attAccount}:${attIndex}`);
       const attTxnJson = build_private_manifest_transaction(_walletEntropy, attAccount, attIndex, attUrl, '0', network);
       const attTxn = JSON.parse(attTxnJson);
       attestationsJson = JSON.stringify(attTxn.attestations);
@@ -1355,6 +1364,7 @@ async function txbBroadcastTransaction() {
     }
     txnSet.push(builtTxn);
 
+    console.log('[broadcast] Transaction set:', JSON.stringify(txnSet, null, 2));
     const txid = await broadcast_v2_transaction(
       config.peerUrl,
       genesisHex,
@@ -1429,25 +1439,66 @@ async function txbBroadcastTransaction() {
 }
 
 let _walletScanWorker = null;
+let _walletScanInProgress = false;
 
 async function walletScanUtxos() {
   if (!_walletEntropy) { walletLog('Unlock wallet first.', 'err'); return; }
+  if (_walletScanInProgress) return;
+  _walletScanInProgress = true;
 
   const net = getActiveNetwork();
   const account = parseInt(document.getElementById('wallet-account', 10).value) || 0;
 
-  // Wait for any active sync to complete so filters are fresh
+  // Restore cached scan results for instant display. The full scan still
+  // runs in the background and will overwrite these if anything changed.
+  try {
+    const cached = JSON.parse(localStorage.getItem('wallet-scan-cache') || 'null');
+    if (cached && cached.net === net && cached.account === account && cached.result) {
+      const age = Math.round((Date.now() - cached.timestamp) / 60000);
+      walletScanLog(`Loaded cached wallet (${age}m old). Refreshing in background...`, 'info');
+      _lastWalletScanResult = cached.result;
+      // Display everything from cache
+      document.getElementById('wallet-balance-value').textContent = cached.result.totalBalanceSC;
+      document.getElementById('wallet-received').textContent = '+' + cached.result.totalReceivedSC + ' received';
+      document.getElementById('wallet-sent').textContent = '-' + cached.result.totalSentSC + ' sent';
+      document.getElementById('wallet-scan-meta').textContent =
+        cached.result.addressesScanned + ' addresses scanned (cached)';
+      document.getElementById('wallet-balance-box').style.display = '';
+      const allUtxos = [];
+      for (const a of (cached.result.addresses || [])) {
+        if (!a.utxos || a.utxos.length === 0) continue;
+        for (const u of a.utxos) allUtxos.push({ ...u, _addrIndex: a.index, _address: a.address });
+      }
+      allUtxos.sort((a, b) => (b.height || 0) - (a.height || 0));
+      if (allUtxos.length > 0) {
+        document.getElementById('wallet-scan-stats').style.display = 'block';
+        walletPopulateHistoryTable(allUtxos);
+        walletPopulateUtxoTable(allUtxos);
+        walletPopulateStatsTab(cached.result, allUtxos);
+        txbPopulateUtxos(allUtxos);
+        document.getElementById('wallet-tab-wrap').style.display = 'block';
+      }
+    }
+  } catch (_) { /* cache corrupt or missing */ }
+
+  // Wait for background sync to complete so filters are fresh.
+  // The syncer may be actively syncing, or may not have started yet.
   const syncState = getSyncState(net);
-  if (syncState && syncState.status === 'syncing') {
+  const needsWait = !syncState || syncState.status === 'syncing' ||
+    (syncState.status !== 'synced' && syncState.status !== 'error');
+  if (needsWait) {
     walletScanLog('Waiting for background sync to finish...', 'info');
     await new Promise(resolve => {
       const unsub = chainOnChange(() => {
         const s = getSyncState(net);
-        if (!s || s.status !== 'syncing') { unsub(); resolve(); }
+        if (s && (s.status === 'synced' || s.status === 'error')) { unsub(); resolve(); }
       });
-      // Timeout after 60s — don't block forever
-      setTimeout(() => { unsub(); resolve(); }, 60000);
+      // Timeout after 120s — don't block forever
+      setTimeout(() => { unsub(); resolve(); }, 120000);
     });
+    // Explicitly reload filters from IDB/OPFS so we get the fresh data
+    // the syncer just saved.
+    await loadFilters();
     walletScanLog('Sync complete, starting wallet scan.', 'info');
   }
 
@@ -1527,6 +1578,46 @@ async function walletScanUtxos() {
     const result = JSON.parse(resultJson);
     _lastWalletScanResult = result;
 
+    // Deduplicate UTXOs — the WASM scan can return duplicates when
+    // the filter scan and tail scan cover overlapping block ranges.
+    // Key on outputId + direction since the same outputId appears as
+    // both 'received' (when created) and 'sent' (when spent).
+    for (const a of (result.addresses || [])) {
+      if (a.utxos && a.utxos.length > 1) {
+        const seen = new Set();
+        a.utxos = a.utxos.filter(u => {
+          const key = u.outputId + ':' + (u.direction || '');
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      }
+    }
+
+    // Recalculate totals from deduped UTXOs
+    const SC_H = 1000000000000000000000000n;
+    const fmtSC = (h) => {
+      const whole = h / SC_H;
+      const frac = h % SC_H;
+      return `${whole}.${(frac * 10000n / SC_H).toString().padStart(4, '0')}`;
+    };
+    let dedupReceived = 0n, dedupSent = 0n;
+    for (const a of (result.addresses || [])) {
+      for (const u of (a.utxos || [])) {
+        const amt = BigInt(u.amountHastings || '0');
+        if (u.direction === 'received') dedupReceived += amt;
+        else if (u.direction === 'sent') dedupSent += amt;
+      }
+      if (a.utxos && a.utxos.length > 0) {
+        console.log(`[wallet-dedup] Address #${a.index}: ${a.utxos.length} UTXOs, directions:`, a.utxos.map(u => `${u.direction}:${u.amountHastings}`));
+      }
+    }
+    console.log(`[wallet-dedup] received=${dedupReceived} sent=${dedupSent} balance=${dedupReceived - dedupSent}`);
+    const dedupBalance = dedupReceived - dedupSent;
+    result.totalBalanceSC = fmtSC(dedupBalance) + ' SC';
+    result.totalReceivedSC = fmtSC(dedupReceived) + ' SC';
+    result.totalSentSC = fmtSC(dedupSent) + ' SC';
+
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
 
     // Balance box
@@ -1569,9 +1660,23 @@ async function walletScanUtxos() {
 
     walletResetLockTimer();
     walletScanLog('Scan complete in ' + elapsed + 's.', 'ok');
+
+    // Cache scan result so next page load can display immediately
+    try {
+      localStorage.setItem('wallet-scan-cache', JSON.stringify({
+        net, account, result, timestamp: Date.now(),
+      }));
+    } catch (_) { /* storage full */ }
+
+    // Trigger a background sync to generate filters for the blocks
+    // the tail scan just covered. This prevents the same blocks from
+    // being re-scanned on the next page load.
+    walletScanLog('Updating filters in background...', 'info');
+    syncNow(net);
   } catch (e) {
     walletScanLog('Error: ' + e, 'err');
   } finally {
+    _walletScanInProgress = false;
   }
 }
 
@@ -1643,7 +1748,7 @@ async function txbUpdateAttInfo() {
   if (cb.checked && _walletEntropy) {
     const account = parseInt(document.getElementById('txb-att-account', 10).value) || 0;
     try {
-      const nextIdx = await mfstFindNextIndex(account);
+      const nextIdx = await window.mfstFindNextIndex(account);
       const json = derive_manifest_info(_walletEntropy, account, nextIdx);
       const manifest = JSON.parse(json);
       info.innerHTML = 'Next index: <span style="color:#f59e0b;">' + _esc(String(nextIdx)) +

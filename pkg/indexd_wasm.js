@@ -281,6 +281,20 @@ export class PinnedObject {
         wasm.__wbg_pinnedobject_free(ptr, 0);
     }
     /**
+     * Returns the object's data encryption key as a Uint8Array (32 bytes).
+     *
+     * Needed for migration tooling that re-encodes slabs with the same key
+     * to preserve sector roots and object IDs.
+     * @returns {Uint8Array}
+     */
+    dataKey() {
+        const ret = wasm.pinnedobject_dataKey(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Returns the object's ID as a hex string.
      * @returns {string}
      */
@@ -379,6 +393,37 @@ export class PinnedObject {
         return ret[0] >>> 0;
     }
     /**
+     * Returns detailed slab information as a JSON string.
+     *
+     * Each slab entry includes its sector roots and host public keys,
+     * encryption key, min_shards, offset, and length. Useful for migration
+     * tooling that needs to inspect which hosts store each sector.
+     *
+     * Returns slab details as a JSON string using the same serde format
+     * as `assembleObject` and `uploadEncodedShards`, so slabs from this
+     * output can be mixed with re-uploaded slabs and passed directly to
+     * `assembleObject`.
+     * @returns {string}
+     */
+    slabDetails() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.pinnedobject_slabDetails(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
      * Returns the actual data length of each slab as a JS array of numbers.
      *
      * Useful for computing per-slab byte offsets and for accurate download
@@ -461,6 +506,27 @@ export class SDK {
             throw takeFromExternrefTable0(ret[1]);
         }
         return PinnedObject.__wrap(ret[0]);
+    }
+    /**
+     * Copies a raw encrypted sector from a source host (via another SDK) to a
+     * destination host on this SDK. The 4 MiB sector data stays entirely in
+     * WASM memory — no JS roundtrip. Returns the merkle root as a hex string.
+     * @param {SDK} source_sdk
+     * @param {string} src_host_key
+     * @param {string} root
+     * @param {string} dst_host_key
+     * @returns {Promise<string>}
+     */
+    copySectorFrom(source_sdk, src_host_key, root, dst_host_key) {
+        _assertClass(source_sdk, SDK);
+        const ptr0 = passStringToWasm0(src_host_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(root, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(dst_host_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.sdk_copySectorFrom(this.__wbg_ptr, source_sdk.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
+        return ret;
     }
     /**
      * Deletes an object from the indexer by its hex-encoded key.
@@ -636,6 +702,24 @@ export class SDK {
      */
     pruneSlabs() {
         const ret = wasm.sdk_pruneSlabs(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * Reads a raw encrypted sector from a host by its merkle root.
+     * Returns the full 4 MiB sector as a Uint8Array.
+     *
+     * `host_key` is the host's public key string (e.g. "ed25519:abc123...").
+     * `root` is the sector's merkle root as a hex string.
+     * @param {string} host_key
+     * @param {string} root
+     * @returns {Promise<Uint8Array>}
+     */
+    readSector(host_key, root) {
+        const ptr0 = passStringToWasm0(host_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(root, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdk_readSector(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return ret;
     }
     /**
@@ -834,6 +918,23 @@ export class SDK {
         _assertClass(options, UploadOptions);
         var ptr2 = options.__destroy_into_raw();
         const ret = wasm.sdk_uploadSlab(this.__wbg_ptr, ptr0, len0, ptr1, len1, stream_offset, ptr2, on_progress, isLikeNone(on_host_active) ? 0 : addToExternrefTable0(on_host_active));
+        return ret;
+    }
+    /**
+     * Writes a raw encrypted sector to a host. Returns the merkle root as a hex string.
+     *
+     * `host_key` is the host's public key string (e.g. "ed25519:abc123...").
+     * `sector` is the raw 4 MiB sector data.
+     * @param {string} host_key
+     * @param {Uint8Array} sector
+     * @returns {Promise<string>}
+     */
+    writeSector(host_key, sector) {
+        const ptr0 = passStringToWasm0(host_key, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(sector, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.sdk_writeSector(this.__wbg_ptr, ptr0, len0, ptr1, len1);
         return ret;
     }
 }
@@ -1049,6 +1150,37 @@ export function generateRecoveryPhrase() {
  */
 export function init_panic_hook() {
     wasm.init_panic_hook();
+}
+
+/**
+ * Re-encode a slab with an existing slab key, producing byte-identical
+ * encrypted shards. Used for migration: download plaintext from source,
+ * re-encode with the same keys, upload to destination hosts.
+ *
+ * The resulting sector roots are identical to the originals, preserving
+ * the slab digest and therefore the object ID.
+ *
+ * Returns a JSON object: `{ slabKey: Uint8Array, shards: [Uint8Array, ...], length: u32, minShards: u8 }`
+ * @param {Uint8Array} data
+ * @param {Uint8Array} data_key
+ * @param {number} stream_offset
+ * @param {number} data_shards
+ * @param {number} parity_shards
+ * @param {Uint8Array} slab_key
+ * @returns {any}
+ */
+export function reencodeSlabWithKey(data, data_key, stream_offset, data_shards, parity_shards, slab_key) {
+    const ptr0 = passArray8ToWasm0(data, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray8ToWasm0(data_key, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArray8ToWasm0(slab_key, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.reencodeSlabWithKey(ptr0, len0, ptr1, len1, stream_offset, data_shards, parity_shards, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -1555,22 +1687,22 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 701, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 702, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 740, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 741, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 701, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 702, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 740, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 741, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 760, function: Function { arguments: [], shim_idx: 761, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 778, function: Function { arguments: [], shim_idx: 779, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha994e4b6d1719794, wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 790, function: Function { arguments: [Externref], shim_idx: 791, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 808, function: Function { arguments: [Externref], shim_idx: 809, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h22885050db612fd4, wasm_bindgen__convert__closures_____invoke__ha7b459d57f5990ae);
             return ret;
         },

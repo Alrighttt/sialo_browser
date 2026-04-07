@@ -1,4 +1,4 @@
-// Registration wizard for the Sia Browser.
+// Registration wizard for the Sialo Browser.
 //
 // Walks first-time users through a 5-step process:
 //   1. Enter indexer URL

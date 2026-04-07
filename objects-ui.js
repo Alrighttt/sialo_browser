@@ -166,6 +166,7 @@ export function initObjectsUI() {
         const tbody = document.getElementById('zip-builder-tbody');
         const rows = [...tbody.querySelectorAll('tr')];
         if (rows.length === 0) return;
+        await withKeepAlive(async () => {
 
         const entries = rows.map(tr => ({
           id: tr.dataset.objectId,
@@ -201,7 +202,6 @@ export function initObjectsUI() {
             memBuf = [];
           }
 
-          await withKeepAlive(async () => {
           // ZIP writer — writes headers/descriptors to the stream
           const zip = new ZipWriter(async (chunk) => {
             if (writable) {

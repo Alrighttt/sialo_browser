@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; connect-src 'self' blob: https: http:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
-  <title>Sia Browser</title>
+  <title>Sialo Browser</title>
   <link rel="stylesheet" href="style.css">
 </head>
 
@@ -85,7 +85,7 @@
         <canvas id="stream-canvas"
           style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
         <div id="video-controls"
-          style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s;">
+          style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s; z-index:10;">
           <button id="vc-playpause"
             style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; padding:4px 8px;">&#9654;</button>
           <span id="vc-time" style="color:#ccc; font-size:12px; font-family:monospace; min-width:60px;">0:00</span>
@@ -118,7 +118,7 @@
 
             <!-- Step 1: Welcome + Indexer URL -->
             <div class="wizard-step active" data-step="1">
-              <h1 class="wizard-heading">Welcome to Sia Browser</h1>
+              <h1 class="wizard-heading">Welcome to Sialo Browser</h1>
               <p class="wizard-subtext">Connect to an indexer to get started. You'll need the URL of the indexer you
                 want to register with.</p>
               <p class="wizard-subtext" style="margin-top: 0.75rem; font-size: 0.85rem; opacity: 0.7;">Already have an
@@ -719,18 +719,19 @@
           <div class="panel-section">
             <h2>Migrate Objects Between Indexers</h2>
             <p style="color:#999; font-size:0.85rem; margin-bottom:0.75rem;">
-              Pin objects from the source indexer to the destination indexer.
-              No file data is re-uploaded — only metadata is transferred.
-              Configure indexer profiles in Settings first.
+              Smart migration: compares host overlap between indexers.
+              Sectors on shared hosts are pinned directly (no data transfer).
+              Sectors on unsupported hosts are re-uploaded to destination hosts.
+              Object IDs are preserved. Configure indexer profiles in Settings first.
             </p>
 
             <label class="label">Object</label>
             <div style="display:flex; gap:0.4rem; margin-bottom:0.5rem;">
               <select id="migrate-mode" style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;">
-                <option value="all">All Objects</option>
                 <option value="single">Single Object</option>
+                <option value="all">All Objects</option>
               </select>
-              <input id="migrate-object-id" type="text" placeholder="Object ID (hex)" style="flex:1; font-family:monospace; font-size:0.85rem; display:none;" />
+              <input id="migrate-object-id" type="text" placeholder="Object ID or share URL (sia://...)" style="flex:1; font-family:monospace; font-size:0.85rem;" />
             </div>
 
             <label class="label">Source Profile</label>
@@ -740,7 +741,7 @@
             <select id="migrate-dst-profile" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
 
             <button id="migrate-btn-start" style="margin-top:0.25rem;">Migrate</button>
-            <div class="output" id="migrate-status"></div>
+            <div class="output" id="migrate-status" style="max-height:300px; overflow-y:auto;"></div>
           </div><!-- /panel-section: Migrate -->
 
           <div class="panel-section" id="reupload-section" style="display:none;">
@@ -1366,7 +1367,7 @@
               </div>
               <div id="mfst-resolve-pubkey-row" style="margin-bottom:0.75rem; display:none;">
                 <div class="label">Publisher Public Key (ed25519:hex)</div>
-                <input id="mfst-resolve-pubkey" type="text" placeholder="ed25519:abcd1234..." style="width:100%;">
+                <input id="mfst-resolve-pubkey" type="text" placeholder="ed25519:abcd1234... or key hash hex" style="width:100%;">
               </div>
               <div id="mfst-resolve-channel-fields" style="display:none; margin-bottom:0.75rem;">
                 <div class="label">Channel Name</div>

@@ -2,13 +2,14 @@
 // on the Sia blockchain.
 
 import { _esc } from './utils.js';
+import { explore as explorerQuery } from './explorer.js';
 import { kdfDecrypt } from './kdf.js';
-import { createTab, activateTab } from './tabs.js';
+import { createTab, activateTab, openOrActivateInternalTab } from './tabs.js';
 import {
   getActiveNetwork, getNetworkConfig, getGenesisHex,
   loadAttestationEntries, exploreQuery as chainExploreQuery,
   getAttestationIndexUrl, exportNetworkData, importNetworkData,
-  onChange as chainOnChange, onMempoolChange,
+  onChange as chainOnChange, onMempoolChange, getMempoolTransactions,
 } from './chain.js';
 import {
   derive_manifest_info,
@@ -16,7 +17,7 @@ import {
   build_channel_manifest_transaction, build_group_manifest_transaction,
   open_private_manifest, open_channel_manifest, open_group_manifest,
   broadcast_v2_transaction, build_v2_transaction,
-  compute_utxo_proofs, v2_output_id,
+  compute_utxo_proofs, v2_output_id, v2_transaction_id,
 } from './pkg/syncer_wasm.js';
 import {
   getWalletEntropy, setWalletEntropy, getWalletHasSaved, setWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
@@ -254,8 +255,24 @@ async function mfstResolve() {
       if (!getWalletEntropy()) { mfstLog('Wallet is locked.', 'err'); return; }
       const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
       // Scan all manifest indices (gap-based, like HD wallet addresses)
+      // Check both the on-chain attestation index AND the mempool
       const allEntries = await loadAttestationEntries();
       const pubkeySet = new Set(allEntries.map(e => e.pubkeyHex.toLowerCase()));
+
+      // Also collect pubkeys from mempool attestations
+      const mempoolNet = getActiveNetwork();
+      const mempoolTxns = getMempoolTransactions(mempoolNet);
+      for (const mt of mempoolTxns) {
+        if (!mt.rawJson) continue;
+        try {
+          const txn = JSON.parse(mt.rawJson);
+          for (const att of (txn.attestations || [])) {
+            const pk = (att.publicKey || att.public_key || '').replace('ed25519:', '').toLowerCase();
+            if (pk) pubkeySet.add(pk);
+          }
+        } catch (_) {}
+      }
+
       let matchedPubkeys = [];
       let gap = 0;
       for (let i = 0; gap < 20; i++) {
@@ -271,7 +288,7 @@ async function mfstResolve() {
         } catch (e) { break; }
       }
       if (matchedPubkeys.length === 0) {
-        mfstLog('No manifest attestations found (scanned ' + allEntries.length + ' index entries).', 'info');
+        mfstLog('No manifest attestations found in index or mempool.', 'info');
         return;
       }
       // Collect all matching entries
@@ -303,8 +320,11 @@ async function mfstResolve() {
             const blk = block.block || block;
             const v2txns = blk.v2?.transactions || [];
 
-            for (const txn of v2txns) {
+            for (let ti = 0; ti < v2txns.length; ti++) {
+              const txn = v2txns[ti];
               if (!txn.attestations || txn.attestations.length === 0) continue;
+              let txid = txn.id || txn.ID || null;
+              if (!txid) { try { txid = v2_transaction_id(JSON.stringify(txn)); } catch (_) {} }
               for (const att of txn.attestations) {
                 const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
                 if (attPk.toLowerCase() !== entry.pubkeyHex.toLowerCase()) continue;
@@ -320,7 +340,7 @@ async function mfstResolve() {
                 const valueHex = Array.from(valueBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 
                 try { url = open_private_manifest(getWalletEntropy(), account, entry.manifestIndex, valueHex); } catch (e) { /* wrong key */ }
-                cached.results.push({ height: entry.height, key: att.key, url, raw: att.value, account, index: entry.manifestIndex });
+                cached.results.push({ height: entry.height, key: att.key, url, raw: att.value, account, index: entry.manifestIndex, txid });
               }
             }
             if (entry.height > cached.maxHeight) cached.maxHeight = entry.height;
@@ -331,23 +351,75 @@ async function mfstResolve() {
         _mfstResolveCache[cacheKey] = cached;
       }
 
-      const results = cached.results;
+      const results = [...cached.results];
+
+      // Also scan mempool for unconfirmed private manifest attestations
+      const mempoolTxns2 = getMempoolTransactions(mempoolNet);
+      for (const mt of mempoolTxns2) {
+        if (!mt.rawJson) continue;
+        try {
+          const txn = JSON.parse(mt.rawJson);
+          if (!txn.attestations || txn.attestations.length === 0) continue;
+          const txid = mt.id || null;
+          for (const att of txn.attestations) {
+            const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
+            const matchedMp = matchedPubkeys.find(mp => mp.pubkeyHex === attPk.toLowerCase());
+            if (!matchedMp) continue;
+
+            let url = null;
+            let valueBytes;
+            try {
+              const b64 = typeof att.value === 'string' ? att.value : '';
+              const bin = atob(b64);
+              valueBytes = new Uint8Array(bin.length);
+              for (let j = 0; j < bin.length; j++) valueBytes[j] = bin.charCodeAt(j);
+            } catch (_) { continue; }
+            const valueHex = Array.from(valueBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+            try { url = open_private_manifest(getWalletEntropy(), account, matchedMp.index, valueHex); } catch (_) {}
+            results.push({ height: 'mempool', key: att.key, url, raw: att.value, account, index: matchedMp.index, txid });
+          }
+        } catch (_) {}
+      }
 
       // Display results
       if (results.length === 0) {
-        mfstLog('No attestations could be decrypted.', 'info');
+        mfstLog('No attestations found in blocks or mempool.', 'info');
         return;
       }
 
       resultsWrap.style.display = '';
-      results.sort((a, b) => b.height - a.height);
+      results.sort((a, b) => {
+        if (a.height === 'mempool') return -1;
+        if (b.height === 'mempool') return 1;
+        return b.height - a.height;
+      });
       for (const r of results) {
         const row = document.createElement('div');
         row.style.cssText = 'padding:0.4rem 0; border-bottom:1px solid #1a1a1a;';
         const metaSpan = document.createElement('span');
         metaSpan.style.cssText = 'font-size:0.75rem;';
-        metaSpan.innerHTML = '<span style="color:#60a5fa;">Height ' + _esc(String(r.height)) + ' · Account ' + _esc(String(r.account)) + ' · Index ' + _esc(String(r.index)) + '</span>';
+        let metaParts = ['Height ' + _esc(String(r.height))];
+        if (r.account !== null && r.account !== undefined) metaParts.push('Account ' + _esc(String(r.account)));
+        if (r.index !== null && r.index !== undefined) metaParts.push('Index ' + _esc(String(r.index)));
+        metaSpan.innerHTML = '<span style="color:#60a5fa;">' + metaParts.join(' · ') + '</span>';
         row.appendChild(metaSpan);
+        if (r.txid) {
+          const txLink = document.createElement('a');
+          txLink.href = '#';
+          txLink.style.cssText = 'font-size:0.7rem; color:#888; margin-left:0.5rem; font-family:monospace;';
+          txLink.textContent = 'tx:' + r.txid.slice(0, 8) + '…' + r.txid.slice(-8);
+          txLink.title = r.txid;
+          txLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            openOrActivateInternalTab('explorer');
+            setTimeout(() => {
+              document.getElementById('exp-query').value = r.txid;
+              explorerQuery();
+            }, 100);
+          });
+          metaSpan.appendChild(txLink);
+        }
 
         if (r.url) {
           const urlDiv = document.createElement('div');
@@ -367,9 +439,15 @@ async function mfstResolve() {
 
     } else if (type === 'public' || type === 'channel') {
       const pk = document.getElementById('mfst-resolve-pubkey').value.trim();
-      if (!pk) { mfstLog('Enter a public key.', 'err'); return; }
-      pubkeyHex = pk.replace('ed25519:', '');
-      mfstLog('Looking up attestations for ed25519:' + pubkeyHex.slice(0, 16) + '...', 'info');
+      if (!pk) { mfstLog('Enter a public key or key hash.', 'err'); return; }
+      if (pk.startsWith('ed25519:')) {
+        pubkeyHex = pk.replace('ed25519:', '');
+        mfstLog('Looking up attestations for ed25519:' + pubkeyHex.slice(0, 16) + '...', 'info');
+      } else {
+        // Treat as raw hex — could be a pubkey or a key hash
+        pubkeyHex = pk;
+        mfstLog('Looking up attestations for ' + pubkeyHex.slice(0, 16) + '...', 'info');
+      }
     } else if (type === 'group') {
       const secret = document.getElementById('mfst-resolve-group-secret').value.trim();
       if (!secret || secret.length !== 64) { mfstLog('Group secret must be 64 hex characters.', 'err'); return; }
@@ -379,10 +457,18 @@ async function mfstResolve() {
       return;
     }
 
-    // Search attestation index for matching pubkey
-    mfstLog('Searching for pubkey: ' + pubkeyHex, 'data');
+    // Search attestation index — match by pubkey or key hash
+    mfstLog('Searching for: ' + pubkeyHex, 'data');
     const allEntries = await loadAttestationEntries();
-    const entries = allEntries.filter(e => e.pubkeyHex.toLowerCase() === pubkeyHex.toLowerCase());
+    const searchLower = pubkeyHex.toLowerCase();
+    let entries = allEntries.filter(e => e.pubkeyHex.toLowerCase() === searchLower);
+    // If no pubkey match and the input is shorter (key hash), search by key hash prefix
+    if (entries.length === 0 && searchLower.length <= 16) {
+      entries = allEntries.filter(e => e.keyHashHex.toLowerCase().startsWith(searchLower));
+      if (entries.length > 0) {
+        mfstLog(`No pubkey match, found ${entries.length} key hash match(es)`, 'info');
+      }
+    }
     if (entries.length === 0) {
       mfstLog('No attestations found for this public key (' + allEntries.length + ' total entries scanned). Try rebuilding filters in the Syncer page if the attestation was recently confirmed.', 'info');
       return;
@@ -405,12 +491,13 @@ async function mfstResolve() {
 
         for (const txn of txns) {
           if (!txn.attestations || txn.attestations.length === 0) continue;
+          let txid = txn.id || txn.ID || null;
+          if (!txid) { try { txid = v2_transaction_id(JSON.stringify(txn)); } catch (_) {} }
           for (const att of txn.attestations) {
             const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
             if (attPk.toLowerCase() !== pubkeyHex.toLowerCase()) continue;
 
             let url = null;
-            // att.value is base64-encoded (from JSON serde). Decode to hex for WASM functions.
             let valueBytes;
             try {
               const b64 = typeof att.value === 'string' ? att.value : '';
@@ -420,12 +507,10 @@ async function mfstResolve() {
             } catch (e) { continue; }
             const valueHex = Array.from(valueBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 
-            // Try to decode based on resolve type
             if (type === 'private' && getWalletEntropy()) {
               const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
               try { url = open_private_manifest(getWalletEntropy(), account, valueHex); } catch (e) { /* wrong key */ }
             } else if (type === 'public') {
-              // Public manifests store plaintext UTF-8 in the value
               try { url = new TextDecoder().decode(valueBytes); } catch (e) { /* not utf8 */ }
             } else if (type === 'channel') {
               const chKey = document.getElementById('mfst-resolve-channel-key').value.trim();
@@ -435,7 +520,7 @@ async function mfstResolve() {
             }
 
             const acct = (type === 'private') ? (parseInt(document.getElementById('mfst-account', 10).value) || 0) : null;
-            results.push({ height: entry.height, key: att.key, url, raw: att.value, account: acct });
+            results.push({ height: entry.height, key: att.key, url, raw: att.value, account: acct, txid });
           }
         }
       } catch (e) {
@@ -443,24 +528,98 @@ async function mfstResolve() {
       }
     }
 
+    // Also scan mempool for unconfirmed attestations
+    const net = getActiveNetwork();
+    const mempoolTxns = getMempoolTransactions(net);
+    for (const mt of mempoolTxns) {
+      if (!mt.rawJson) continue;
+      try {
+        const txn = JSON.parse(mt.rawJson);
+        if (!txn.attestations || txn.attestations.length === 0) continue;
+        for (const att of txn.attestations) {
+          const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
+          // For private type, check all derived pubkeys; for public/channel, check the searched key
+          let matchesPubkey = false;
+          if (type === 'private') {
+            // Private: we already found matchedPubkeys from the index scan above
+            // For mempool, check if the attestation pubkey matches any derived key
+            if (typeof matchedPubkeys !== 'undefined') {
+              matchesPubkey = matchedPubkeys.some(mp => mp.pubkeyHex === attPk.toLowerCase());
+            }
+          } else {
+            matchesPubkey = attPk.toLowerCase() === pubkeyHex.toLowerCase();
+          }
+          if (!matchesPubkey) continue;
+
+          let url = null;
+          let valueBytes;
+          try {
+            const b64 = typeof att.value === 'string' ? att.value : '';
+            const bin = atob(b64);
+            valueBytes = new Uint8Array(bin.length);
+            for (let j = 0; j < bin.length; j++) valueBytes[j] = bin.charCodeAt(j);
+          } catch (_) { continue; }
+          const valueHex = Array.from(valueBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+
+          if (type === 'private' && getWalletEntropy()) {
+            const acct = parseInt(document.getElementById('mfst-account', 10).value) || 0;
+            try { url = open_private_manifest(getWalletEntropy(), acct, valueHex); } catch (_) {}
+          } else if (type === 'public') {
+            try { url = new TextDecoder().decode(valueBytes); } catch (_) {}
+          } else if (type === 'channel') {
+            const chKey = document.getElementById('mfst-resolve-channel-key').value.trim();
+            if (chKey) {
+              try { url = open_channel_manifest(chKey, valueHex); } catch (_) {}
+            }
+          }
+
+          results.push({ height: 'mempool', key: att.key, url, raw: att.value, account: null });
+        }
+      } catch (_) {}
+    }
+    if (results.length > 0 && mempoolTxns.length > 0) {
+      mfstLog(`Also checked ${mempoolTxns.length} mempool transaction(s).`, 'data');
+    }
+
     // Display results
     if (results.length === 0) {
-      mfstLog('No matching attestations found in downloaded blocks.', 'info');
+      mfstLog('No matching attestations found in blocks or mempool.', 'info');
       return;
     }
 
     resultsWrap.style.display = '';
-    // Show newest first
-    results.sort((a, b) => b.height - a.height);
+    // Show newest first (mempool entries at the top)
+    results.sort((a, b) => {
+      if (a.height === 'mempool') return -1;
+      if (b.height === 'mempool') return 1;
+      return b.height - a.height;
+    });
     for (const r of results) {
       const row = document.createElement('div');
       row.style.cssText = 'padding:0.4rem 0; border-bottom:1px solid #1a1a1a;';
       const metaSpan = document.createElement('span');
       metaSpan.style.cssText = 'font-size:0.75rem; color:#888;';
-      let metaText = 'Height ' + r.height;
+      let metaText = r.height === 'mempool' ? 'Mempool (unconfirmed)' : 'Height ' + r.height;
       if (r.account !== null && r.account !== undefined) metaText += ' · Account ' + r.account;
-      metaSpan.innerHTML = '<span style="color:#60a5fa;">' + _esc(metaText) + '</span>';
+      const metaColor = r.height === 'mempool' ? '#f59e0b' : '#60a5fa';
+      metaSpan.innerHTML = '<span style="color:' + metaColor + ';">' + _esc(metaText) + '</span>';
       row.appendChild(metaSpan);
+      if (r.txid) {
+        const txLink = document.createElement('a');
+        txLink.href = '#';
+        txLink.style.cssText = 'font-size:0.7rem; color:#888; margin-left:0.5rem; font-family:monospace;';
+        txLink.textContent = 'tx:' + r.txid.slice(0, 8) + '…' + r.txid.slice(-8);
+        txLink.title = r.txid;
+        txLink.addEventListener('click', (e) => {
+          e.preventDefault();
+          openOrActivateInternalTab('explorer');
+          setTimeout(() => {
+            document.getElementById('exp-query').value = r.txid;
+            explorerQuery();
+          }, 100);
+        });
+        metaSpan.appendChild(txLink);
+      }
 
       if (r.url) {
         const urlDiv = document.createElement('div');
@@ -876,4 +1035,7 @@ setInterval(() => {
   const showsUnlocked = statusEl.innerHTML.includes('Unlocked');
   if (isUnlocked !== showsUnlocked) mfstUpdateUI();
 }, 500);
+
+// Expose for wallet.js transaction builder (avoids circular import)
+window.mfstFindNextIndex = mfstFindNextIndex;
 

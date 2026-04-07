@@ -1,4 +1,4 @@
-// Video streaming pipelines for the Sia Browser.
+// Video streaming pipelines for the Sialo Browser.
 //
 // Exports two functions:
 //   webcodecStream  — preferred path using WebCodecs VideoDecoder + canvas rendering
@@ -241,10 +241,18 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   function showControls() {
     controlsEl.style.opacity = '1';
     clearTimeout(hideTimeout);
-    hideTimeout = setTimeout(() => { controlsEl.style.opacity = '0'; }, 3000);
+    hideTimeout = setTimeout(() => {
+      if (!s.paused) controlsEl.style.opacity = '0';
+    }, 3000);
   }
   container.addEventListener('mousemove', showControls);
   container.addEventListener('mouseenter', showControls);
+  container.addEventListener('touchstart', showControls);
+  container.addEventListener('click', showControls);
+  // Always show controls when paused
+  const origToggle = VPC.togglePause;
+  const showOnPause = () => { if (s.paused) showControls(); };
+  // Keep controls visible while paused (checked in hide timeout above)
   showControls();
 
   canvasEl.addEventListener('click', () => VPC.togglePause(s));
@@ -262,6 +270,14 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
       container.requestFullscreen().catch(() => {});
     }
   });
+
+  // Keyboard controls (Space=pause, F=fullscreen)
+  const keyHandler = (e) => {
+    if (!container.offsetParent && !document.fullscreenElement) return; // not visible
+    if (e.key === ' ') { e.preventDefault(); VPC.togglePause(s); showControls(); }
+    else if (e.key === 'f' || e.key === 'F') { fsBtn.click(); }
+  };
+  document.addEventListener('keydown', keyHandler);
 
   // --- Seek bar interaction ---
   let seekbarDragging = false;

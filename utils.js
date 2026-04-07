@@ -1,4 +1,4 @@
-// Shared utility functions for the Sia Browser.
+// Shared utility functions for the Sialo Browser.
 //
 // Pure helpers with no external dependencies — safe to import from any module.
 

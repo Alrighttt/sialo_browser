@@ -2,6 +2,9 @@ import init, {
   generateRecoveryPhrase,
   AppKey,
   Builder,
+  DownloadOptions,
+  UploadOptions,
+  reencodeSlabWithKey,
   setLogLevel,
 } from './pkg/indexd_wasm.js';
 
@@ -46,6 +49,7 @@ import { initUploadUI } from './upload-ui.js';
 import { initBenchmarkUI } from './benchmark-ui.js';
 import { initObjectsUI } from './objects-ui.js';
 import { initAccountUI } from './account-ui.js';
+import { withKeepAlive } from './keep-alive.js';
 import { initCorsUI } from './cors-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import { setLoadContentHandler as setManifestLoadContent } from './manifest.js';
@@ -170,16 +174,17 @@ function initAttestationExplorer() {
         const tr = document.createElement('tr');
         tr.style.cssText = 'border-bottom:1px solid #222;';
 
-        const pkShort = m.pubkeyHex.slice(0, 8) + '…' + m.pubkeyHex.slice(-6);
+        const pkFull = 'ed25519:' + m.pubkeyHex;
+        const pkShort = 'ed25519:' + m.pubkeyHex.slice(0, 8) + '…' + m.pubkeyHex.slice(-6);
         const keyCol = queryType === 'key' ? raw : m.keyHashHex.slice(0, 12) + '…';
         tr.innerHTML =
-          `<td style="padding:6px 8px; font-family:monospace; color:#aaa; cursor:pointer;" title="Click to copy: ${_esc(m.pubkeyHex)}" class="att-pubkey-cell">${_esc(pkShort)}</td>` +
+          `<td style="padding:6px 8px; font-family:monospace; color:#aaa; cursor:pointer;" title="Click to copy: ${_esc(pkFull)}" class="att-pubkey-cell">${_esc(pkShort)}</td>` +
           `<td style="padding:6px 8px; text-align:right;"><a href="#" style="color:#60a5fa; text-decoration:none;" class="att-height-link">${_esc(m.height.toLocaleString())}</a></td>` +
           `<td class="att-key-cell" style="padding:6px 8px; color:#ccc;">${_esc(keyCol)}</td>` +
           `<td class="att-val-cell" style="padding:6px 8px; color:#666; font-size:0.75rem;">loading…</td>`;
 
         tr.querySelector('.att-pubkey-cell').addEventListener('click', () => {
-          navigator.clipboard.writeText(m.pubkeyHex).then(() => {
+          navigator.clipboard.writeText('ed25519:' + m.pubkeyHex).then(() => {
             const cell = tr.querySelector('.att-pubkey-cell');
             const orig = cell.textContent;
             cell.textContent = 'copied!';
@@ -1001,7 +1006,44 @@ document.getElementById('migrate-btn-start').addEventListener('click', async () 
   if (!data) { status.innerHTML = '<span class="fail">No profiles configured.</span>'; return; }
 
   if (mode === 'single' && !singleId) {
-    status.innerHTML = '<span class="fail">Enter an object ID.</span>';
+    status.innerHTML = '<span class="fail">Enter an object ID or share URL.</span>';
+    return;
+  }
+
+  // Detect share URL mode — only needs destination profile
+  const isShareUrl = mode === 'single' && (singleId.startsWith('sia://') || singleId.startsWith('https://'));
+  if (isShareUrl) {
+    const dstName = document.getElementById('migrate-dst-profile').value;
+    const dst = data.profiles[dstName];
+    if (!dst?.url || !dst?.key) {
+      status.innerHTML = '<span class="fail">Destination profile is missing URL or key.</span>';
+      return;
+    }
+    try { await withKeepAlive(async () => {
+      status.textContent = `Connecting to destination (${dstName})...`;
+      const dstKey = new AppKey(fromHex(dst.key));
+      const dstBuilder = new Builder(dst.url);
+      const dstSdk = await dstBuilder.connected(dstKey);
+      if (!dstSdk) { status.innerHTML = `<span class="fail">Destination key not recognized.</span>`; return; }
+
+      status.textContent += `\nResolving share URL...`;
+      const obj = await dstSdk.sharedObject(singleId);
+      const objId = obj.id();
+      status.textContent += `\nObject ID: ${objId}`;
+
+      // Check if already pinned
+      try {
+        await dstSdk.object(objId);
+        status.textContent += `\n→ already pinned on destination, skipping`;
+        return;
+      } catch (_) { /* not found — proceed */ }
+
+      status.textContent += `\nPinning to destination...`;
+      await dstSdk.pinObject(obj);
+      status.textContent += `\n→ pinned successfully`;
+    }); } catch (e) {
+      status.textContent += `\nFailed: ${e.message || e}`;
+    }
     return;
   }
 
@@ -1023,7 +1065,9 @@ document.getElementById('migrate-btn-start').addEventListener('click', async () 
     return;
   }
 
-  try {
+  const mlog = (msg) => { status.textContent += '\n' + msg; status.scrollTop = status.scrollHeight; };
+
+  try { await withKeepAlive(async () => {
     status.textContent = `Connecting to source (${srcName})...`;
     const srcKey = new AppKey(fromHex(src.key));
     const srcBuilder = new Builder(src.url);
@@ -1042,24 +1086,33 @@ document.getElementById('migrate-btn-start').addEventListener('click', async () 
       return;
     }
 
+    // Fetch host sets from both indexers
+    mlog('Fetching host lists...');
+    const srcHosts = await srcSdk.hosts();
+    const dstHosts = await dstSdk.hosts();
+    const dstHostSet = new Set(dstHosts.map(h => h.publicKey || h.public_key));
+    const srcHostSet = new Set(srcHosts.map(h => h.publicKey || h.public_key));
+    const sharedCount = [...dstHostSet].filter(k => srcHostSet.has(k)).length;
+    mlog(`Source hosts: ${srcHostSet.size}  Destination hosts: ${dstHostSet.size}  Shared: ${sharedCount}`);
+
+    // Gather object list
     let events;
     if (mode === 'single') {
       events = [{ id: singleId, deleted: false }];
     } else {
-      status.textContent = 'Listing objects on source...';
+      mlog('Listing objects on source...');
       const PAGE_SIZE = 500;
       let allEvents = [];
       let page = JSON.parse(await srcSdk.listObjects(PAGE_SIZE));
       allEvents = allEvents.concat(page);
-      status.textContent = `Listing objects on source... (${allEvents.length} found)`;
       while (page.length === PAGE_SIZE) {
         const last = page[page.length - 1];
         const afterMs = new Date(last.updated_at).getTime();
         page = JSON.parse(await srcSdk.listObjectsAfter(last.id, afterMs, PAGE_SIZE));
         allEvents = allEvents.concat(page);
-        status.textContent = `Listing objects on source... (${allEvents.length} found)`;
       }
       events = allEvents.filter(e => !e.deleted);
+      mlog(`Found ${events.length} objects.`);
     }
 
     if (events.length === 0) {
@@ -1067,51 +1120,280 @@ document.getElementById('migrate-btn-start').addEventListener('click', async () 
       return;
     }
 
-    let pinned = 0;
-    const degraded = [];
+    // Round-robin host pickers for sector writes
+    const dstHostKeys = [...dstHostSet];
+    let dstHostIdx = 0;
+    const nextDstHost = () => { const h = dstHostKeys[dstHostIdx % dstHostKeys.length]; dstHostIdx++; return h; };
+    const srcHostKeys = [...srcHostSet];
+    let srcHostIdx = 0;
+    const nextSrcHost = () => { const h = srcHostKeys[srcHostIdx % srcHostKeys.length]; srcHostIdx++; return h; };
+
+    let pinDirect = 0, migrated = 0, skipped = 0, sectorsTransferred = 0, bytesTransferred = 0;
+    const ZERO_KEY = 'ed25519:' + '0'.repeat(64);
     const errors = [];
     for (let i = 0; i < events.length; i++) {
+      const objId = events[i].id;
       try {
-        status.textContent = `Migrating ${i + 1} / ${events.length}...`;
-        const obj = await srcSdk.object(events[i].id);
-        await dstSdk.pinObject(obj);
-        pinned++;
-      } catch (e) {
-        const id = events[i].id;
-        const msg = e.message || String(e);
-        if (msg.includes('host key is empty')) {
-          degraded.push(id);
-        } else {
-          errors.push({ id, msg });
+        mlog(`[${i + 1}/${events.length}] ${objId.slice(0, 16)}...`);
+
+        // Check if object already exists on destination
+        try {
+          await dstSdk.object(objId);
+          skipped++;
+          mlog(`  → already exists on destination, skipping`);
+          continue;
+        } catch (_) { /* not found — proceed with migration */ }
+
+        const obj = await srcSdk.object(objId);
+        const slabs = JSON.parse(obj.slabDetails());
+
+        // Check which slabs need sector migration
+        let allSlabsSupported = true;
+        const slabsToFix = []; // indices of slabs with unsupported sectors
+        for (let si = 0; si < slabs.length; si++) {
+          const unsupported = slabs[si].sectors.filter(s => s.hostKey !== ZERO_KEY && !dstHostSet.has(s.hostKey));
+          if (unsupported.length > 0) {
+            allSlabsSupported = false;
+            slabsToFix.push(si);
+          }
         }
-        console.warn(`Failed to migrate object ${i} (${id}): ${msg}`);
+
+        if (allSlabsSupported) {
+          await dstSdk.pinObject(obj);
+          pinDirect++;
+          mlog(`  → pinned directly (all hosts shared)`);
+        } else {
+          const dataKey = obj.dataKey();
+          const finalSlabs = slabs.map(s => ({ ...s, sectors: s.sectors.map(sec => ({ ...sec })) }));
+
+          // Classify slabs: degraded (have zero-key sectors → skip sector copy, go straight to re-encode)
+          // vs copy-only (just need sector copies to destination hosts)
+          const degradedSlabs = [];
+          const copySlabs = [];
+          for (const si of slabsToFix) {
+            if (slabs[si].sectors.some(s => s.hostKey === ZERO_KEY)) degradedSlabs.push(si);
+            else copySlabs.push(si);
+          }
+
+          const totalCopySectors = copySlabs.reduce((n, si) =>
+            n + slabs[si].sectors.filter(s => !dstHostSet.has(s.hostKey)).length, 0);
+          mlog(`  → ${slabsToFix.length} slabs to fix: ${degradedSlabs.length} degraded, ${copySlabs.length} copy-only (${totalCopySectors} sectors)`);
+
+          // --- Phase 1: Re-encode degraded slabs sequentially ---
+          // (downloadSlabByIndex/uploadEncodedShards create tokio runtimes
+          //  that panic if interleaved, so these must be sequential)
+          if (degradedSlabs.length > 0) {
+            mlog(`  re-encoding ${degradedSlabs.length} degraded slabs...`);
+            for (let di = 0; di < degradedSlabs.length; di++) {
+              const si = degradedSlabs[di];
+              const origSlab = slabs[si];
+              const streamOffset = slabs.slice(0, si).reduce((acc, s) => acc + s.length, 0);
+
+              mlog(`    [${di + 1}/${degradedSlabs.length}] slab ${si + 1}: downloading...`);
+              const plaintext = await srcSdk.downloadSlabByIndex(obj, si, new DownloadOptions());
+              const slabKeyBytes = Uint8Array.from(atob(origSlab.encryptionKey), c => c.charCodeAt(0));
+              const encoded = reencodeSlabWithKey(
+                plaintext, dataKey, streamOffset,
+                origSlab.minShards, origSlab.sectors.length - origSlab.minShards,
+                slabKeyBytes
+              );
+
+              // Run source repair + destination upload concurrently.
+              // Source repair uses writeSector (guard-free), destination upload
+              // uses uploadEncodedShards (creates runtime). They don't conflict.
+              const srcRepairSectors = origSlab.sectors.map(s => ({ ...s }));
+              // Collect hosts already used in this slab to avoid duplicates
+              const usedSrcHosts = new Set(origSlab.sectors
+                .filter(s => s.hostKey !== ZERO_KEY && srcHostSet.has(s.hostKey))
+                .map(s => s.hostKey));
+              const toRepair = [];
+              for (let seci = 0; seci < origSlab.sectors.length; seci++) {
+                const sec = origSlab.sectors[seci];
+                if (sec.hostKey !== ZERO_KEY && srcHostSet.has(sec.hostKey)) continue;
+                // Find a source host not already in this slab
+                let host = null;
+                for (let attempt = 0; attempt < srcHostKeys.length; attempt++) {
+                  const candidate = nextSrcHost();
+                  if (!usedSrcHosts.has(candidate)) { host = candidate; break; }
+                }
+                if (!host) continue; // no unique host available
+                usedSrcHosts.add(host);
+                toRepair.push({ seci, host, data: encoded.shards[seci] });
+              }
+
+              mlog(`    slab ${si + 1}: uploading to destination + repairing ${toRepair.length} source sectors...`);
+
+              // Launch both concurrently
+              const srcRepairPromise = (async () => {
+                if (toRepair.length === 0) return 0;
+                const repairs = await Promise.allSettled(toRepair.map(async ({ seci, host, data }) => {
+                  const root = await srcSdk.writeSector(host, data);
+                  return { seci, root, host };
+                }));
+                let srcRepaired = 0;
+                for (const r of repairs) {
+                  if (r.status === 'fulfilled') {
+                    srcRepairSectors[r.value.seci] = { root: r.value.root, hostKey: r.value.host };
+                    srcRepaired++;
+                  }
+                }
+                return srcRepaired;
+              })();
+
+              const dstUploadPromise = (async () => {
+                const json = await dstSdk.uploadEncodedShards(
+                  encoded.shards, encoded.slabKey, encoded.length, origSlab.offset,
+                  encoded.minShards, new UploadOptions()
+                );
+                return JSON.parse(json);
+              })();
+
+              const [srcRepaired, newSlab] = await Promise.all([srcRepairPromise, dstUploadPromise]);
+              finalSlabs[si] = newSlab;
+
+              // Re-pin source with repaired sectors
+              if (srcRepaired > 0) {
+                mlog(`    slab ${si + 1}: repaired ${srcRepaired}/${toRepair.length} source sectors`);
+                const repairedSlab = { ...origSlab, sectors: srcRepairSectors };
+                const srcSlabs = slabs.map((s, idx) => idx === si ? repairedSlab : s);
+                try {
+                  const srcObj = srcSdk.assembleObject(dataKey, JSON.stringify(srcSlabs));
+                  await srcSdk.pinObject(srcObj);
+                  mlog(`    slab ${si + 1}: source re-pinned ✓`);
+                } catch (e) {
+                  mlog(`    slab ${si + 1}: source re-pin failed (${(e.message || e).slice(0, 80)})`);
+                }
+              }
+              mlog(`    slab ${si + 1}: ✓`);
+            }
+          }
+
+          // --- Phase 2: Parallel sector copy for healthy slabs ---
+          // (readSector/writeSector are guard-free, safe to parallelize)
+          const MAX_SECTOR_CONCURRENT = 10;
+          if (copySlabs.length > 0) {
+            const allCopies = [];
+            for (const si of copySlabs) {
+              // Track hosts already in this slab to avoid duplicates
+              const usedDstHosts = new Set(finalSlabs[si].sectors
+                .filter(s => s.hostKey !== ZERO_KEY && dstHostSet.has(s.hostKey))
+                .map(s => s.hostKey));
+              for (let seci = 0; seci < finalSlabs[si].sectors.length; seci++) {
+                const sec = finalSlabs[si].sectors[seci];
+                if (sec.hostKey === ZERO_KEY || dstHostSet.has(sec.hostKey)) continue;
+                let host = null;
+                for (let attempt = 0; attempt < dstHostKeys.length; attempt++) {
+                  const candidate = nextDstHost();
+                  if (!usedDstHosts.has(candidate)) { host = candidate; break; }
+                }
+                if (!host) continue;
+                usedDstHosts.add(host);
+                allCopies.push({ si, seci, sec, dstHost: host });
+              }
+            }
+            mlog(`  copying ${allCopies.length} sectors (${MAX_SECTOR_CONCURRENT} concurrent)...`);
+            mlog(`    progress: 0/${allCopies.length}`);
+
+            let copyDone = 0, copyFailed = 0;
+            const failedSlabs = new Set();
+            let copyNext = 0, copyInflight = 0;
+
+            await new Promise((resolve) => {
+              function launchCopy() {
+                while (copyInflight < MAX_SECTOR_CONCURRENT && copyNext < allCopies.length) {
+                  const idx = copyNext++;
+                  const { si, seci, sec, dstHost } = allCopies[idx];
+                  copyInflight++;
+                  (async () => {
+                    try {
+                      const newRoot = await dstSdk.copySectorFrom(srcSdk, sec.hostKey, sec.root, dstHost);
+                      if (newRoot === sec.root) {
+                        finalSlabs[si].sectors[seci] = { root: sec.root, hostKey: dstHost };
+                        sectorsTransferred++;
+                        bytesTransferred += 4 * 1024 * 1024;
+                      } else {
+                        failedSlabs.add(si);
+                      }
+                    } catch (_) {
+                      copyFailed++;
+                      failedSlabs.add(si);
+                    }
+                    copyDone++;
+                    copyInflight--;
+                    const lines = status.textContent.split('\n');
+                    lines[lines.length - 1] = `    progress: ${copyDone}/${allCopies.length}${copyFailed > 0 ? ` (${copyFailed} failed)` : ''}`;
+                    status.textContent = lines.join('\n');
+                    status.scrollTop = status.scrollHeight;
+                    if (copyNext >= allCopies.length && copyInflight === 0) resolve();
+                    else launchCopy();
+                  })();
+                }
+                if (allCopies.length === 0) resolve();
+              }
+              launchCopy();
+            });
+            mlog(`    copied ${copyDone - copyFailed}/${allCopies.length} sectors`);
+
+            // Re-encode slabs with failed copies (sequential — tokio runtime constraint)
+            if (failedSlabs.size > 0) {
+              mlog(`    ${failedSlabs.size} slabs had failures — re-encoding...`);
+              for (const si of failedSlabs) {
+                try {
+                  const origSlab = slabs[si];
+                  const streamOffset = slabs.slice(0, si).reduce((acc, s) => acc + s.length, 0);
+                  const plaintext = await srcSdk.downloadSlabByIndex(obj, si, new DownloadOptions());
+                  const slabKeyBytes = Uint8Array.from(atob(origSlab.encryptionKey), c => c.charCodeAt(0));
+                  const encoded = reencodeSlabWithKey(
+                    plaintext, dataKey, streamOffset,
+                    origSlab.minShards, origSlab.sectors.length - origSlab.minShards,
+                    slabKeyBytes
+                  );
+                  const newSlabJson = await dstSdk.uploadEncodedShards(
+                    encoded.shards, encoded.slabKey, encoded.length, origSlab.offset,
+                    encoded.minShards, new UploadOptions()
+                  );
+                  finalSlabs[si] = JSON.parse(newSlabJson);
+                } catch (e) {
+                  mlog(`    slab ${si + 1}: fallback re-encode failed`);
+                }
+              }
+            }
+          }
+
+          // Assemble and pin
+          const newObj = dstSdk.assembleObject(dataKey, JSON.stringify(finalSlabs));
+          const newId = newObj.id();
+          mlog(`  source: ${objId}`);
+          mlog(`  result: ${newId}${newId === objId ? '' : ' ⚠ ID CHANGED'}`);
+          await dstSdk.pinObject(newObj);
+          migrated++;
+          mlog(`  → migrated`);
+        }
+      } catch (e) {
+        const msg = e.message || String(e);
+        errors.push({ id: objId, msg });
+        mlog(`  → FAILED: ${msg}`);
+        console.warn(`Migration failed for ${objId}:`, e);
       }
     }
 
-    let html = `Total objects: ${events.length}  |  `;
-    html += `<span class="pass">Migrated: ${pinned}</span>  |  `;
-    html += `<span class="fail">Degraded: ${degraded.length}</span>  |  `;
-    html += `<span class="fail">Errors: ${errors.length}</span>\n\n`;
-
-    if (degraded.length > 0) {
-      html += `<span class="fail">Degraded objects (${degraded.length}):</span>\n`;
-      html += `Some hosts storing sectors for these objects have gone offline.\n`;
-      html += `The data may still be downloadable from the source (erasure coding\n`;
-      html += `can recover from partial sectors). To migrate, download from the\n`;
-      html += `source and re-upload to the destination.\n\n`;
-      for (const id of degraded) {
-        html += `  ${id}\n`;
-      }
-    }
+    const mbTransferred = (bytesTransferred / 1024 / 1024).toFixed(1);
+    let summary = `\n${'─'.repeat(60)}\n`;
+    summary += `Total: ${events.length}  |  `;
+    summary += `Pinned directly: ${pinDirect}  |  `;
+    summary += `Migrated: ${migrated}  |  `;
+    if (skipped > 0) summary += `Skipped (already exists): ${skipped}  |  `;
+    if (sectorsTransferred > 0) summary += `Sectors copied: ${sectorsTransferred} (${mbTransferred} MiB)  |  `;
+    summary += `Errors: ${errors.length}`;
     if (errors.length > 0) {
-      html += `\n<span class="fail">Other errors (${errors.length}):</span>\n`;
+      summary += '\n\nFailed objects:\n';
       for (const { id, msg } of errors) {
-        html += `  ${id}: ${msg}\n`;
+        summary += `  ${id}: ${msg}\n`;
       }
     }
-    status.innerHTML = html;
-  } catch (e) {
-    status.innerHTML = `<span class="fail">Migration failed: ${e.message}</span>`;
+    mlog(summary);
+  }); } catch (e) {
+    mlog(`\nMigration failed: ${e.message}`);
   }
 });
 

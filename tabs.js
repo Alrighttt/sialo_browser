@@ -1,4 +1,4 @@
-// Tab Management System for the Sia Browser.
+// Tab Management System for the Sialo Browser.
 //
 // Manages browser tabs and internal panel tabs: creation, activation,
 // closing, drag-and-drop reordering, per-tab navigation history,

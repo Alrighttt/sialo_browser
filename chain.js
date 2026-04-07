@@ -604,14 +604,23 @@ async function _loadFiltersInner() {
   const net = _activeNetwork;
   const keys = networkDataKeys(net);
 
-  // Load filter data: try OPFS first, then IndexedDB chunked, then legacy
+  // Load filter data: try OPFS first (full-chain worker saves here),
+  // then IndexedDB (V2 generate_filters saves here directly from WASM),
+  // then legacy. Use whichever has the highest tip_height.
   let filterData = null;
-  filterData = await opfsLoad(keys.filter);
-  if (!filterData || !filterData.byteLength) {
-    const syncerFilter = await syncerDbLoadChunked(keys.filter);
-    if (syncerFilter && syncerFilter.byteLength > 0) {
-      filterData = syncerFilter;
-    }
+  let filterTip = 0;
+  const opfsFilter = await opfsLoad(keys.filter);
+  if (opfsFilter && opfsFilter.byteLength >= 24) {
+    const dv = new DataView(opfsFilter.buffer || opfsFilter);
+    const tip = Number(dv.getBigUint64(16, true));
+    if (tip > filterTip) { filterData = opfsFilter; filterTip = tip; }
+  }
+  const idbFilter = await syncerDbLoadChunked(keys.filter);
+  if (idbFilter && idbFilter.byteLength >= 24) {
+    const arr = idbFilter instanceof Uint8Array ? idbFilter : new Uint8Array(idbFilter);
+    const dv = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+    const tip = Number(dv.getBigUint64(16, true));
+    if (tip > filterTip) { filterData = arr; filterTip = tip; }
   }
   if ((!filterData || !filterData.byteLength) && keys.filterLegacy) {
     const legacyFilter = await filterDbLoad(keys.filterLegacy);
@@ -623,6 +632,12 @@ async function _loadFiltersInner() {
   if (filterData) {
     _filterType = isV2Network(net) ? 'v2' : 'all';
     _filterBlobUrl = URL.createObjectURL(new Blob([filterData], { type: 'application/octet-stream' }));
+    // Log filter tip height for debugging
+    if (filterData.byteLength >= 24) {
+      const dv = new DataView(filterData.buffer || filterData);
+      const tipH = Number(dv.getBigUint64(16, true));
+      console.log(`[loadFilters] Loaded ${filterData.byteLength} bytes, filter tip height: ${tipH}, key: ${keys.filter}`);
+    }
   }
 
   // Load txindex data: try OPFS first, then IndexedDB

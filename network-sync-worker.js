@@ -454,6 +454,7 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
   }
 
   // If cached data covers the chain tip exactly, skip
+  logFn(`Cache tips: filters=${cachedFilterTip}, txindex=${cachedTxindexTip}, utxos=${cachedUtxoTip}, attestations=${cachedAttestationTip}, chain=${totalBlocks}`, 'data');
   if (cachedFilterTip >= totalBlocks && cachedTxindexTip >= totalBlocks && cachedUtxoTip >= totalBlocks && cachedAttestationTip >= totalBlocks) {
     logFn(`Full-chain data already up to date (filters: ${cachedFilterTip}, txindex: ${cachedTxindexTip}, utxos: ${cachedUtxoTip}, attestations: ${cachedAttestationTip}, chain: ${totalBlocks})`, 'ok');
     self.postMessage({ type: 'progress', net, currentHeight: totalBlocks, networkHeight: totalBlocks });
