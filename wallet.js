@@ -981,7 +981,8 @@ async function txbComputeProofs() {
     statusEl.textContent = `Proofs computed: ${found}/${total} UTXOs proven.`;
     statusEl.style.color = found >= total ? '#4ade80' : (found > 0 ? '#f59e0b' : '#f87171');
   } catch (e) {
-    statusEl.textContent = 'Error: ' + e;
+    console.error('[compute-proofs]', e);
+    statusEl.textContent = 'Error: ' + (e.message || e);
     statusEl.style.color = '#f87171';
   } finally {
     btn.disabled = false;
@@ -1435,6 +1436,21 @@ async function walletScanUtxos() {
   const net = getActiveNetwork();
   const account = parseInt(document.getElementById('wallet-account', 10).value) || 0;
 
+  // Wait for any active sync to complete so filters are fresh
+  const syncState = getSyncState(net);
+  if (syncState && syncState.status === 'syncing') {
+    walletScanLog('Waiting for background sync to finish...', 'info');
+    await new Promise(resolve => {
+      const unsub = chainOnChange(() => {
+        const s = getSyncState(net);
+        if (!s || s.status !== 'syncing') { unsub(); resolve(); }
+      });
+      // Timeout after 60s — don't block forever
+      setTimeout(() => { unsub(); resolve(); }, 60000);
+    });
+    walletScanLog('Sync complete, starting wallet scan.', 'info');
+  }
+
   const filterUrl = getFilterUrl();
   if (!filterUrl) {
     walletScanLog('No filters loaded for ' + net + '. Sync filters first in the Syncer page.', 'err');
@@ -1458,6 +1474,7 @@ async function walletScanUtxos() {
   document.getElementById('wallet-utxo-body').innerHTML = '';
   document.getElementById('wallet-tab-stats').innerHTML = '';
   walletScanLog('Scanning wallet UTXOs on ' + net + ' (account ' + account + ')...', 'info');
+  document.getElementById('wallet-scan-log').scrollIntoView({ behavior: 'smooth' });
 
   const startTime = performance.now();
 
@@ -1748,5 +1765,5 @@ export {
   walletLock, walletDelete, walletDbSave, walletDbLoad,
   walletGenerateSeed, walletEncryptAndSave, walletLoadAndDecrypt,
   walletExportSeed, walletDeriveAddresses, walletScanUtxos,
-  walletSaveResultAsJson,
+  walletSaveResultAsJson, scToHastings,
 };

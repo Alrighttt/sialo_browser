@@ -39,7 +39,7 @@ import {
   walletSaveResultAsJson,
 } from './wallet.js';
 import {
-  webcodecStream, transmuxAndStream,
+  connectSdk, webcodecStream, transmuxAndStream, getUrl, getKeyHex,
 } from './config.js';
 import { initDownloadUI } from './download-ui.js';
 import { initUploadUI } from './upload-ui.js';
@@ -397,7 +397,7 @@ function initGearMenu() {
   }
 }
 
-function handleChromeBarNavigation() {
+window.handleChromeBarNavigation = function handleChromeBarNavigation() {
   const bar = document.getElementById('chrome-address-bar');
   if (!bar) return;
   const url = bar.value.trim();
@@ -410,8 +410,9 @@ function handleChromeBarNavigation() {
     return;
   }
 
-  // Detect Sia addresses: 76 hex chars (with checksum) or 64 hex chars (raw)
-  if (/^[0-9a-fA-F]{76}$/.test(url) || /^[0-9a-fA-F]{64}$/.test(url)) {
+  // Detect Sia addresses: 76 hex chars (with checksum) — explorer lookup
+  // Note: 64 hex chars are treated as object IDs, not addresses
+  if (/^[0-9a-fA-F]{76}$/.test(url)) {
     openOrActivateInternalTab('explorer');
     document.getElementById('exp-query').value = url;
     explorerQuery();
@@ -438,37 +439,110 @@ const urlInput = document.getElementById('cfg-url');
 const keyInput = document.getElementById('cfg-key');
 const maxDownloadsInput = document.getElementById('cfg-max-downloads');
 const maxUploadsInput = document.getElementById('cfg-max-uploads');
-const downloadWorkersInput = document.getElementById('cfg-download-workers');
-const uploadWorkersInput = document.getElementById('cfg-upload-workers');
 const debugLoggingCheckbox = document.getElementById('cfg-debug-logging');
 
-const savedUrl = localStorage.getItem('indexer-url');
-const savedKey = localStorage.getItem('app-key');
-const savedMaxDownloads = localStorage.getItem('max-downloads');
-const savedMaxUploads = localStorage.getItem('max-uploads');
-const savedDownloadWorkers = localStorage.getItem('download-workers');
-const savedUploadWorkers = localStorage.getItem('upload-workers');
-const savedLogLevel = localStorage.getItem('log-level');
+// --- Indexer Profile Management ---
+const PROFILES_KEY = 'indexer-profiles';
+const profileSelect = document.getElementById('cfg-profile-select');
 
-if (savedUrl) urlInput.value = savedUrl;
-if (savedKey) keyInput.value = savedKey;
-if (savedMaxDownloads) maxDownloadsInput.value = savedMaxDownloads;
-if (savedMaxUploads) maxUploadsInput.value = savedMaxUploads;
-if (savedDownloadWorkers) downloadWorkersInput.value = savedDownloadWorkers;
-if (savedUploadWorkers) uploadWorkersInput.value = savedUploadWorkers;
-if (savedLogLevel === 'debug') {
-  debugLoggingCheckbox.checked = true;
+function loadProfiles() {
+  try { return JSON.parse(localStorage.getItem(PROFILES_KEY)) || null; } catch { return null; }
 }
 
+function saveProfiles(data) {
+  localStorage.setItem(PROFILES_KEY, JSON.stringify(data));
+  const active = data.profiles[data.active];
+  if (active) {
+    localStorage.setItem('indexer-url', active.url || '');
+    localStorage.setItem('app-key', active.key || '');
+  }
+}
 
+function migrateToProfiles() {
+  const existing = loadProfiles();
+  if (existing && Object.keys(existing.profiles).length > 0) return existing;
+  const url = localStorage.getItem('indexer-url') || '';
+  const key = localStorage.getItem('app-key') || '';
+  const name = url ? new URL(url).hostname : 'default';
+  const data = { profiles: { [name]: { url, key } }, active: name };
+  saveProfiles(data);
+  return data;
+}
 
-// Save to localStorage when config changes
-urlInput.addEventListener('input', () => {
-  localStorage.setItem('indexer-url', urlInput.value.trim());
+const objectsProfileSelect = document.getElementById('objects-profile-select');
+
+function renderProfileSelect(data) {
+  for (const sel of [profileSelect, objectsProfileSelect]) {
+    sel.innerHTML = '';
+    for (const name of Object.keys(data.profiles)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = name;
+      if (name === data.active) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+function activateProfile(data, name) {
+  data.active = name;
+  const profile = data.profiles[name] || { url: '', key: '' };
+  urlInput.value = profile.url || '';
+  keyInput.value = profile.key || '';
+  saveProfiles(data);
+  renderProfileSelect(data);
+}
+
+function saveActiveProfile(data) {
+  if (!data.active) return;
+  data.profiles[data.active] = { url: urlInput.value.trim(), key: keyInput.value.trim() };
+  saveProfiles(data);
+}
+
+let profileData = migrateToProfiles();
+renderProfileSelect(profileData);
+activateProfile(profileData, profileData.active);
+
+// Load non-profile settings
+const savedMaxDownloads = localStorage.getItem('max-downloads');
+const savedMaxUploads = localStorage.getItem('max-uploads');
+const savedLogLevel = localStorage.getItem('log-level');
+if (savedMaxDownloads) maxDownloadsInput.value = savedMaxDownloads;
+if (savedMaxUploads) maxUploadsInput.value = savedMaxUploads;
+if (savedLogLevel === 'debug') debugLoggingCheckbox.checked = true;
+
+profileSelect.addEventListener('change', () => {
+  activateProfile(profileData, profileSelect.value);
 });
-keyInput.addEventListener('input', () => {
-  localStorage.setItem('app-key', keyInput.value.trim());
+
+objectsProfileSelect.addEventListener('change', () => {
+  activateProfile(profileData, objectsProfileSelect.value);
 });
+
+document.getElementById('cfg-profile-add').addEventListener('click', () => {
+  const name = prompt('Profile name (e.g. indexer hostname):');
+  if (!name || !name.trim()) return;
+  const trimmed = name.trim();
+  if (profileData.profiles[trimmed]) { alert('Profile already exists.'); return; }
+  profileData.profiles[trimmed] = { url: '', key: '' };
+  activateProfile(profileData, trimmed);
+});
+
+document.getElementById('cfg-profile-delete').addEventListener('click', () => {
+  const names = Object.keys(profileData.profiles);
+  if (names.length <= 1) { alert('Cannot delete the only profile.'); return; }
+  if (!confirm(`Delete profile "${profileData.active}"?`)) return;
+  delete profileData.profiles[profileData.active];
+  const remaining = Object.keys(profileData.profiles)[0];
+  activateProfile(profileData, remaining);
+});
+
+// Save URL and key to active profile on input
+urlInput.addEventListener('input', () => { saveActiveProfile(profileData); });
+keyInput.addEventListener('input', () => { saveActiveProfile(profileData); });
+
+// Listen for profile updates from other modules (e.g. register wizard)
+window.addEventListener('profile-updated', () => { saveActiveProfile(profileData); });
 document.getElementById('cfg-key-toggle').addEventListener('click', () => {
   const btn = document.getElementById('cfg-key-toggle');
   if (keyInput.type === 'password') { keyInput.type = 'text'; btn.textContent = 'hide'; }
@@ -479,12 +553,6 @@ maxDownloadsInput.addEventListener('input', () => {
 });
 maxUploadsInput.addEventListener('input', () => {
   localStorage.setItem('max-uploads', maxUploadsInput.value);
-});
-downloadWorkersInput.addEventListener('input', () => {
-  localStorage.setItem('download-workers', downloadWorkersInput.value);
-});
-uploadWorkersInput.addEventListener('input', () => {
-  localStorage.setItem('upload-workers', uploadWorkersInput.value);
 });
 debugLoggingCheckbox.addEventListener('change', () => {
   const level = debugLoggingCheckbox.checked ? 'debug' : 'info';
@@ -856,20 +924,16 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
 }
 
 // -- Performance Presets --
-function setPreset(maxDl, maxUl, dlWorkers, ulWorkers) {
+function setPreset(maxDl, maxUl) {
   document.getElementById('cfg-max-downloads').value = maxDl;
   document.getElementById('cfg-max-uploads').value = maxUl;
-  document.getElementById('cfg-download-workers').value = dlWorkers;
-  document.getElementById('cfg-upload-workers').value = ulWorkers;
   localStorage.setItem('max-downloads', maxDl);
   localStorage.setItem('max-uploads', maxUl);
-  localStorage.setItem('download-workers', dlWorkers);
-  localStorage.setItem('upload-workers', ulWorkers);
 }
 
-document.getElementById('preset-conservative').addEventListener('click', () => setPreset(4, 4, 4, 4));
-document.getElementById('preset-balanced').addEventListener('click', () => setPreset(8, 8, 8, 8));
-document.getElementById('preset-fast').addEventListener('click', () => setPreset(16, 16, 16, 16));
+document.getElementById('preset-conservative').addEventListener('click', () => setPreset(4, 4));
+document.getElementById('preset-balanced').addEventListener('click', () => setPreset(8, 8));
+document.getElementById('preset-fast').addEventListener('click', () => setPreset(16, 16));
 
 
 // Account dashboard, host balances, prune → account-ui.js
@@ -890,6 +954,166 @@ initBenchmarkUI();
 
 // Objects list, share, view, delete, info → objects-ui.js
 initObjectsUI();
+
+// --- Migrate Objects ---
+
+function renderMigrateDropdowns() {
+  const data = loadProfiles();
+  if (!data) return;
+  for (const selId of ['migrate-src-profile', 'migrate-dst-profile']) {
+    const sel = document.getElementById(selId);
+    sel.innerHTML = '';
+    for (const name of Object.keys(data.profiles)) {
+      const opt = document.createElement('option');
+      opt.value = name;
+      opt.textContent = `${name} (${data.profiles[name].url || 'no URL'})`;
+      sel.appendChild(opt);
+    }
+  }
+  const names = Object.keys(data.profiles);
+  if (names.length >= 2) {
+    document.getElementById('migrate-dst-profile').value = names[1];
+  }
+}
+renderMigrateDropdowns();
+window.addEventListener('profile-updated', renderMigrateDropdowns);
+
+// Toggle object ID input visibility based on mode
+document.getElementById('migrate-mode').addEventListener('change', () => {
+  const mode = document.getElementById('migrate-mode').value;
+  document.getElementById('migrate-object-id').style.display = mode === 'single' ? '' : 'none';
+});
+
+// Allow pre-filling the migration form from object list buttons
+window.migrateObjectById = (objectId) => {
+  document.getElementById('migrate-mode').value = 'single';
+  document.getElementById('migrate-object-id').style.display = '';
+  document.getElementById('migrate-object-id').value = objectId;
+  document.getElementById('migrate-status').innerHTML = '';
+  document.querySelector('#panel-objects .panel-section:nth-child(2)').scrollIntoView({ behavior: 'smooth' });
+};
+
+document.getElementById('migrate-btn-start').addEventListener('click', async () => {
+  const status = document.getElementById('migrate-status');
+  const mode = document.getElementById('migrate-mode').value;
+  const singleId = document.getElementById('migrate-object-id').value.trim();
+  const data = loadProfiles();
+  if (!data) { status.innerHTML = '<span class="fail">No profiles configured.</span>'; return; }
+
+  if (mode === 'single' && !singleId) {
+    status.innerHTML = '<span class="fail">Enter an object ID.</span>';
+    return;
+  }
+
+  const srcName = document.getElementById('migrate-src-profile').value;
+  const dstName = document.getElementById('migrate-dst-profile').value;
+  const src = data.profiles[srcName];
+  const dst = data.profiles[dstName];
+
+  if (!src?.url || !src?.key) {
+    status.innerHTML = '<span class="fail">Source profile is missing URL or key.</span>';
+    return;
+  }
+  if (!dst?.url || !dst?.key) {
+    status.innerHTML = '<span class="fail">Destination profile is missing URL or key.</span>';
+    return;
+  }
+  if (srcName === dstName) {
+    status.innerHTML = '<span class="fail">Source and destination must be different profiles.</span>';
+    return;
+  }
+
+  try {
+    status.textContent = `Connecting to source (${srcName})...`;
+    const srcKey = new AppKey(fromHex(src.key));
+    const srcBuilder = new Builder(src.url);
+    const srcSdk = await srcBuilder.connected(srcKey);
+    if (!srcSdk) {
+      status.innerHTML = `<span class="fail">Source key not recognized by ${srcName}.</span>`;
+      return;
+    }
+
+    status.textContent = `Connecting to destination (${dstName})...`;
+    const dstKey = new AppKey(fromHex(dst.key));
+    const dstBuilder = new Builder(dst.url);
+    const dstSdk = await dstBuilder.connected(dstKey);
+    if (!dstSdk) {
+      status.innerHTML = `<span class="fail">Destination key not recognized by ${dstName}.</span>`;
+      return;
+    }
+
+    let events;
+    if (mode === 'single') {
+      events = [{ id: singleId, deleted: false }];
+    } else {
+      status.textContent = 'Listing objects on source...';
+      const PAGE_SIZE = 500;
+      let allEvents = [];
+      let page = JSON.parse(await srcSdk.listObjects(PAGE_SIZE));
+      allEvents = allEvents.concat(page);
+      status.textContent = `Listing objects on source... (${allEvents.length} found)`;
+      while (page.length === PAGE_SIZE) {
+        const last = page[page.length - 1];
+        const afterMs = new Date(last.updated_at).getTime();
+        page = JSON.parse(await srcSdk.listObjectsAfter(last.id, afterMs, PAGE_SIZE));
+        allEvents = allEvents.concat(page);
+        status.textContent = `Listing objects on source... (${allEvents.length} found)`;
+      }
+      events = allEvents.filter(e => !e.deleted);
+    }
+
+    if (events.length === 0) {
+      status.innerHTML = '<span class="fail">No objects found on source indexer.</span>';
+      return;
+    }
+
+    let pinned = 0;
+    const degraded = [];
+    const errors = [];
+    for (let i = 0; i < events.length; i++) {
+      try {
+        status.textContent = `Migrating ${i + 1} / ${events.length}...`;
+        const obj = await srcSdk.object(events[i].id);
+        await dstSdk.pinObject(obj);
+        pinned++;
+      } catch (e) {
+        const id = events[i].id;
+        const msg = e.message || String(e);
+        if (msg.includes('host key is empty')) {
+          degraded.push(id);
+        } else {
+          errors.push({ id, msg });
+        }
+        console.warn(`Failed to migrate object ${i} (${id}): ${msg}`);
+      }
+    }
+
+    let html = `Total objects: ${events.length}  |  `;
+    html += `<span class="pass">Migrated: ${pinned}</span>  |  `;
+    html += `<span class="fail">Degraded: ${degraded.length}</span>  |  `;
+    html += `<span class="fail">Errors: ${errors.length}</span>\n\n`;
+
+    if (degraded.length > 0) {
+      html += `<span class="fail">Degraded objects (${degraded.length}):</span>\n`;
+      html += `Some hosts storing sectors for these objects have gone offline.\n`;
+      html += `The data may still be downloadable from the source (erasure coding\n`;
+      html += `can recover from partial sectors). To migrate, download from the\n`;
+      html += `source and re-upload to the destination.\n\n`;
+      for (const id of degraded) {
+        html += `  ${id}\n`;
+      }
+    }
+    if (errors.length > 0) {
+      html += `\n<span class="fail">Other errors (${errors.length}):</span>\n`;
+      for (const { id, msg } of errors) {
+        html += `  ${id}: ${msg}\n`;
+      }
+    }
+    status.innerHTML = html;
+  } catch (e) {
+    status.innerHTML = `<span class="fail">Migration failed: ${e.message}</span>`;
+  }
+});
 
 // Browser module → browser.js
 

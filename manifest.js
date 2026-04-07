@@ -20,7 +20,7 @@ import {
 } from './pkg/syncer_wasm.js';
 import {
   getWalletEntropy, setWalletEntropy, getWalletHasSaved, setWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
-  walletDbLoad, walletUpdateUI, walletResetLockTimer, walletScanUtxos,
+  walletDbLoad, walletUpdateUI, walletResetLockTimer, walletScanUtxos, scToHastings,
 } from './wallet.js';
 
 // Late-binding: loadContentWithAutoDetect is defined in the main script
@@ -192,7 +192,8 @@ async function mfstBuildTransaction() {
   const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
   const addrIdx = parseInt(document.getElementById('mfst-address-index', 10).value) || 0;
   const url = document.getElementById('mfst-share-url').value.trim();
-  const fee = document.getElementById('mfst-miner-fee').value.trim() || '0';
+  const feeInput = document.getElementById('mfst-miner-fee').value.trim() || '0';
+  const fee = scToHastings(feeInput);
   const network = mfstGetNetwork();
   if (!url) { mfstLog('Enter a URL.', 'err'); return; }
 

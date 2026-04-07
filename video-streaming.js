@@ -385,7 +385,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
         progressEl.value = msg.current;
         byteOffset = msg.byteOffset;
         const pct = msg.total > 0 ? ((msg.current / msg.total) * 100).toFixed(0) : 0;
-        statusEl.textContent = `Streaming: ${msg.current}/${msg.total} slabs (${pct}%) — ${formatSize(msg.byteOffset)} / ${formatSize(msg.totalSize)}`;
+        statusEl.textContent = `Streaming: ${pct}% — ${formatSize(msg.current)} / ${formatSize(msg.total)}`;
         if (msg.current === msg.total) _dbg(`[perf] last progress message received at ${_msgT0.toFixed(1)}`);
       } else if (msg.type === 'stream-seek-flushed') {
         VPC.flushBuffers(s);
@@ -671,7 +671,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
       progressEl.max = total;
       progressEl.value = current;
       const pct = total > 0 ? ((current / total) * 100).toFixed(0) : 0;
-      statusEl.textContent = `Streaming: ${current}/${total} slabs (${pct}%) — ${formatSize(byteOffset)} / ${formatSize(totalSize)}`;
+      statusEl.textContent = `Streaming: ${pct}% — ${formatSize(current)} / ${formatSize(total)}`;
 
       if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
         aborted = true;

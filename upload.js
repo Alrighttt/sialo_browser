@@ -2,7 +2,7 @@
 // compute-worker encoding with main-thread upload.
 
 import { _dbg, formatSize } from './utils.js';
-import { getUrl, getKeyHex, getMaxUploads, getUploadWorkers, getLogLevel } from './config.js';
+import { getUrl, getKeyHex, getMaxUploads, getUploadWorkers, getLogLevel, connectSdk } from './config.js';
 import { UploadOptions } from './pkg/indexd_wasm.js';
 
 // ── Parallel Slab Upload via Web Worker Pool ──────────────────────────
@@ -551,4 +551,85 @@ async function parallelEncodeUpload(file, status, progress, numWorkers) {
   });
 }
 
-export { parallelUpload, parallelEncodeUpload };
+/// Encode-only benchmark: measures erasure coding + encryption throughput
+/// without any network I/O. Workers encode slabs and discard the result.
+async function encodeOnlyBenchmark(file, numWorkers) {
+  numWorkers = numWorkers || getUploadWorkers();
+  const fileSize = file.size;
+  const SECTOR_SIZE = 4 * 1024 * 1024;
+  const dataShards = 10;
+  const parityShards = 20;
+  const SLAB_DATA_SIZE = dataShards * SECTOR_SIZE;
+  const slabCount = fileSize === 0 ? 0 : Math.ceil(fileSize / SLAB_DATA_SIZE);
+
+  const actualWorkers = Math.min(numWorkers, slabCount || 1);
+  const workers = [];
+  const readyPromises = [];
+
+  for (let i = 0; i < actualWorkers; i++) {
+    const w = new Worker('./slab-encode-worker.js', { type: 'module' });
+    const ready = new Promise((resolve, reject) => {
+      const handler = (e) => {
+        if (e.data.type === 'ready') { w.removeEventListener('message', handler); resolve(); }
+        if (e.data.type === 'error') { w.removeEventListener('message', handler); reject(new Error(e.data.message)); }
+      };
+      w.addEventListener('message', handler);
+    });
+    w.postMessage({ type: 'init', workerIndex: i, logLevel: 'error' });
+    workers.push(w);
+    readyPromises.push(ready);
+  }
+  await Promise.all(readyPromises);
+
+  // Generate a dummy data key (32 bytes)
+  const dataKeyBuf = new ArrayBuffer(32);
+  crypto.getRandomValues(new Uint8Array(dataKeyBuf));
+
+  let nextSlab = 0;
+  let completedSlabs = 0;
+
+  return new Promise((resolve, reject) => {
+    function sendSlabToWorker(worker, idx) {
+      const slabOffset = idx * SLAB_DATA_SIZE;
+      const slabEnd = Math.min(slabOffset + SLAB_DATA_SIZE, fileSize);
+      const blob = file.slice(slabOffset, slabEnd);
+      blob.arrayBuffer().then((buf) => {
+        worker.postMessage({
+          type: 'encode-slab',
+          slabIndex: idx,
+          data: buf,
+          dataKey: dataKeyBuf,
+          streamOffset: slabOffset,
+          dataShards,
+          parityShards,
+        }, [buf]);
+      });
+    }
+
+    function assignWork(worker) {
+      if (nextSlab >= slabCount) return;
+      sendSlabToWorker(worker, nextSlab++);
+    }
+
+    for (const w of workers) {
+      w.onmessage = (e) => {
+        if (e.data.type === 'slab-encoded') {
+          completedSlabs++;
+          if (completedSlabs === slabCount) {
+            workers.forEach(w => w.terminate());
+            resolve({ slabs: slabCount, size: fileSize });
+          } else {
+            assignWork(w);
+          }
+        }
+        if (e.data.type === 'encode-error') {
+          workers.forEach(w => w.terminate());
+          reject(new Error(`Encode slab ${e.data.slabIndex}: ${e.data.message}`));
+        }
+      };
+      assignWork(w);
+    }
+  });
+}
+
+export { parallelUpload, parallelEncodeUpload, encodeOnlyBenchmark };

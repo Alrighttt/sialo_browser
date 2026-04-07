@@ -1,5 +1,6 @@
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
+import { withKeepAlive } from './keep-alive.js';
 import {
   parallelDownload, parallelDownloadToDisk, getActiveServiceWorker, parallelDownloadViaSW,
 } from './download.js';
@@ -134,7 +135,7 @@ export function initDownloadUI() {
       status.textContent = hostLines ? `${line1}\n${line2}\n${hostLines}` : `${line1}\n${line2}`;
     };
 
-    try {
+    try { await withKeepAlive(async () => {
       // Path 1: File System Access API (Chrome/Edge — file picker already shown above)
       if (writable) {
         console.log('Using download path: File System Access API');
@@ -216,7 +217,7 @@ export function initDownloadUI() {
       const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
       progress.value = progress.max;
       status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(size)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
-    } catch (e) {
+    }); } catch (e) {
       if (progressInterval) clearInterval(progressInterval);
       status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
     } finally {

@@ -1,7 +1,7 @@
 import { UploadOptions } from './pkg/indexd_wasm.js';
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
-import { parallelUpload, parallelEncodeUpload } from './upload.js';
+import { withKeepAlive } from './keep-alive.js';
 
 export function initUploadUI() {
   // -- Upload Text --
@@ -57,44 +57,6 @@ export function initUploadUI() {
     }
   });
 
-  // -- Upload Text (web workers) --
-  document.getElementById('btn-upload-text-workers').addEventListener('click', async () => {
-    const status = document.getElementById('ul-status');
-    const progress = document.getElementById('ul-progress');
-    const text = document.getElementById('ul-text').value;
-
-    if (!text) {
-      status.innerHTML = '<span class="fail">Enter some text to upload</span>';
-      return;
-    }
-
-    progress.style.display = 'none';
-    progress.value = 0;
-
-    try {
-      const data = new TextEncoder().encode(text);
-      const file = new File([data], 'text');
-
-      status.innerHTML = `Uploading text (${formatSize(data.length)})...\n`;
-
-      const result = await parallelUpload(file, status, progress);
-      if (!result) return;
-
-      const { obj, elapsed, size } = result;
-      const objectId = obj.id();
-
-      progress.value = progress.max;
-      status.innerHTML = `Upload complete (${formatSize(size)}) in ${elapsed}s. Pinning to indexer...`;
-
-      const sdk = await connectSdk(status);
-      await sdk.pinObject(obj);
-
-      status.innerHTML = `Upload + pin completed (${formatSize(size)}) in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
-    } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
-    }
-  });
-
   // -- Upload File --
   let selectedFile = null;
   const dropzone = document.getElementById('uf-dropzone');
@@ -137,103 +99,71 @@ export function initUploadUI() {
     if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
   });
 
-  document.getElementById('btn-upload-file').addEventListener('click', async () => {
-    const status = document.getElementById('uf-status');
-    const progress = document.getElementById('uf-progress');
-
-    if (!selectedFile) {
-      status.innerHTML = '<span class="fail">Select a file first</span>';
-      return;
-    }
-
-    progress.style.display = 'none';
-    progress.value = 0;
-
-    try {
-      status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)})...\n`;
-
-      const result = await parallelUpload(selectedFile, status, progress);
-      if (!result) return;
-
-      const { obj, elapsed, size } = result;
-      const objectId = obj.id();
-
-      progress.value = progress.max;
-      status.innerHTML = `Upload complete (${formatSize(size)}) in ${elapsed}s. Pinning to indexer...`;
-
-      const sdk = await connectSdk(status);
-      await sdk.pinObject(obj);
-
-      status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
-    } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
-    }
-  });
-
-  // -- Encode-worker File Upload (compute in workers, upload from main thread) --
-  document.getElementById('btn-upload-file-encode').addEventListener('click', async () => {
-    const status = document.getElementById('uf-status');
-    const progress = document.getElementById('uf-progress');
-
-    if (!selectedFile) {
-      status.innerHTML = '<span class="fail">Select a file first</span>';
-      return;
-    }
-
-    progress.style.display = 'none';
-    progress.value = 0;
-
-    try {
-      status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)}) via encode workers...\n`;
-
-      const result = await parallelEncodeUpload(selectedFile, status, progress);
-      if (!result) return;
-
-      const { obj, elapsed, size } = result;
-      const objectId = obj.id();
-
-      progress.value = progress.max;
-      status.innerHTML = `Upload complete (${formatSize(size)}) in ${elapsed}s. Pinning to indexer...`;
-
-      const sdk = await connectSdk(status);
-      await sdk.pinObject(obj);
-
-      status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
-    } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e)}</span>`;
-    }
-  });
-
-  // -- Simple File Upload (no workers, single-threaded streaming upload) --
+  // -- File Upload (single-threaded streaming) --
   document.getElementById('btn-upload-file-simple').addEventListener('click', async () => {
     const status = document.getElementById('uf-status');
     const progress = document.getElementById('uf-progress');
+    const cardSpeed = document.getElementById('uf-card-speed');
+    const cardDetail = document.getElementById('uf-card-detail');
+    const cardElapsed = document.getElementById('uf-card-elapsed');
+    const cardEta = document.getElementById('uf-card-eta');
+    const cardShardsDone = document.getElementById('uf-card-shards-done');
+    const hostTable = document.getElementById('uf-host-table');
+    const hostTbody = document.getElementById('uf-host-tbody');
 
     if (!selectedFile) {
       status.innerHTML = '<span class="fail">Select a file first</span>';
       return;
     }
 
-    progress.style.display = 'none';
     progress.value = 0;
+    status.innerHTML = '';
+    hostTable.style.display = 'none';
+
+    await withKeepAlive(async () => {
+    hostTbody.innerHTML = '';
+
+    function formatTime(s) {
+      if (s < 60) return `${Math.round(s)}s`;
+      const m = Math.floor(s / 60);
+      return `${m}m ${Math.round(s % 60)}s`;
+    }
 
     try {
-      status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(selectedFile.size)})...`;
+      status.textContent = 'Connecting...';
       const sdk = await connectSdk(status);
       if (!sdk) return;
-
-      progress.style.display = 'block';
 
       const uploadStart = performance.now();
       const CHUNK_SIZE = 128 * 1024 * 1024;
       const fileSize = selectedFile.size;
-      const ulOpts2 = new UploadOptions();
-      ulOpts2.maxInflight = getMaxUploads();
-      const upload = sdk.streamingUpload(fileSize, ulOpts2, (current, total) => {
+      const ulOpts = new UploadOptions();
+      ulOpts.maxInflight = getMaxUploads();
+
+      let shardsUploaded = 0;
+      let totalShards = 0;
+
+      const upload = sdk.streamingUpload(fileSize, ulOpts, (current, total) => {
+        shardsUploaded = current;
+        totalShards = total;
         progress.max = total;
         progress.value = current;
-        status.innerHTML = `Uploading ${_esc(selectedFile.name)} (${formatSize(fileSize)})... ${current}/${total} shards`;
+
+        const elapsed = (performance.now() - uploadStart) / 1000;
+        const bytesPerShard = fileSize / total;
+        const bytesUploaded = current * bytesPerShard;
+        const speed = bytesUploaded / elapsed;
+        const remaining = total - current;
+        const eta = remaining > 0 && speed > 0 ? (remaining * bytesPerShard) / speed : 0;
+
+        cardSpeed.textContent = `${(speed / 1e6).toFixed(1)} MB/s`;
+        cardDetail.textContent = `${current}/${total} shards`;
+        cardElapsed.textContent = formatTime(elapsed);
+        cardEta.textContent = eta > 0 ? formatTime(eta) : '--';
+        cardShardsDone.textContent = `${current} shards done`;
       });
+
+      // Push file chunks in the background
       (async () => {
         for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
           const chunk = selectedFile.slice(offset, offset + CHUNK_SIZE);
@@ -242,13 +172,16 @@ export function initUploadUI() {
         }
         upload.pushChunk(null);
       })();
+
       const obj = await upload.promise;
       const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
       const objectId = obj.id();
       const size = obj.size();
 
       progress.value = progress.max;
-      status.innerHTML = `Upload complete (${formatSize(size)}) in ${elapsed}s. Pinning to indexer...`;
+      cardSpeed.textContent = `${(size / parseFloat(elapsed) / 1e6).toFixed(1)} MB/s avg`;
+      cardEta.textContent = '0s';
+      status.innerHTML = `Pinning to indexer...`;
 
       await sdk.pinObject(obj);
 
@@ -256,5 +189,6 @@ export function initUploadUI() {
     } catch (e) {
       status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
     }
+    }); // withKeepAlive
   });
 }

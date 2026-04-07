@@ -190,6 +190,12 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Configuration</h2>
+            <label class="label">Indexer Profile</label>
+            <div style="display:flex; gap:0.4rem; margin-bottom:0.5rem;">
+              <select id="cfg-profile-select" style="flex:1; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
+              <button id="cfg-profile-add" title="Add new profile" style="padding:0.4rem 0.6rem;">+</button>
+              <button id="cfg-profile-delete" title="Delete current profile" style="padding:0.4rem 0.6rem;">&#128465;</button>
+            </div>
             <label class="label" for="cfg-url">Indexer URL</label>
             <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
             <label class="label" for="cfg-key">App Key (hex seed)</label>
@@ -228,16 +234,6 @@
                     class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase
                     throughput but use more connections.</span></span></label>
               <input id="cfg-max-uploads" type="number" min="1" value="8" style="padding:0.4rem; text-align:center;" />
-              <label style="font-size:0.85rem; color:#999;">Download Workers: <span class="info-tip">&#9432;<span
-                    class="info-tip-text">Number of Web Workers for parallel slab downloads. More workers allow multiple
-                    slabs to download simultaneously, improving speed for large files.</span></span></label>
-              <input id="cfg-download-workers" type="number" min="1" value="8"
-                style="padding:0.4rem; text-align:center;" />
-              <label style="font-size:0.85rem; color:#999;">Upload Workers: <span class="info-tip">&#9432;<span
-                    class="info-tip-text">Number of Web Workers for parallel slab uploads. More workers allow multiple
-                    slabs to upload simultaneously, improving speed for large files.</span></span></label>
-              <input id="cfg-upload-workers" type="number" min="1" value="8"
-                style="padding:0.4rem; text-align:center;" />
               <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span
                   class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output
                     is written to the browser console (open DevTools to view).</span></span></label>
@@ -421,6 +417,8 @@
         </div><!-- /internal-page-content -->
       </div><!-- /panel-cors -->
 
+      <!-- Panel: Migrate Objects -->
+
       <!-- Panel: Upload Text -->
       <div id="panel-upload-text" class="viewport-panel internal-page" data-panel="upload-text">
         <div class="internal-page-content">
@@ -429,8 +427,7 @@
             <div class="label">Text to upload</div>
             <textarea id="ul-text" rows="4" placeholder="Type or paste text here..."></textarea>
             <div class="row" style="margin-top:0.5rem">
-              <button id="btn-upload-text-workers">Upload ( web workers )</button>
-              <button id="btn-upload">Upload ( single-threaded )</button>
+              <button id="btn-upload">Upload</button>
             </div>
             <progress id="ul-progress" max="100" value="0" style="display:none"></progress>
             <div class="output" id="ul-status"></div>
@@ -484,9 +481,7 @@
             <div id="uf-file-info" style="font-size:0.85rem; color:#888; margin-bottom:0.5rem;"></div>
 
             <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-              <button id="btn-upload-file">Upload ( web workers )</button>
-              <button id="btn-upload-file-simple">Upload ( single-threaded )</button>
-              <button id="btn-upload-file-encode">Upload ( encode workers )</button>
+              <button id="btn-upload-file-simple">Upload</button>
             </div>
 
             <!-- Host table -->
@@ -559,6 +554,8 @@
                     checked> Web Workers</label>
                 <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encode"
                     checked> Encode Workers</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encodeonly">
+                  Encode Only (no network)</label>
               </div>
               <div>
                 <div class="label">Max Inflight</div>
@@ -570,6 +567,8 @@
                   16</label>
                 <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-24">
                   24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-32">
+                  32</label>
               </div>
               <div>
                 <div class="label">Workers (web/encode only)</div>
@@ -649,6 +648,8 @@
                   16</label>
                 <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-24">
                   24</label>
+                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-32">
+                  32</label>
               </div>
               <div>
                 <div class="label">Workers (web workers only)</div>
@@ -702,6 +703,8 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>My Objects</h2>
+            <label class="label">Active Indexer Profile</label>
+            <select id="objects-profile-select" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
             <div class="row">
               <button id="btn-list-objects">Refresh List</button>
               <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem"
@@ -712,6 +715,72 @@
               <!-- Objects will be displayed here -->
             </div>
           </div><!-- /panel-section: My Objects -->
+
+          <div class="panel-section">
+            <h2>Migrate Objects Between Indexers</h2>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:0.75rem;">
+              Pin objects from the source indexer to the destination indexer.
+              No file data is re-uploaded — only metadata is transferred.
+              Configure indexer profiles in Settings first.
+            </p>
+
+            <label class="label">Object</label>
+            <div style="display:flex; gap:0.4rem; margin-bottom:0.5rem;">
+              <select id="migrate-mode" style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;">
+                <option value="all">All Objects</option>
+                <option value="single">Single Object</option>
+              </select>
+              <input id="migrate-object-id" type="text" placeholder="Object ID (hex)" style="flex:1; font-family:monospace; font-size:0.85rem; display:none;" />
+            </div>
+
+            <label class="label">Source Profile</label>
+            <select id="migrate-src-profile" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
+
+            <label class="label">Destination Profile</label>
+            <select id="migrate-dst-profile" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
+
+            <button id="migrate-btn-start" style="margin-top:0.25rem;">Migrate</button>
+            <div class="output" id="migrate-status"></div>
+          </div><!-- /panel-section: Migrate -->
+
+          <div class="panel-section" id="reupload-section" style="display:none;">
+            <h2>Re-Upload Object</h2>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:0.75rem;">
+              Downloads the object from the current indexer and uploads it fresh
+              to the destination. Use this for degraded objects that can't be
+              pinned directly.
+            </p>
+            <label class="label">Object ID</label>
+            <input id="reupload-object-id" type="text" placeholder="Object ID (hex)" style="width:100%; margin-bottom:0.5rem; font-family:monospace; font-size:0.85rem;" readonly />
+            <label class="label">Destination Profile</label>
+            <select id="reupload-dst-profile" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
+            <button id="reupload-btn-start" style="margin-top:0.25rem;">Re-Upload</button>
+            <button id="reupload-btn-cancel" style="margin-top:0.25rem; margin-left:0.25rem; background:#555;">Cancel</button>
+            <div class="output" id="reupload-status"></div>
+          </div><!-- /panel-section: Re-Upload -->
+
+          <div class="panel-section" id="zip-builder-section" style="display:none;">
+            <h2>Download as ZIP</h2>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:0.75rem;">
+              Edit filenames for each object, then download as a single ZIP archive.
+            </p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.9rem; margin-bottom:0.75rem;">
+              <thead>
+                <tr style="border-bottom:2px solid #333; text-align:left;">
+                  <th style="padding:0.5rem;">Filename</th>
+                  <th style="padding:0.5rem; width:100px;">Size</th>
+                  <th style="padding:0.5rem; width:2.5rem;"></th>
+                </tr>
+              </thead>
+              <tbody id="zip-builder-tbody"></tbody>
+            </table>
+            <div style="display:flex; gap:0.5rem; align-items:center;">
+              <button id="zip-builder-download" style="background:#3b82f6; color:white;">Download ZIP</button>
+              <button id="zip-builder-cancel" style="background:#555;">Cancel</button>
+              <span id="zip-builder-status" style="font-size:0.8rem; color:#888;"></span>
+            </div>
+          </div><!-- /panel-section: ZIP Builder -->
+
         </div><!-- /internal-page-content -->
       </div><!-- /panel-objects -->
 
@@ -1256,9 +1325,12 @@
                 <input id="mfst-share-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%;">
               </div>
               <div style="margin-bottom:0.75rem;">
-                <div class="label">Miner Fee (hastings)</div>
-                <input id="mfst-miner-fee" type="text" value="0" placeholder="0" style="width:200px;">
-                <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">0 for testing</span>
+                <div class="label">Miner Fee</div>
+                <div style="display:flex; gap:0.5rem; align-items:center;">
+                  <input id="mfst-miner-fee" type="text" value="0" placeholder="0" style="width:200px;">
+                  <span style="color:#666; font-size:0.75rem;">SC</span>
+                  <span style="color:#666; font-size:0.75rem; margin-left:0.5rem;">0 for testing</span>
+                </div>
               </div>
               <button id="btn-mfst-build" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Build Transaction</button>
             </div>

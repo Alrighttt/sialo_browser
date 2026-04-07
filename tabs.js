@@ -215,8 +215,17 @@ export function closeTab(tabId) {
     if (tab.iframeEl) tab.iframeEl.remove();
     if (tab.isStreaming && tab.id === streamingTabId) {
       document.getElementById('video-container').style.display = 'none';
-      document.getElementById('mse-video').src = '';
+      const mseVideo = document.getElementById('mse-video');
+      mseVideo.pause();
+      mseVideo.src = '';
+      mseVideo.load();
       streamingTabId = null;
+    }
+    tab.isStreaming = false;
+    // Clear streaming status from status bar
+    const iframeStatus = document.getElementById('iframe-status');
+    if (iframeStatus && iframeStatus.textContent.includes('Streaming')) {
+      iframeStatus.textContent = '';
     }
   } else {
     // Hide the internal panel

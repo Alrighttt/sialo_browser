@@ -3,7 +3,7 @@
 
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
-  connectSdk, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
+  connectSdk, resolveSharedObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
 } from './config.js';
 import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,
@@ -717,25 +717,41 @@ async function redownloadHistoryItem(item, index) {
     // For video items, re-stream via WebCodecs (or MSE fallback)
     if (item.fileType === 'video') {
       status.textContent = 'Re-streaming video...';
-      const obj = item.originalUrl.startsWith('sia://')
-        ? await sdk.sharedObject(item.originalUrl)
-        : await sdk.object(item.originalUrl);
+      let obj;
+      if (item.originalUrl.startsWith('sia://')) {
+        const resolved = await resolveSharedObject(item.originalUrl, sdk);
+        sdk = resolved.sdk;
+        obj = resolved.obj;
+      } else {
+        obj = await sdk.object(item.originalUrl);
+      }
 
       iframe.style.display = 'none';
       videoContainer.style.display = 'block';
       setBrowserView(true);
+
+      // Mark streaming active immediately so closeTab knows to abort
+      tab.isStreaming = true;
+      setStreamingTabId(tab.id);
+      updateBrowserUI();
 
       // Try WebCodecs first
       if (typeof VideoDecoder !== 'undefined') {
         try {
           canvas.style.display = 'block';
           video.style.display = 'none';
-          const result = await webcodecStream(sdk, obj, canvas, status, progress, item.originalUrl);
+          const resultPromise = webcodecStream(sdk, obj, canvas, status, progress, item.originalUrl);
+          // The abort handle isn't available until the function returns,
+          // but we can set up a fallback abort via the video element
+          tab.streamAbort = {
+            abort: () => {
+              canvas.width = 0;
+              resultPromise.then(r => r && r.abort && r.abort()).catch(() => {});
+            }
+          };
+          const result = await resultPromise;
           tab.streamAbort = result;
-          tab.isStreaming = true;
-          setStreamingTabId(tab.id);
           status.innerHTML = `<span class="pass">${status.textContent}</span>`;
-          updateBrowserUI();
           return;
         } catch (e) {
           console.error('[browser] WebCodecs re-stream failed:', e);
@@ -746,12 +762,17 @@ async function redownloadHistoryItem(item, index) {
       try {
         canvas.style.display = 'none';
         video.style.display = 'block';
-        const result = await transmuxAndStream(sdk, obj, video, status, progress);
+        const resultPromise = transmuxAndStream(sdk, obj, video, status, progress);
+        tab.streamAbort = {
+          abort: () => {
+            video.src = '';
+            video.load();
+            resultPromise.then(r => r && r.abort && r.abort()).catch(() => {});
+          }
+        };
+        const result = await resultPromise;
         tab.streamAbort = result;
-        tab.isStreaming = true;
-        setStreamingTabId(tab.id);
         status.innerHTML = `<span class="pass">${status.textContent}</span>`;
-        updateBrowserUI();
         return;
       } catch (e) {
         console.error('[browser] MSE re-stream failed:', e);
@@ -938,13 +959,18 @@ async function loadContentWithAutoDetect() {
   if (streamingTabId === tab.id) setStreamingTabId(null);
 
   try {
-    const sdk = await connectSdk(status);
+    let sdk = await connectSdk(status);
     if (!sdk) return;
 
     status.textContent = 'Fetching object...';
-    const obj = url.startsWith('sia://')
-      ? await sdk.sharedObject(url)
-      : await sdk.object(url);
+    let obj;
+    if (url.startsWith('sia://')) {
+      const resolved = await resolveSharedObject(url, sdk);
+      sdk = resolved.sdk;
+      obj = resolved.obj;
+    } else {
+      obj = await sdk.object(url);
+    }
     const size = obj.size();
 
     // Large files: try streaming via WebCodecs (preferred) or MSE (fallback)
@@ -1171,10 +1197,10 @@ async function loadContentWithAutoDetect() {
 }
 
 // Go button - checks pseudo-URLs first, then auto-detects
-// handleChromeBarNavigation is defined in index.html, so we need to reference it from window
-if (window.handleChromeBarNavigation) {
-  document.getElementById('btn-go').addEventListener('click', window.handleChromeBarNavigation);
-}
+// handleChromeBarNavigation is defined in app.js and attached to window
+document.getElementById('btn-go').addEventListener('click', () => {
+  if (window.handleChromeBarNavigation) window.handleChromeBarNavigation();
+});
 
 // Back/Forward buttons
 document.getElementById('btn-back').addEventListener('click', goBack);

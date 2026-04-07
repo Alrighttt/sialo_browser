@@ -1150,7 +1150,14 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
           const savePromise = opfsSave(saveKey, saveData);
           pendingSaves.push(
             savePromise
-              .then(() => _emitSyncLog(e.data.net, `Saved ${saveKey} (${(dataSize / 1024 / 1024).toFixed(1)} MB)`, 'ok'))
+              .then(() => {
+                _emitSyncLog(e.data.net, `Saved ${saveKey} (${(dataSize / 1024 / 1024).toFixed(1)} MB)`, 'ok');
+                // Refresh filter blob URL so wallet scans use the latest filters
+                if (saveKey === netKey(e.data.net, 'filter_entries') && e.data.net === getActiveNetwork()) {
+                  if (_filterBlobUrl) URL.revokeObjectURL(_filterBlobUrl);
+                  _filterBlobUrl = URL.createObjectURL(new Blob([saveData], { type: 'application/octet-stream' }));
+                }
+              })
               .catch(err => _emitSyncLog(e.data.net, `Failed to save ${saveKey}: ${err}`, 'err'))
           );
           break;

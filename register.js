@@ -67,9 +67,10 @@ export function initRegistrationWizard(helpers) {
       alert('Please enter an indexer URL.');
       return;
     }
-    // Save URL to config + localStorage
+    // Save URL to config + localStorage + profile system
     document.getElementById('cfg-url').value = url;
     localStorage.setItem('indexer-url', url);
+    window.dispatchEvent(new CustomEvent('profile-updated'));
     showStep(2);
   });
 
@@ -89,10 +90,10 @@ export function initRegistrationWizard(helpers) {
       regBuilder = new Builder(url);
 
       const appMetadata = JSON.stringify({
-        app_id: regAppId,
+        appID: regAppId,
         name: 'Sialo',
         description: 'Sialo - a decentralized browser and CLI tool for the Sia network',
-        service_url: 'https://sialo.io',
+        serviceURL: 'https://sialo.io',
       });
 
       await regBuilder.requestConnection(appMetadata);
@@ -178,9 +179,11 @@ export function initRegistrationWizard(helpers) {
       const seed = hex(appKey.export());
       const pubkey = appKey.publicKey();
 
-      // Save to config fields + localStorage
+      // Save to config fields + localStorage + profile system
       document.getElementById('cfg-key').value = seed;
       localStorage.setItem('app-key', seed);
+      // Notify the profile system to update the active profile
+      window.dispatchEvent(new CustomEvent('profile-updated'));
 
       regBuilder = null;
       showStep(5);

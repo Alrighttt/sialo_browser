@@ -2,7 +2,7 @@
 // service worker streaming, and disk-based download.
 
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
-import { getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
+import { connectSdk, getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
 import { DownloadOptions } from './pkg/indexd_wasm.js';
 
 async function streamingDownload(sdk, obj, status, progress, label) {

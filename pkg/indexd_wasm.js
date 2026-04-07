@@ -595,6 +595,21 @@ export class SDK {
         return ret;
     }
     /**
+     * Lists objects starting after the given cursor. Use for pagination:
+     * pass the `id` and `updated_at` of the last event from the previous page.
+     * `after_ms` is the `updated_at` timestamp in milliseconds since epoch.
+     * @param {string} after_id
+     * @param {number} after_ms
+     * @param {number} limit
+     * @returns {Promise<string>}
+     */
+    listObjectsAfter(after_id, after_ms, limit) {
+        const ptr0 = passStringToWasm0(after_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdk_listObjectsAfter(this.__wbg_ptr, ptr0, len0, after_ms, limit);
+        return ret;
+    }
+    /**
      * Retrieves a pinned object by its hex-encoded key.
      * @param {string} key
      * @returns {Promise<PinnedObject>}
@@ -1540,22 +1555,22 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 696, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 697, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 701, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 702, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 696, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 697, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 701, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 702, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h69858b37c5d6e1a7, wasm_bindgen__convert__closures_____invoke__h115fef8f8ded0dc0_1);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 755, function: Function { arguments: [], shim_idx: 756, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 760, function: Function { arguments: [], shim_idx: 761, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__ha994e4b6d1719794, wasm_bindgen__convert__closures_____invoke__h022a894ae72b9104);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 785, function: Function { arguments: [Externref], shim_idx: 786, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 790, function: Function { arguments: [Externref], shim_idx: 791, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h22885050db612fd4, wasm_bindgen__convert__closures_____invoke__ha7b459d57f5990ae);
             return ret;
         },

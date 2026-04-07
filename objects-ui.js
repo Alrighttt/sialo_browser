@@ -1,5 +1,9 @@
-import { _esc, formatSize } from './utils.js';
-import { connectSdk } from './config.js';
+import { _esc, formatSize, fromHex } from './utils.js';
+import { connectSdk, getUrl } from './config.js';
+import { AppKey, Builder, DownloadOptions, UploadOptions } from './pkg/indexd_wasm.js';
+import { ZipWriter } from './vendor/zip-stream.js';
+import { parallelDownloadToDisk } from './download.js';
+import { withKeepAlive } from './keep-alive.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import {
   openOrActivateInternalTab, getOrCreateActiveBrowserTab,
@@ -30,11 +34,18 @@ export function initObjectsUI() {
         return;
       }
 
-      // Display objects in a table
+      // Display objects in a table with checkboxes
+      const activeObjects = objects.filter(o => !o.deleted);
       let html = `
+        <div style="margin-bottom:0.5rem; display:flex; gap:0.5rem; align-items:center;">
+          <button id="btn-download-zip" style="padding:0.4rem 0.75rem; font-size:0.85rem; background:#3b82f6; color:white;" disabled>Download Selected as ZIP</button>
+          <span id="zip-selected-count" style="font-size:0.8rem; color:#888;">0 selected</span>
+          <span id="zip-status" style="font-size:0.8rem; color:#888;"></span>
+        </div>
         <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
           <thead>
             <tr style="border-bottom:2px solid #333; text-align:left;">
+              <th style="padding:0.5rem; width:2rem;"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
               <th style="padding:0.5rem;">Object ID</th>
               <th style="padding:0.5rem;">Size</th>
               <th style="padding:0.5rem;">Updated</th>
@@ -49,14 +60,15 @@ export function initObjectsUI() {
         const shortId = obj.id.substring(0, 8) + '...' + obj.id.substring(obj.id.length - 8);
         const size = obj.size ? formatSize(obj.size) : 'N/A';
         const date = new Date(obj.updated_at).toLocaleString();
-        const status = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
+        const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
 
         html += `
           <tr style="border-bottom:1px solid #222;">
+            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${obj.size || 0}" />` : ''}</td>
             <td style="padding:0.5rem; font-family:monospace; font-size:0.85rem;" title="${obj.id}">${shortId}</td>
             <td style="padding:0.5rem;">${size}</td>
             <td style="padding:0.5rem;">${date}</td>
-            <td style="padding:0.5rem;">${status}</td>
+            <td style="padding:0.5rem;">${objStatus}</td>
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
                 <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
@@ -64,6 +76,8 @@ export function initObjectsUI() {
                 <button onclick="showObjectInfo('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
                 <button onclick="downloadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
                 <button onclick="copyToClipboard('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Copy ID</button>
+                <button onclick="migrateObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#6366f1; color:white;" title="Pin to another indexer">Migrate</button>
+                <button onclick="reuploadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#f59e0b; color:white;" title="Download and re-upload to another indexer">Re-Upload</button>
                 <button onclick="deleteObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
               ` : ''}
             </td>
@@ -78,6 +92,211 @@ export function initObjectsUI() {
 
       objectsList.innerHTML = html;
       status.innerHTML = `<span class="pass">✓ Found ${objects.length} object${objects.length !== 1 ? 's' : ''}</span>`;
+
+      // Wire up select-all and selection count
+      function updateSelectionCount() {
+        const checked = objectsList.querySelectorAll('.obj-select:checked');
+        document.getElementById('zip-selected-count').textContent = `${checked.length} selected`;
+        document.getElementById('btn-download-zip').disabled = checked.length === 0;
+      }
+
+      document.getElementById('obj-select-all').addEventListener('change', (e) => {
+        objectsList.querySelectorAll('.obj-select').forEach(cb => { cb.checked = e.target.checked; });
+        updateSelectionCount();
+      });
+      objectsList.querySelectorAll('.obj-select').forEach(cb => {
+        cb.addEventListener('change', updateSelectionCount);
+      });
+
+      // Open ZIP builder with selected objects
+      document.getElementById('btn-download-zip').addEventListener('click', () => {
+        const selected = [...objectsList.querySelectorAll('.obj-select:checked')];
+        if (selected.length === 0) return;
+
+        const section = document.getElementById('zip-builder-section');
+        const tbody = document.getElementById('zip-builder-tbody');
+        document.getElementById('zip-builder-status').textContent = '';
+        tbody.innerHTML = '';
+
+        for (const cb of selected) {
+          const id = cb.dataset.id;
+          const sizeBytes = parseInt(cb.dataset.size, 10) || 0;
+          const row = cb.closest('tr');
+          const sizeCell = row ? row.children[2]?.textContent : 'N/A';
+          const tr = document.createElement('tr');
+          tr.style.borderBottom = '1px solid #222';
+          tr.dataset.objectId = id;
+          tr.dataset.size = sizeBytes;
+          tr.innerHTML = `
+            <td style="padding:0.5rem;">
+              <input type="text" class="zip-filename" value="${id.substring(0, 16)}.sia"
+                style="width:100%; font-size:0.85rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.3rem 0.5rem;" />
+              <div style="font-size:0.7rem; color:#555; margin-top:0.2rem; font-family:monospace;">${id}</div>
+              <div class="zip-row-progress" style="margin-top:0.3rem; display:none;">
+                <progress class="zip-row-bar" max="100" value="0" style="width:100%; height:4px;"></progress>
+                <span class="zip-row-status" style="font-size:0.7rem; color:#888;"></span>
+              </div>
+            </td>
+            <td style="padding:0.5rem; color:#888; font-size:0.85rem; white-space:nowrap;">${sizeCell}</td>
+            <td style="padding:0.5rem;">
+              <button onclick="this.closest('tr').remove()" style="padding:0.15rem 0.4rem; font-size:0.8rem; background:#dc2626; color:white; border:none; border-radius:3px; cursor:pointer;" title="Remove from ZIP">✕</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+
+        if (tbody.children.length === 0) {
+          return;
+        }
+
+        section.style.display = '';
+        section.scrollIntoView({ behavior: 'smooth' });
+      });
+
+      // Cancel ZIP builder
+      let zipCancelled = false;
+      document.getElementById('zip-builder-cancel').addEventListener('click', () => {
+        zipCancelled = true;
+        document.getElementById('zip-builder-section').style.display = 'none';
+        document.getElementById('zip-builder-status').textContent = '';
+      });
+
+      // Download ZIP — parallel slab downloads streamed to disk
+      document.getElementById('zip-builder-download').addEventListener('click', async () => {
+        const tbody = document.getElementById('zip-builder-tbody');
+        const rows = [...tbody.querySelectorAll('tr')];
+        if (rows.length === 0) return;
+
+        const entries = rows.map(tr => ({
+          id: tr.dataset.objectId,
+          filename: tr.querySelector('.zip-filename').value.trim() || `${tr.dataset.objectId.substring(0, 16)}.sia`,
+        }));
+
+        const zipStatus = document.getElementById('zip-builder-status');
+        const btn = document.getElementById('zip-builder-download');
+        zipCancelled = false;
+        btn.disabled = true;
+
+        const totalSize = rows.reduce((sum, tr) => sum + (parseInt(tr.dataset.size, 10) || 0), 0);
+
+        let writable = null;
+        let memBuf = null;
+        try {
+          if (window.showSaveFilePicker) {
+            const handle = await window.showSaveFilePicker({
+              suggestedName: `sia-objects-${new Date().toISOString().slice(0, 10)}.zip`,
+              types: [{ description: 'ZIP archive', accept: { 'application/zip': ['.zip'] } }],
+            });
+            writable = await handle.createWritable();
+          } else {
+            if (totalSize > 500 * 1024 * 1024) {
+              const proceed = confirm(
+                `Your browser doesn't support streaming to disk.\n\n` +
+                `Total size: ${formatSize(totalSize)}\n\n` +
+                `The ZIP will be built in memory. Files over ~500 MB total may cause instability.\n\n` +
+                `For large ZIPs, use Chrome or Edge.\n\nContinue?`
+              );
+              if (!proceed) { btn.disabled = false; return; }
+            }
+            memBuf = [];
+          }
+
+          await withKeepAlive(async () => {
+          // ZIP writer — writes headers/descriptors to the stream
+          const zip = new ZipWriter(async (chunk) => {
+            if (writable) {
+              await writable.write(chunk);
+            } else {
+              memBuf.push(new Uint8Array(chunk));
+            }
+          });
+
+          // Dummy elements for parallelDownloadToDisk
+          const dummyProgress = { set max(_) {}, set value(_) {}, style: { display: '' } };
+
+          for (let i = 0; i < entries.length; i++) {
+            const { id, filename } = entries[i];
+            const row = rows[i];
+            const progressDiv = row.querySelector('.zip-row-progress');
+            const progressBar = row.querySelector('.zip-row-bar');
+            const progressStatus = row.querySelector('.zip-row-status');
+            progressDiv.style.display = '';
+            progressStatus.textContent = 'Downloading...';
+            progressBar.value = 0;
+
+            if (zipCancelled) break;
+            if (!zipCancelled) zipStatus.textContent = `${i + 1}/${entries.length}: ${filename}`;
+
+            // Write ZIP local file header
+            await zip.startEntry(filename);
+
+            // Create a CRC-tracking writable proxy. Data flows:
+            // workers → proxy.write() → CRC update → real writable/memBuf
+            const crcProxy = {
+              write: async (data) => {
+                const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+                zip.updateCrc(bytes);
+                zip.advanceOffset(bytes.length);
+                if (writable) {
+                  await writable.write(bytes);
+                } else {
+                  memBuf.push(new Uint8Array(bytes));
+                }
+              },
+              close: async () => {},
+              abort: async () => {},
+            };
+
+            // Download all slabs in parallel, streaming each to disk through the proxy
+            const result = await parallelDownloadToDisk(
+              id, crcProxy, zipStatus, dummyProgress,
+              (bytes) => {
+                const pct = zip._current.size > 0 ? Math.min(100, Math.round((zip._current.size / (parseInt(row.dataset.size, 10) || 1)) * 100)) : 0;
+                progressBar.value = pct;
+                progressStatus.textContent = `${formatSize(zip._current.size)}`;
+              },
+            );
+
+            // Write ZIP data descriptor
+            await zip.endEntry();
+            progressBar.value = 100;
+            progressStatus.innerHTML = '<span class="pass">✓ Done</span>';
+          }
+
+          // Write central directory and end record
+          if (zipCancelled) {
+            if (writable) try { await writable.abort(); } catch (_) {}
+            zipStatus.textContent = 'Cancelled.';
+            btn.disabled = false;
+            return;
+          }
+
+          await zip.finish();
+
+          if (writable) {
+            await writable.close();
+          } else {
+            const blob = new Blob(memBuf, { type: 'application/zip' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `sia-objects-${new Date().toISOString().slice(0, 10)}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }
+
+          zipStatus.innerHTML = `<span class="pass">✓ Downloaded ${entries.length} files as ZIP</span>`;
+        } catch (e) {
+          if (e.name === 'AbortError') {
+            zipStatus.textContent = '';
+          } else {
+            zipStatus.innerHTML = `<span class="fail">ZIP failed: ${_esc(e.message)}</span>`;
+          }
+          if (writable) try { await writable.abort(); } catch (_) {}
+        }
+        }); // withKeepAlive
+        btn.disabled = false;
+      });
     } catch (e) {
       status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
       objectsList.innerHTML = '';
@@ -150,6 +369,88 @@ export function initObjectsUI() {
       }, 3000);
     }
   };
+
+  // Show the re-upload section with the object ID pre-filled
+  window.reuploadObjectById = (objectId) => {
+    const section = document.getElementById('reupload-section');
+    document.getElementById('reupload-object-id').value = objectId;
+    document.getElementById('reupload-status').innerHTML = '';
+    section.style.display = '';
+    section.scrollIntoView({ behavior: 'smooth' });
+
+    // Populate destination dropdown from profiles
+    const PROFILES_KEY = 'indexer-profiles';
+    let profiles;
+    try { profiles = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* */ }
+    const sel = document.getElementById('reupload-dst-profile');
+    sel.innerHTML = '';
+    if (profiles?.profiles) {
+      const activeUrl = getUrl();
+      for (const [name, p] of Object.entries(profiles.profiles)) {
+        if (p.url === activeUrl) continue;
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = `${name} (${p.url || 'no URL'})`;
+        sel.appendChild(opt);
+      }
+    }
+  };
+
+  document.getElementById('reupload-btn-cancel').addEventListener('click', () => {
+    document.getElementById('reupload-section').style.display = 'none';
+  });
+
+  document.getElementById('reupload-btn-start').addEventListener('click', async () => {
+    const objectId = document.getElementById('reupload-object-id').value.trim();
+    const status = document.getElementById('reupload-status');
+    const dstName = document.getElementById('reupload-dst-profile').value;
+
+    if (!objectId) { status.innerHTML = '<span class="fail">No object ID.</span>'; return; }
+    if (!dstName) { status.innerHTML = '<span class="fail">Select a destination profile.</span>'; return; }
+
+    const PROFILES_KEY = 'indexer-profiles';
+    let profiles;
+    try { profiles = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* */ }
+    const dst = profiles?.profiles?.[dstName];
+    if (!dst?.url || !dst?.key) {
+      status.innerHTML = `<span class="fail">Profile "${dstName}" is missing URL or key.</span>`;
+      return;
+    }
+
+    const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
+
+    try {
+      // Download from source (current indexer)
+      status.innerHTML = `<span style="color:#f59e0b;">Connecting to source...</span>`;
+      const srcSdk = await connectSdk(status);
+      if (!srcSdk) return;
+
+      status.innerHTML = `<span style="color:#f59e0b;">Downloading ${shortId}...</span>`;
+      const obj = await srcSdk.object(objectId);
+      const noop = () => {};
+      const data = await srcSdk.download(obj, new DownloadOptions(), noop);
+
+      // Connect to destination
+      status.innerHTML = `<span style="color:#f59e0b;">Connecting to ${dstName}...</span>`;
+      const dstKey = new AppKey(fromHex(dst.key));
+      const dstBuilder = new Builder(dst.url);
+      const dstSdk = await dstBuilder.connected(dstKey);
+      if (!dstSdk) {
+        status.innerHTML = `<span class="fail">Destination key not recognized by ${dstName}.</span>`;
+        return;
+      }
+
+      // Upload to destination
+      status.innerHTML = `<span style="color:#f59e0b;">Uploading to ${dstName}...</span>`;
+      const newObj = await dstSdk.upload(data, new UploadOptions(), noop);
+      await dstSdk.pinObject(newObj);
+
+      const newId = newObj.id();
+      status.innerHTML = `<span class="pass">✓ Re-uploaded to ${dstName}!</span>\nNew ID: <span style="font-family:monospace; font-size:0.85rem;">${newId}</span>`;
+    } catch (e) {
+      status.innerHTML = `<span class="fail">Re-upload failed: ${_esc(e.message)}</span>`;
+    }
+  });
 
   // Helper function to view an object in the browser
   window.viewObjectById = async (objectId) => {
