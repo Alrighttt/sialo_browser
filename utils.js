@@ -7,7 +7,7 @@ export function _dbg(...args) { if (localStorage.getItem('log-level') === 'debug
 export function _dbgWarn(...args) { if (localStorage.getItem('log-level') === 'debug') console.warn(...args); }
 
 // HTML escaping for dynamic content inserted via innerHTML
-export function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+export function _esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 export function hex(bytes) {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');

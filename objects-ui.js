@@ -11,6 +11,24 @@ import {
 } from './tabs.js';
 
 export function initObjectsUI() {
+  // Event delegation for object action buttons — avoids inline onclick handlers
+  // which are vulnerable to XSS when interpolating data into JS string contexts.
+  document.getElementById('objects-list').addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const oid = btn.dataset.oid;
+    switch (btn.dataset.action) {
+      case 'view': viewObjectById(oid); break;
+      case 'share': shareObjectById(oid); break;
+      case 'info': showObjectInfo(oid, btn); break;
+      case 'download': downloadObjectById(oid); break;
+      case 'copy': copyToClipboard(oid); break;
+      case 'migrate': migrateObjectById(oid); break;
+      case 'reupload': reuploadObjectById(oid); break;
+      case 'delete': deleteObjectById(oid); break;
+    }
+  });
+
   // -- List Objects --
   document.getElementById('btn-list-objects').addEventListener('click', async () => {
     const status = document.getElementById('list-status');
@@ -64,21 +82,21 @@ export function initObjectsUI() {
 
         html += `
           <tr style="border-bottom:1px solid #222;">
-            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${obj.size || 0}" />` : ''}</td>
-            <td style="padding:0.5rem; font-family:monospace; font-size:0.85rem;" title="${obj.id}">${shortId}</td>
+            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${_esc(obj.id)}" data-size="${obj.size || 0}" />` : ''}</td>
+            <td style="padding:0.5rem; font-family:monospace; font-size:0.85rem;" title="${_esc(obj.id)}">${_esc(shortId)}</td>
             <td style="padding:0.5rem;">${size}</td>
             <td style="padding:0.5rem;">${date}</td>
             <td style="padding:0.5rem;">${objStatus}</td>
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
-                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
-                <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL">Share</button>
-                <button onclick="showObjectInfo('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
-                <button onclick="downloadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
-                <button onclick="copyToClipboard('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Copy ID</button>
-                <button onclick="migrateObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#6366f1; color:white;" title="Pin to another indexer">Migrate</button>
-                <button onclick="reuploadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#f59e0b; color:white;" title="Download and re-upload to another indexer">Re-Upload</button>
-                <button onclick="deleteObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
+                <button data-action="view" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
+                <button data-action="share" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL">Share</button>
+                <button data-action="info" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
+                <button data-action="download" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
+                <button data-action="copy" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Copy ID</button>
+                <button data-action="migrate" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#6366f1; color:white;" title="Pin to another indexer">Migrate</button>
+                <button data-action="reupload" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#f59e0b; color:white;" title="Download and re-upload to another indexer">Re-Upload</button>
+                <button data-action="delete" data-oid="${_esc(obj.id)}" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
               ` : ''}
             </td>
           </tr>
@@ -129,9 +147,9 @@ export function initObjectsUI() {
           tr.dataset.size = sizeBytes;
           tr.innerHTML = `
             <td style="padding:0.5rem;">
-              <input type="text" class="zip-filename" value="${id.substring(0, 16)}.sia"
+              <input type="text" class="zip-filename" value="${_esc(id.substring(0, 16))}.sia"
                 style="width:100%; font-size:0.85rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.3rem 0.5rem;" />
-              <div style="font-size:0.7rem; color:#555; margin-top:0.2rem; font-family:monospace;">${id}</div>
+              <div style="font-size:0.7rem; color:#555; margin-top:0.2rem; font-family:monospace;">${_esc(id)}</div>
               <div class="zip-row-progress" style="margin-top:0.3rem; display:none;">
                 <progress class="zip-row-bar" max="100" value="0" style="width:100%; height:4px;"></progress>
                 <span class="zip-row-status" style="font-size:0.7rem; color:#888;"></span>
@@ -413,7 +431,7 @@ export function initObjectsUI() {
     try { profiles = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* */ }
     const dst = profiles?.profiles?.[dstName];
     if (!dst?.url || !dst?.key) {
-      status.innerHTML = `<span class="fail">Profile "${dstName}" is missing URL or key.</span>`;
+      status.innerHTML = `<span class="fail">Profile &quot;${_esc(dstName)}&quot; is missing URL or key.</span>`;
       return;
     }
 
@@ -425,28 +443,28 @@ export function initObjectsUI() {
       const srcSdk = await connectSdk(status);
       if (!srcSdk) return;
 
-      status.innerHTML = `<span style="color:#f59e0b;">Downloading ${shortId}...</span>`;
+      status.innerHTML = `<span style="color:#f59e0b;">Downloading ${_esc(shortId)}...</span>`;
       const obj = await srcSdk.object(objectId);
       const noop = () => {};
       const data = await srcSdk.download(obj, new DownloadOptions(), noop);
 
       // Connect to destination
-      status.innerHTML = `<span style="color:#f59e0b;">Connecting to ${dstName}...</span>`;
+      status.innerHTML = `<span style="color:#f59e0b;">Connecting to ${_esc(dstName)}...</span>`;
       const dstKey = new AppKey(fromHex(dst.key));
       const dstBuilder = new Builder(dst.url);
       const dstSdk = await dstBuilder.connected(dstKey);
       if (!dstSdk) {
-        status.innerHTML = `<span class="fail">Destination key not recognized by ${dstName}.</span>`;
+        status.innerHTML = `<span class="fail">Destination key not recognized by ${_esc(dstName)}.</span>`;
         return;
       }
 
       // Upload to destination
-      status.innerHTML = `<span style="color:#f59e0b;">Uploading to ${dstName}...</span>`;
+      status.innerHTML = `<span style="color:#f59e0b;">Uploading to ${_esc(dstName)}...</span>`;
       const newObj = await dstSdk.upload(data, new UploadOptions(), noop);
       await dstSdk.pinObject(newObj);
 
       const newId = newObj.id();
-      status.innerHTML = `<span class="pass">✓ Re-uploaded to ${dstName}!</span>\nNew ID: <span style="font-family:monospace; font-size:0.85rem;">${newId}</span>`;
+      status.innerHTML = `<span class="pass">✓ Re-uploaded to ${_esc(dstName)}!</span>\nNew ID: <span style="font-family:monospace; font-size:0.85rem;">${_esc(newId)}</span>`;
     } catch (e) {
       status.innerHTML = `<span class="fail">Re-upload failed: ${_esc(e.message)}</span>`;
     }
@@ -559,19 +577,19 @@ export function initObjectsUI() {
         resultModal.innerHTML = `
           <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:600px; width:90%; border:1px solid #333;">
             <h3 style="margin:0 0 1rem 0; color:#10b981;">🔗 Share URL Generated</h3>
-            <p style="color:#888; margin-bottom:1rem;">Object: ${shortId}</p>
+            <p style="color:#888; margin-bottom:1rem;">Object: ${_esc(shortId)}</p>
             <div style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem; word-break:break-all; font-family:monospace; font-size:0.9rem;">
-              ${shareUrl}
+              ${_esc(shareUrl)}
             </div>
             <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
               ⏰ Valid for ${durationText}<br>
               🔒 Includes encryption key in URL
             </p>
             <div style="display:flex; gap:0.5rem;">
-              <button onclick="navigator.clipboard.writeText('${shareUrl.replace(/'/g, "\\'")}').then(() => alert('Share URL copied!')); this.parentElement.parentElement.parentElement.remove();" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
+              <button id="btn-copy-share-url" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
                 📋 Copy URL
               </button>
-              <button onclick="this.parentElement.parentElement.parentElement.remove();" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
+              <button id="btn-close-share-modal" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
                 Close
               </button>
             </div>
@@ -579,6 +597,17 @@ export function initObjectsUI() {
         `;
 
         document.body.appendChild(resultModal);
+
+        // Copy URL button
+        resultModal.querySelector('#btn-copy-share-url').addEventListener('click', () => {
+          navigator.clipboard.writeText(shareUrl).then(() => alert('Share URL copied!'));
+          resultModal.remove();
+        });
+
+        // Close button
+        resultModal.querySelector('#btn-close-share-modal').addEventListener('click', () => {
+          resultModal.remove();
+        });
 
         // Close on background click
         resultModal.addEventListener('click', (e) => {
@@ -592,21 +621,18 @@ export function initObjectsUI() {
   };
 
   // Helper function to show object info/details
-  window.showObjectInfo = async (objectId) => {
+  window.showObjectInfo = async (objectId, button) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
 
     try {
       // Show loading state
-      const button = event.target;
-      const originalText = button.textContent;
-      button.textContent = '⏳';
-      button.disabled = true;
+      const originalText = button ? button.textContent : '';
+      if (button) { button.textContent = '⏳'; button.disabled = true; }
 
       const status = document.getElementById('list-status');
       const sdk = await connectSdk(status);
       if (!sdk) {
-        button.textContent = originalText;
-        button.disabled = false;
+        if (button) { button.textContent = originalText; button.disabled = false; }
         return;
       }
 
@@ -651,7 +677,7 @@ export function initObjectsUI() {
               <div>10 data + 20 parity (${formatSize(size)} pinned)</div>
             </div>
           </div>
-          <button onclick="this.parentElement.parentElement.remove();" style="width:100%; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
+          <button id="btn-close-info-modal" style="width:100%; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
             Close
           </button>
         </div>
@@ -659,18 +685,21 @@ export function initObjectsUI() {
 
       document.body.appendChild(modal);
 
+      // Close button
+      modal.querySelector('#btn-close-info-modal').addEventListener('click', () => {
+        modal.remove();
+      });
+
       // Close on background click
       modal.addEventListener('click', (e) => {
         if (e.target === modal) modal.remove();
       });
 
       // Restore button
-      button.textContent = originalText;
-      button.disabled = false;
+      if (button) { button.textContent = originalText; button.disabled = false; }
     } catch (e) {
       alert(`Failed to load info: ${e.message}`);
-      event.target.textContent = 'Info';
-      event.target.disabled = false;
+      if (button) { button.textContent = 'Info'; button.disabled = false; }
     }
   };
 

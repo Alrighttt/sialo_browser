@@ -510,7 +510,7 @@ function updateBrowserUI() {
 
     const itemText = (showWarning ? '⚠️ ' : '') + (item.title || item.displayUrl);
     historyItem.innerHTML = `
-      <span class="history-title">${itemText}</span>
+      <span class="history-title">${_esc(itemText)}</span>
       ${item.blobUrl ? '<button class="history-download" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #10b981; cursor: pointer; padding: 0 0.5rem; font-size: 1rem; line-height: 1;" title="Download">⬇</button>' : ''}
       <button class="history-delete" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #ef4444; cursor: pointer; padding: 0 0.5rem; font-size: 1.2rem; line-height: 1;" title="Delete">×</button>
     `;
