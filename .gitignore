@@ -6,3 +6,5 @@ pkg/package.json
 
 # NPM (file-type vendoring build only)
 node_modules/
+
+html

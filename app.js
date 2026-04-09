@@ -858,13 +858,14 @@ if (typeof PerformanceObserver !== 'undefined') {
   }
 }
 
-// rAF gap detector: logs when any animation frame takes > 50ms gap
+// rAF gap detector: logs when any animation frame takes > 500ms gap
+// (only fires during significant stalls, not normal frame variance)
 let _rafGapLast = performance.now();
 function _rafGapCheck() {
   const now = performance.now();
   const gap = now - _rafGapLast;
-  if (gap > 50) {
-    _dbgWarn(`[RAF-GAP] ${gap.toFixed(1)}ms between frames at ${now.toFixed(1)}`);
+  if (gap > 500) {
+    _dbgWarn(`[RAF-GAP] ${gap.toFixed(0)}ms stall at ${(now / 1000).toFixed(1)}s`);
   }
   _rafGapLast = now;
   requestAnimationFrame(_rafGapCheck);
@@ -956,8 +957,6 @@ initBenchmarkUI();
 
 // Objects list, share, view, delete, info → objects-ui.js
 initObjectsUI();
-
-// Migration tool temporarily removed — see matt/migration-tool branch
 
 // Browser module → browser.js
 

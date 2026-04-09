@@ -1,6 +1,5 @@
-import { _esc, formatSize, fromHex } from './utils.js';
-import { connectSdk, getUrl } from './config.js';
-import { AppKey, Builder, DownloadOptions, UploadOptions } from './pkg/indexd_wasm.js';
+import { _esc, formatSize } from './utils.js';
+import { connectSdk } from './config.js';
 import { ZipWriter } from './vendor/zip-stream.js';
 import { parallelDownloadToDisk } from './download.js';
 import { withKeepAlive } from './keep-alive.js';
@@ -76,8 +75,6 @@ export function initObjectsUI() {
                 <button onclick="showObjectInfo('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
                 <button onclick="downloadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
                 <button onclick="copyToClipboard('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Copy ID</button>
-                <button onclick="migrateObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#6366f1; color:white;" title="Pin to another indexer">Migrate</button>
-                <button onclick="reuploadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#f59e0b; color:white;" title="Download and re-upload to another indexer">Re-Upload</button>
                 <button onclick="deleteObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
               ` : ''}
             </td>
@@ -370,87 +367,6 @@ export function initObjectsUI() {
     }
   };
 
-  // Show the re-upload section with the object ID pre-filled
-  window.reuploadObjectById = (objectId) => {
-    const section = document.getElementById('reupload-section');
-    document.getElementById('reupload-object-id').value = objectId;
-    document.getElementById('reupload-status').innerHTML = '';
-    section.style.display = '';
-    section.scrollIntoView({ behavior: 'smooth' });
-
-    // Populate destination dropdown from profiles
-    const PROFILES_KEY = 'indexer-profiles';
-    let profiles;
-    try { profiles = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* */ }
-    const sel = document.getElementById('reupload-dst-profile');
-    sel.innerHTML = '';
-    if (profiles?.profiles) {
-      const activeUrl = getUrl();
-      for (const [name, p] of Object.entries(profiles.profiles)) {
-        if (p.url === activeUrl) continue;
-        const opt = document.createElement('option');
-        opt.value = name;
-        opt.textContent = `${name} (${p.url || 'no URL'})`;
-        sel.appendChild(opt);
-      }
-    }
-  };
-
-  document.getElementById('reupload-btn-cancel').addEventListener('click', () => {
-    document.getElementById('reupload-section').style.display = 'none';
-  });
-
-  document.getElementById('reupload-btn-start').addEventListener('click', async () => {
-    const objectId = document.getElementById('reupload-object-id').value.trim();
-    const status = document.getElementById('reupload-status');
-    const dstName = document.getElementById('reupload-dst-profile').value;
-
-    if (!objectId) { status.innerHTML = '<span class="fail">No object ID.</span>'; return; }
-    if (!dstName) { status.innerHTML = '<span class="fail">Select a destination profile.</span>'; return; }
-
-    const PROFILES_KEY = 'indexer-profiles';
-    let profiles;
-    try { profiles = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* */ }
-    const dst = profiles?.profiles?.[dstName];
-    if (!dst?.url || !dst?.key) {
-      status.innerHTML = `<span class="fail">Profile "${dstName}" is missing URL or key.</span>`;
-      return;
-    }
-
-    const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
-
-    try {
-      // Download from source (current indexer)
-      status.innerHTML = `<span style="color:#f59e0b;">Connecting to source...</span>`;
-      const srcSdk = await connectSdk(status);
-      if (!srcSdk) return;
-
-      status.innerHTML = `<span style="color:#f59e0b;">Downloading ${shortId}...</span>`;
-      const obj = await srcSdk.object(objectId);
-      const noop = () => {};
-      const data = await srcSdk.download(obj, new DownloadOptions(), noop);
-
-      // Connect to destination
-      status.innerHTML = `<span style="color:#f59e0b;">Connecting to ${dstName}...</span>`;
-      const dstKey = new AppKey(fromHex(dst.key));
-      const dstBuilder = new Builder(dst.url);
-      const dstSdk = await dstBuilder.connected(dstKey);
-      if (!dstSdk) {
-        status.innerHTML = `<span class="fail">Destination key not recognized by ${dstName}.</span>`;
-        return;
-      }
-
-      // Upload to destination
-      status.innerHTML = `<span style="color:#f59e0b;">Uploading to ${dstName}...</span>`;
-      const newObj = await dstSdk.upload(data, new UploadOptions(), noop);
-      await dstSdk.pinObject(newObj);
-
-      const newId = newObj.id();
-      status.innerHTML = `<span class="pass">✓ Re-uploaded to ${dstName}!</span>\nNew ID: <span style="font-family:monospace; font-size:0.85rem;">${newId}</span>`;
-    } catch (e) {
-      status.innerHTML = `<span class="fail">Re-upload failed: ${_esc(e.message)}</span>`;
-    }
-  });
 
   // Helper function to view an object in the browser
   window.viewObjectById = async (objectId) => {

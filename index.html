@@ -417,8 +417,6 @@
         </div><!-- /internal-page-content -->
       </div><!-- /panel-cors -->
 
-      <!-- Panel: Migrate Objects -->
-
       <!-- Panel: Upload Text -->
       <div id="panel-upload-text" class="viewport-panel internal-page" data-panel="upload-text">
         <div class="internal-page-content">
@@ -716,23 +714,6 @@
             </div>
           </div><!-- /panel-section: My Objects -->
 
-          <!-- Migration tool temporarily removed — see matt/migration-tool branch -->
-
-          <div class="panel-section" id="reupload-section" style="display:none;">
-            <h2>Re-Upload Object</h2>
-            <p style="color:#999; font-size:0.85rem; margin-bottom:0.75rem;">
-              Downloads the object from the current indexer and uploads it fresh
-              to the destination. Use this for degraded objects that can't be
-              pinned directly.
-            </p>
-            <label class="label">Object ID</label>
-            <input id="reupload-object-id" type="text" placeholder="Object ID (hex)" style="width:100%; margin-bottom:0.5rem; font-family:monospace; font-size:0.85rem;" readonly />
-            <label class="label">Destination Profile</label>
-            <select id="reupload-dst-profile" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
-            <button id="reupload-btn-start" style="margin-top:0.25rem;">Re-Upload</button>
-            <button id="reupload-btn-cancel" style="margin-top:0.25rem; margin-left:0.25rem; background:#555;">Cancel</button>
-            <div class="output" id="reupload-status"></div>
-          </div><!-- /panel-section: Re-Upload -->
 
           <div class="panel-section" id="zip-builder-section" style="display:none;">
             <h2>Download as ZIP</h2>
