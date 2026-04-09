@@ -1,4 +1,4 @@
-import { UploadOptions } from './pkg/indexd_wasm.js';
+import { UploadOptions } from './pkg/sia_storage_wasm.js';
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
@@ -27,33 +27,28 @@ export function initUploadUI() {
       status.textContent = 'Uploading...';
 
       const uploadStart = performance.now();
-      const CHUNK_SIZE = 128 * 1024 * 1024;
-      const ulOpts = new UploadOptions();
-      ulOpts.maxInflight = getMaxUploads();
-      const upload = sdk.streamingUpload(data.length, ulOpts, (current, total) => {
-        progress.max = total;
+      const upload = sdk.upload(new UploadOptions(null, null, getMaxUploads()));
+      upload.setOnProgress((current) => {
         progress.value = current;
-        status.textContent = `Uploading... ${current}/${total} shards`;
+        status.textContent = `Uploading... ${current} shards`;
       });
-      (async () => {
-        for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
-          upload.pushChunk(data.subarray(offset, offset + CHUNK_SIZE));
-        }
-        upload.pushChunk(null);
-      })();
-      const obj = await upload.promise;
+
+      const CHUNK_SIZE = 128 * 1024 * 1024;
+      for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
+        await upload.pushChunk(data.subarray(offset, offset + CHUNK_SIZE));
+      }
+      const obj = await upload.finish();
       const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
       const objectId = obj.id();
       const size = obj.size();
 
-      progress.value = progress.max;
       status.innerHTML = `Upload complete (${size} bytes) in ${elapsed}s. Pinning to indexer...`;
 
       await sdk.pinObject(obj);
 
       status.innerHTML += `\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
     } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
+      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
     }
   });
 
@@ -66,7 +61,6 @@ export function initUploadUI() {
   function setFile(file) {
     selectedFile = file;
     fileInfo.textContent = `${file.name} (${formatSize(file.size)})`;
-    // Show info card with file details
     const card = document.getElementById('uf-info-card');
     card.style.display = '';
     document.getElementById('uf-card-filename').textContent = file.name;
@@ -99,7 +93,7 @@ export function initUploadUI() {
     if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
   });
 
-  // -- File Upload (single-threaded streaming) --
+  // -- File Upload --
   document.getElementById('btn-upload-file-simple').addEventListener('click', async () => {
     const status = document.getElementById('uf-status');
     const progress = document.getElementById('uf-progress');
@@ -137,48 +131,39 @@ export function initUploadUI() {
       const uploadStart = performance.now();
       const CHUNK_SIZE = 128 * 1024 * 1024;
       const fileSize = selectedFile.size;
-      const ulOpts = new UploadOptions();
-      ulOpts.maxInflight = getMaxUploads();
+
+      const upload = sdk.upload(new UploadOptions(null, null, getMaxUploads()));
 
       let shardsUploaded = 0;
-      let totalShards = 0;
-
-      const upload = sdk.streamingUpload(fileSize, ulOpts, (current, total) => {
+      upload.setOnProgress((current) => {
         shardsUploaded = current;
-        totalShards = total;
-        progress.max = total;
         progress.value = current;
 
         const elapsed = (performance.now() - uploadStart) / 1000;
-        const bytesPerShard = fileSize / total;
+        const bytesPerShard = fileSize / Math.max(current, 1);
         const bytesUploaded = current * bytesPerShard;
         const speed = bytesUploaded / elapsed;
-        const remaining = total - current;
-        const eta = remaining > 0 && speed > 0 ? (remaining * bytesPerShard) / speed : 0;
+        const eta = speed > 0 ? (fileSize - bytesUploaded) / speed : 0;
 
         cardSpeed.textContent = `${(speed / 1e6).toFixed(1)} MB/s`;
-        cardDetail.textContent = `${current}/${total} shards`;
+        cardDetail.textContent = `${current} shards`;
         cardElapsed.textContent = formatTime(elapsed);
         cardEta.textContent = eta > 0 ? formatTime(eta) : '--';
         cardShardsDone.textContent = `${current} shards done`;
       });
 
-      // Push file chunks in the background
-      (async () => {
-        for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
-          const chunk = selectedFile.slice(offset, offset + CHUNK_SIZE);
-          const data = new Uint8Array(await chunk.arrayBuffer());
-          upload.pushChunk(data);
-        }
-        upload.pushChunk(null);
-      })();
+      status.textContent = 'Uploading...';
+      for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
+        const chunk = selectedFile.slice(offset, offset + CHUNK_SIZE);
+        const data = new Uint8Array(await chunk.arrayBuffer());
+        await upload.pushChunk(data);
+      }
+      const obj = await upload.finish();
 
-      const obj = await upload.promise;
       const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
       const objectId = obj.id();
       const size = obj.size();
 
-      progress.value = progress.max;
       cardSpeed.textContent = `${(size / parseFloat(elapsed) / 1e6).toFixed(1)} MB/s avg`;
       cardEta.textContent = '0s';
       status.innerHTML = `Pinning to indexer...`;
@@ -187,7 +172,7 @@ export function initUploadUI() {
 
       status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
     } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
+      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
     }
     }); // withKeepAlive
   });

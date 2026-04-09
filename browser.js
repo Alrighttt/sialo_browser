@@ -3,7 +3,7 @@
 
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
-  connectSdk, resolveSharedObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
+  connectSdk, resolveObject, resolveSharedObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
 } from './config.js';
 import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,
@@ -18,7 +18,7 @@ import {
   streamingDownload, parallelDownload, parallelDownloadViaSW,
   createWorkerPool, initWorkerStatus, runSlabDownload,
 } from './download.js';
-import { DownloadOptions } from './pkg/indexd_wasm.js';
+import { DownloadOptions } from './pkg/sia_storage_wasm.js';
 import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { marked } from './vendor/marked.esm.js';
@@ -717,14 +717,9 @@ async function redownloadHistoryItem(item, index) {
     // For video items, re-stream via WebCodecs (or MSE fallback)
     if (item.fileType === 'video') {
       status.textContent = 'Re-streaming video...';
-      let obj;
-      if (item.originalUrl.startsWith('sia://')) {
-        const resolved = await resolveSharedObject(item.originalUrl, sdk);
-        sdk = resolved.sdk;
-        obj = resolved.obj;
-      } else {
-        obj = await sdk.object(item.originalUrl);
-      }
+      const resolved = await resolveObject(item.originalUrl, sdk);
+      sdk = resolved.sdk;
+      const obj = resolved.obj;
 
       iframe.style.display = 'none';
       videoContainer.style.display = 'block';
@@ -740,7 +735,8 @@ async function redownloadHistoryItem(item, index) {
         try {
           canvas.style.display = 'block';
           video.style.display = 'none';
-          const resultPromise = webcodecStream(sdk, obj, canvas, status, progress, item.originalUrl);
+          const replayOverride = resolved.fallback ? { indexerUrl: resolved.indexerUrl, keyHex: resolved.keyHex } : null;
+          const resultPromise = webcodecStream(sdk, obj, canvas, status, progress, item.originalUrl, replayOverride);
           // The abort handle isn't available until the function returns,
           // but we can set up a fallback abort via the video element
           tab.streamAbort = {
@@ -963,14 +959,10 @@ async function loadContentWithAutoDetect() {
     if (!sdk) return;
 
     status.textContent = 'Fetching object...';
-    let obj;
-    if (url.startsWith('sia://')) {
-      const resolved = await resolveSharedObject(url, sdk);
-      sdk = resolved.sdk;
-      obj = resolved.obj;
-    } else {
-      obj = await sdk.object(url);
-    }
+    const resolved = await resolveObject(url, sdk);
+    sdk = resolved.sdk;
+    const obj = resolved.obj;
+    if (resolved.fallback) status.textContent = `Found on fallback indexer: ${resolved.fallback}`;
     const size = obj.size();
 
     // Large files: try streaming via WebCodecs (preferred) or MSE (fallback)
@@ -988,7 +980,8 @@ async function loadContentWithAutoDetect() {
           canvas.style.display = 'block';
           video.style.display = 'none';
 
-          const result = await webcodecStream(sdk, obj, canvas, status, progress, url);
+          const overrideConfig = resolved.fallback ? { indexerUrl: resolved.indexerUrl, keyHex: resolved.keyHex } : null;
+          const result = await webcodecStream(sdk, obj, canvas, status, progress, url, overrideConfig);
           const _callerT0 = performance.now();
           tab.streamAbort = result;
           tab.contentLoaded = true;
@@ -1190,7 +1183,8 @@ async function loadContentWithAutoDetect() {
 
     status.innerHTML = `Size: ${formatSize(size)}\nDetected: ${_esc(mimeType)}\nLoaded in ${downloadElapsed}s\n<span class="pass">${typeLabel} loaded!</span>`;
   } catch (e) {
-    status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
+    console.error('loadContent error:', e);
+    status.innerHTML = `<span class="fail">Error: ${_esc(e.message || e.toString?.() || String(e))}</span>`;
   } finally {
     setLoadContentInProgress(false);
   }

@@ -7,7 +7,7 @@
 // - 'stream-demux': Download + MP4 demux — posts parsed video/audio samples
 //   (moves mp4box.appendBuffer off the main thread to prevent render stalls)
 
-import init, { AppKey, Builder, DownloadOptions, setLogLevel } from './pkg/indexd_wasm.js';
+import init, { AppKey, SdkBuilder, DownloadOptions, set_log_level } from './pkg/sia_storage_wasm.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { fromHex } from './worker-utils.js';
 
@@ -35,12 +35,12 @@ self.onmessage = async (e) => {
       // Initialize WASM module
       await init();
       _debugEnabled = !!logLevel;
-      if (logLevel) setLogLevel(logLevel);
+      if (logLevel) set_log_level(logLevel);
 
       // Build SDK
-      const seed = fromHex(keyHex);
-      const appKey = new AppKey(seed);
-      const builder = new Builder(indexerUrl);
+      
+      const appKey = AppKey.fromHex(keyHex);
+      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
 
       const sdk = await builder.connected(appKey);
       if (!sdk) {
@@ -55,11 +55,9 @@ self.onmessage = async (e) => {
 
       // Stream download — post chunks back to main thread
       let byteOffset = 0;
-      const opts = new DownloadOptions();
-      opts.maxInflight = maxDownloads;
+      const opts = new DownloadOptions(maxDownloads);
       await sdk.downloadStreaming(
         obj,
-        opts,
         (chunk) => {
           const buf = chunk.buffer.slice(
             chunk.byteOffset,
@@ -94,12 +92,12 @@ self.onmessage = async (e) => {
       _dbg('[worker-demux] Initializing WASM...');
       await init();
       _debugEnabled = !!logLevel;
-      if (logLevel) setLogLevel(logLevel);
+      if (logLevel) set_log_level(logLevel);
       _dbg('[worker-demux] WASM initialized. Connecting SDK...');
 
-      const seed = fromHex(keyHex);
-      const appKey = new AppKey(seed);
-      const builder = new Builder(indexerUrl);
+      
+      const appKey = AppKey.fromHex(keyHex);
+      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
 
       const sdk = await builder.connected(appKey);
       if (!sdk) {
@@ -270,11 +268,9 @@ self.onmessage = async (e) => {
 
       // Download + demux
       _dbg('[worker-demux] Starting downloadStreaming...');
-      const opts = new DownloadOptions();
-      opts.maxInflight = maxDownloads;
+      const opts = new DownloadOptions(maxDownloads);
       await sdk.downloadStreaming(
         obj,
-        opts,
         (chunk) => {
           const _chunkT0 = performance.now();
           const buf = chunk.buffer.slice(

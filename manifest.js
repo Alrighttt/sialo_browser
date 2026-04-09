@@ -740,8 +740,7 @@ async function mfstDownloadAndRestore(shareUrl) {
   const obj = await sdk.sharedObject(shareUrl);
 
   const blobParts = [];
-  const dlOpts = new DownloadOptions();
-  await sdk.downloadStreaming(obj, dlOpts,
+  await sdk.downloadStreaming(obj,
     (chunk) => { blobParts.push(chunk); },
     (current, total) => {
       progressEl.max = total;

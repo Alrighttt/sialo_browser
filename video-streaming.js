@@ -422,11 +422,13 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     };
   });
 
-  // Start the download + demux worker
+  // Start the download + demux worker. If overrideConfig is set (fallback
+  // indexer), use those credentials instead of the active profile.
+  const overrideConfig = helpers.overrideConfig;
   worker.postMessage({
     type: 'stream-demux',
-    indexerUrl: getUrl(),
-    keyHex: getKeyHex(),
+    indexerUrl: overrideConfig?.indexerUrl || getUrl(),
+    keyHex: overrideConfig?.keyHex || getKeyHex(),
     maxDownloads: getMaxDownloads(),
     objectUrl: objectUrl,
     logLevel: getLogLevel(),
@@ -665,9 +667,8 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
   const downloadStart = performance.now();
 
   let chunkCount = 0;
-  const dlOpts2 = new DownloadOptions();
-  dlOpts2.maxInflight = getMaxDownloads();
-  const streamPromise = sdk.downloadStreaming(obj, dlOpts2,
+  const dlOpts2 = new DownloadOptions(getMaxDownloads());
+  const streamPromise = sdk.downloadStreaming(obj,
     (chunk) => {
       if (aborted) return;
       chunkCount++;
@@ -697,6 +698,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
         ));
       }
     },
+    dlOpts2,
   );
 
   try {

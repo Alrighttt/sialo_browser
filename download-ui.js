@@ -1,5 +1,5 @@
 import { _esc, formatSize } from './utils.js';
-import { connectSdk, getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
+import { connectSdk, resolveObject, getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
 import {
   parallelDownload, parallelDownloadToDisk, getActiveServiceWorker, parallelDownloadViaSW,
@@ -139,12 +139,11 @@ export function initDownloadUI() {
       // Path 1: File System Access API (Chrome/Edge — file picker already shown above)
       if (writable) {
         console.log('Using download path: File System Access API');
-        const sdk = await connectSdk(status);
-        if (!sdk) { try { await writable.abort(); } catch (_) { } return; }
+        const primarySdk = await connectSdk(status);
+        if (!primarySdk) { try { await writable.abort(); } catch (_) { } return; }
 
         status.innerHTML += '\nFetching object metadata...';
-        const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
-        const obj = isShareUrl ? await sdk.sharedObject(input) : await sdk.object(input);
+        const { sdk, obj } = await resolveObject(input, primarySdk);
         size = obj.size();
         status.innerHTML = `Object found: ${formatSize(size)}`;
 
@@ -180,12 +179,11 @@ export function initDownloadUI() {
       } else {
         // Path 3: Memory fallback (no File System Access API, no SW)
         console.log('Using download path: Memory fallback');
-        const sdk = await connectSdk(status);
-        if (!sdk) return;
+        const primarySdk = await connectSdk(status);
+        if (!primarySdk) return;
 
         status.innerHTML += '\nFetching object metadata...';
-        const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
-        const obj = isShareUrl ? await sdk.sharedObject(input) : await sdk.object(input);
+        const { obj } = await resolveObject(input, primarySdk);
         size = obj.size();
         const sizeMB = size / (1024 * 1024);
         if (sizeMB > 500) {
@@ -219,7 +217,8 @@ export function initDownloadUI() {
       status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(size)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
     }); } catch (e) {
       if (progressInterval) clearInterval(progressInterval);
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message)}</span>`;
+      console.error('Download error:', e);
+      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e.toString?.() || String(e))}</span>`;
     } finally {
       _downloadInProgress = false;
       document.getElementById('btn-download').disabled = false;

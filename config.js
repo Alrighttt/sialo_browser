@@ -2,7 +2,12 @@
 
 import { _dbg, _dbgWarn, fromHex, formatSize } from './utils.js';
 import { updateConnectionStatus } from './tabs.js';
-import { AppKey, Builder, DownloadOptions } from './pkg/indexd_wasm.js';
+import { AppKey, SdkBuilder, DownloadOptions } from './pkg/sia_storage_wasm.js';
+
+const APP_ID = 'c0000000000000000000000000000000000000000000000000000000000000de';
+const APP_NAME = 'Sialo';
+const APP_DESCRIPTION = 'Decentralized storage browser for the Sia network';
+const APP_SERVICE_URL = 'https://sialo.app';
 
 const PROFILES_KEY = 'indexer-profiles';
 import { createFile as createMP4Box } from './vendor/mp4box.bundle.js';
@@ -22,8 +27,8 @@ export function getLogLevel() { return document.getElementById('cfg-debug-loggin
 
 const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, DownloadOptions, createMP4Box, _dbg, _dbgWarn };
 
-export function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl) {
-  return _webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, streamHelpers);
+export function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, overrideConfig) {
+  return _webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, { ...streamHelpers, overrideConfig });
 }
 export function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl) {
   return _transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl, streamHelpers);
@@ -49,15 +54,20 @@ export async function connectSdk(statusEl) {
   }
 
   statusEl.textContent = 'Creating app key...';
-  const seed = fromHex(keyHex);
-  const appKey = new AppKey(seed);
+  const appKey = AppKey.fromHex(keyHex);
   statusEl.textContent = `App key created. Public key: ${appKey.publicKey()}\nConnecting to indexer...`;
-  const builder = new Builder(url);
+  const builder = new SdkBuilder(url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
   const sdk = await builder.connected(appKey);
   if (!sdk) {
     statusEl.innerHTML = '<span class="fail">App key not recognized by this indexer. Register first.</span>';
     return null;
   }
+
+  // Warm host connections (main thread only — workers skip this).
+  // Caches price data and host latency metrics. Connections themselves
+  // go stale after QUIC idle timeout but are recreated on demand.
+  statusEl.textContent = 'Warming host connections...';
+  await sdk.warmConnections().catch(e => _dbg('warmConnections:', e));
 
   // Cache the SDK
   cachedSdk = sdk;
@@ -95,8 +105,8 @@ export async function resolveSharedObject(shareUrl, primarySdk) {
     if (!profile.url || !profile.key || profile.url === activeUrl) continue;
     try {
       _dbg(`Trying profile "${name}" (${profile.url})...`);
-      const key = new AppKey(fromHex(profile.key));
-      const builder = new Builder(profile.url);
+      const key = AppKey.fromHex(profile.key);
+      const builder = new SdkBuilder(profile.url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
       const sdk = await builder.connected(key);
       if (!sdk) continue;
       const obj = await sdk.sharedObject(shareUrl);
@@ -109,6 +119,58 @@ export async function resolveSharedObject(shareUrl, primarySdk) {
 
   throw new Error(
     'Shared object not found on any configured indexer.\n' +
+    errors.map(e => '  ' + e).join('\n')
+  );
+}
+
+/**
+ * Resolves an object by ID or share URL across all configured indexer profiles.
+ * Tries the primary SDK first, then falls back to other profiles.
+ * Returns { sdk, obj } for the first profile that succeeds.
+ */
+export async function resolveObject(input, primarySdk) {
+  const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
+
+  // Try the primary SDK first
+  try {
+    const obj = isShareUrl
+      ? await primarySdk.sharedObject(input)
+      : await primarySdk.object(input);
+    return { sdk: primarySdk, obj, fallback: null };
+  } catch (primaryErr) {
+    _dbg(`Primary indexer failed for object: ${primaryErr.message || primaryErr}`);
+  }
+
+  // Load all profiles and try each one
+  let profiles;
+  try {
+    profiles = JSON.parse(localStorage.getItem(PROFILES_KEY));
+  } catch { /* no profiles */ }
+  if (!profiles?.profiles) throw new Error('Object not found on any indexer');
+
+  const activeUrl = getUrl();
+  const errors = [];
+
+  for (const [name, profile] of Object.entries(profiles.profiles)) {
+    if (!profile.url || !profile.key || profile.url === activeUrl) continue;
+    try {
+      _dbg(`Trying profile "${name}" (${profile.url})...`);
+      const key = AppKey.fromHex(profile.key);
+      const builder = new SdkBuilder(profile.url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
+      const sdk = await builder.connected(key);
+      if (!sdk) continue;
+      const obj = isShareUrl
+        ? await sdk.sharedObject(input)
+        : await sdk.object(input);
+      _dbg(`Resolved object via profile "${name}"`);
+      return { sdk, obj, fallback: name, indexerUrl: profile.url, keyHex: profile.key };
+    } catch (e) {
+      errors.push(`${name}: ${e.message || e}`);
+    }
+  }
+
+  throw new Error(
+    'Object not found on any configured indexer.\n' +
     errors.map(e => '  ' + e).join('\n')
   );
 }

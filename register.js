@@ -13,8 +13,8 @@
 
 export function initRegistrationWizard(helpers) {
   const {
-    Builder,
-    generateRecoveryPhrase,
+    SdkBuilder,
+    generate_recovery_phrase,
     hex,
     fromHex,
     closeTab,
@@ -86,17 +86,15 @@ export function initRegistrationWizard(helpers) {
       btn.textContent = 'Requesting connection...';
       status.textContent = 'Requesting connection from indexer...';
 
-      regAppId = 'c0000000000000000000000000000000000000000000000000000000000000de';
-      regBuilder = new Builder(url);
+      regBuilder = new SdkBuilder(
+        url,
+        'c0000000000000000000000000000000000000000000000000000000000000de',
+        'Sialo',
+        'Sialo - a decentralized browser and CLI tool for the Sia network',
+        'https://sialo.io',
+      );
 
-      const appMetadata = JSON.stringify({
-        appID: regAppId,
-        name: 'Sialo',
-        description: 'Sialo - a decentralized browser and CLI tool for the Sia network',
-        serviceURL: 'https://sialo.io',
-      });
-
-      await regBuilder.requestConnection(appMetadata);
+      await regBuilder.requestConnection();
 
       const responseUrl = regBuilder.responseUrl();
 
@@ -115,7 +113,7 @@ export function initRegistrationWizard(helpers) {
       a.textContent = responseUrl;
       linkContainer.appendChild(a);
     } catch (e) {
-      setStatus(status, 'Failed: ' + e.message, 'fail');
+      setStatus(status, 'Failed: ' + (e.message || String(e)), 'fail');
       btn.textContent = 'Request Connection';
       btn.disabled = false;
     }
@@ -145,14 +143,14 @@ export function initRegistrationWizard(helpers) {
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Check for Approval';
-      setStatus(status, 'Error: ' + e.message, 'fail');
+      setStatus(status, 'Error: ' + (e.message || String(e)), 'fail');
     }
   });
 
   // --- Step 4: Recovery Phrase + Register ---
 
   document.getElementById('wiz-btn-generate').addEventListener('click', () => {
-    document.getElementById('wiz-mnemonic').value = generateRecoveryPhrase();
+    document.getElementById('wiz-mnemonic').value = generate_recovery_phrase();
   });
 
   document.getElementById('wiz-btn-register').addEventListener('click', async () => {
@@ -200,7 +198,7 @@ export function initRegistrationWizard(helpers) {
     } catch (e) {
       btn.disabled = false;
       btn.textContent = 'Register';
-      setStatus(status, 'Error: ' + e.message, 'fail');
+      setStatus(status, 'Error: ' + (e.message || String(e)), 'fail');
     }
   });
 

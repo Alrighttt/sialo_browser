@@ -1,7 +1,7 @@
 // Single web worker for downloading files via one SDK instance.
 // Keeps the main thread responsive while using a single connection pool.
 
-import init, { AppKey, Builder, DownloadOptions, setLogLevel } from './pkg/indexd_wasm.js';
+import init, { AppKey, SdkBuilder, DownloadOptions, set_log_level } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
 
 let sdk = null;
@@ -13,11 +13,11 @@ self.onmessage = async (e) => {
     const { indexerUrl, keyHex, maxDownloads, logLevel } = e.data;
     try {
       await init();
-      if (logLevel) setLogLevel(logLevel);
+      if (logLevel) set_log_level(logLevel);
 
-      const seed = fromHex(keyHex);
-      const appKey = new AppKey(seed);
-      const builder = new Builder(indexerUrl);
+      
+      const appKey = AppKey.fromHex(keyHex);
+      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
       sdk = await builder.connected(appKey);
       if (!sdk) {
         self.postMessage({ type: 'error', message: 'SDK connection failed' });
@@ -40,10 +40,9 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'metadata', size });
 
       // Download with streaming chunks
-      const opts = new DownloadOptions();
-      if (maxDownloads) opts.maxInflight = maxDownloads;
+      const opts = new DownloadOptions(maxDownloads || null);
 
-      await sdk.downloadStreaming(obj, opts,
+      await sdk.downloadStreaming(obj,
         (chunk) => {
           // Transfer chunk to main thread (zero-copy)
           const buf = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);

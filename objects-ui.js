@@ -24,8 +24,7 @@ export function initObjectsUI() {
       if (!sdk) return;
 
       status.textContent = 'Fetching objects...';
-      const objectsJson = await sdk.listObjects(limit);
-      const objects = JSON.parse(objectsJson);
+      const objects = await sdk.objectEvents(null, null, limit || 500);
 
       if (objects.length === 0) {
         objectsList.innerHTML = '<div style="padding:1rem; color:#888; text-align:center;">No objects found. Upload something first!</div>';
@@ -58,7 +57,7 @@ export function initObjectsUI() {
       for (const obj of objects) {
         const shortId = obj.id.substring(0, 8) + '...' + obj.id.substring(obj.id.length - 8);
         const size = obj.size ? formatSize(obj.size) : 'N/A';
-        const date = new Date(obj.updated_at).toLocaleString();
+        const date = new Date(obj.updatedAt).toLocaleString();
         const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
 
         html += `
@@ -287,7 +286,7 @@ export function initObjectsUI() {
           if (e.name === 'AbortError') {
             zipStatus.textContent = '';
           } else {
-            zipStatus.innerHTML = `<span class="fail">ZIP failed: ${_esc(e.message)}</span>`;
+            zipStatus.innerHTML = `<span class="fail">ZIP failed: ${_esc(e.message || String(e))}</span>`;
           }
           if (writable) try { await writable.abort(); } catch (_) {}
         }
@@ -295,7 +294,7 @@ export function initObjectsUI() {
         btn.disabled = false;
       });
     } catch (e) {
-      status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
+      status.innerHTML = `<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
       objectsList.innerHTML = '';
     }
   });
@@ -358,7 +357,7 @@ export function initObjectsUI() {
         document.getElementById('btn-list-objects').click();
       }, 500);
     } catch (e) {
-      status.innerHTML = `<span class="fail">Delete failed: ${_esc(e.message)}</span>`;
+      status.innerHTML = `<span class="fail">Delete failed: ${_esc(e.message || String(e))}</span>`;
 
       // Restore original status after showing error for 3 seconds
       setTimeout(() => {

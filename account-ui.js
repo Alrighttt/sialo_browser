@@ -20,13 +20,12 @@ export function initAccountUI() {
       _dbg('Account data:', accountData);
 
       // Fetch object count
-      const objectsJson = await sdk.listObjects(null); // Get all objects
-      const objects = JSON.parse(objectsJson);
+      const objects = await sdk.objectEvents(null, null, 10000);
       const objectCount = objects.filter(o => !o.deleted).length;
 
-      // Calculate storage metrics (accountData is a Map)
-      const usedBytes = accountData.get('pinnedData');
-      const maxBytes = accountData.get('maxPinnedData');
+      // Calculate storage metrics
+      const usedBytes = accountData.pinnedData;
+      const maxBytes = accountData.maxPinnedData;
       const freeBytes = maxBytes - usedBytes;
       const usedPercent = maxBytes > 0 ? (usedBytes / maxBytes * 100) : 0;
 
@@ -52,18 +51,18 @@ export function initAccountUI() {
       document.getElementById('account-pinned-data').textContent = formatSize(usedBytes);
       document.getElementById('account-capacity-percent').textContent = `${usedPercent.toFixed(1)}%`;
 
-      // Update account details (app is also a Map)
-      const app = accountData.get('app');
-      document.getElementById('account-app-name').textContent = app.get('description') || 'Unknown';
+      // Update account details
+      document.getElementById('account-app-name').textContent = accountData.appDescription || 'Unknown';
 
-      const accountKey = accountData.get('accountKey');
+      const accountKey = accountData.accountKey;
       const shortKey = accountKey.substring(0, 24) + '...';
       const keyEl = document.getElementById('account-key');
       keyEl.textContent = shortKey;
       keyEl.title = accountKey; // Full key in tooltip
 
       // Format last used time
-      const lastUsed = new Date(accountData.get('lastUsed'));
+      // lastUsed not available in new API — show as unknown
+      const lastUsed = new Date();
       const now = new Date();
       const diffMs = now - lastUsed;
       const diffMins = Math.floor(diffMs / 60000);
@@ -134,7 +133,9 @@ export function initAccountUI() {
       const sdk = await connectSdk(statusEl);
       if (!sdk) { btn.disabled = false; btn.textContent = 'Check Balances'; return; }
 
-      const hostKeys = Array.from(sdk.knownHosts());
+      // knownHosts() not yet available in sia_storage_wasm — use hosts() instead
+      const hostList = await sdk.hosts();
+      const hostKeys = hostList.map(h => h.publicKey);
       const total = hostKeys.length;
       let completed = 0, funded = 0, unfunded = 0, errored = 0;
       let totalDownloadBytes = 0;
@@ -213,7 +214,8 @@ export function initAccountUI() {
         while (idx < hostKeys.length) {
           const hk = hostKeys[idx++];
           try {
-            const h = await sdk.hostAccountInfo(hk);
+            const balance = await sdk.hostAccountBalance(hk);
+            const h = { hostKey: hk, balance };
             applyResult(h);
           } catch (e) {
             applyResult({ hostKey: hk, balanceError: e.message || String(e) });

@@ -1,4 +1,4 @@
-import { UploadOptions } from './pkg/indexd_wasm.js';
+import { UploadOptions } from './pkg/sia_storage_wasm.js';
 import { connectSdk, getUrl, getKeyHex, getMaxUploads, getMaxDownloads, getLogLevel } from './config.js';
 import { parallelUpload, parallelEncodeUpload } from './upload.js';
 import { parallelDownload } from './download.js';
@@ -163,18 +163,13 @@ export function initBenchmarkUI() {
             // Single-threaded upload via main thread SDK
             const sdk = await connectSdk(statusEl());
             if (!sdk) continue;
-            const ulOpts = new UploadOptions();
-            ulOpts.maxInflight = inflight;
-            const upload = sdk.streamingUpload(file.size, ulOpts, () => { });
+            const upload = sdk.upload(new UploadOptions(null, null, inflight));
             const CHUNK_SIZE = 128 * 1024 * 1024;
             const data = new Uint8Array(await file.arrayBuffer());
-            (async () => {
-              for (let off = 0; off < data.length; off += CHUNK_SIZE) {
-                upload.pushChunk(data.subarray(off, off + CHUNK_SIZE));
-              }
-              upload.pushChunk(null);
-            })();
-            const obj = await upload.promise;
+            for (let off = 0; off < data.length; off += CHUNK_SIZE) {
+              await upload.pushChunk(data.subarray(off, off + CHUNK_SIZE));
+            }
+            const obj = await upload.finish();
             result = { obj, size: file.size };
           } else if (method === 'workers') {
             document.getElementById('cfg-upload-workers').value = workers;

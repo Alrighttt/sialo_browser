@@ -2,7 +2,7 @@
 // Creates independent SDK instance, downloads via downloadStreaming,
 // posts decrypted chunks back via Transferable ArrayBuffers (zero-copy).
 
-import init, { AppKey, Builder, DownloadOptions } from './pkg/indexd_wasm.js';
+import init, { AppKey, SdkBuilder, DownloadOptions } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
 
 self.onmessage = async (e) => {
@@ -18,9 +18,9 @@ self.onmessage = async (e) => {
   try {
     await init();
 
-    const seed = fromHex(keyHex);
-    const appKey = new AppKey(seed);
-    const builder = new Builder(indexerUrl);
+    
+    const appKey = AppKey.fromHex(keyHex);
+    const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
 
     const sdk = await builder.connected(appKey);
     if (!sdk) {
@@ -37,11 +37,9 @@ self.onmessage = async (e) => {
 
     // Stream download — post chunks back to main thread
     let byteOffset = 0;
-    const opts = new DownloadOptions();
-    opts.maxInflight = maxDownloads;
+    const opts = new DownloadOptions(maxDownloads);
     await sdk.downloadStreaming(
-      obj,
-      opts,
+        obj,
       (chunk) => {
         const buf = chunk.buffer.slice(
           chunk.byteOffset,

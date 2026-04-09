@@ -1,9 +1,9 @@
 import init, {
-  generateRecoveryPhrase,
+  generate_recovery_phrase,
   AppKey,
-  Builder,
-  setLogLevel,
-} from './pkg/indexd_wasm.js';
+  SdkBuilder,
+  set_log_level,
+} from './pkg/sia_storage_wasm.js';
 
 // Import registration wizard
 import { initRegistrationWizard } from './register.js';
@@ -374,7 +374,7 @@ function initGearMenu() {
         // Initialize wizard handlers if not already done
         if (!window._wizardInitialized) {
           initRegistrationWizard({
-            Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+            SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
             closeTab, activateTab, tabs,
           });
           window._wizardInitialized = true;
@@ -457,7 +457,6 @@ function saveProfiles(data) {
     localStorage.setItem('indexer-url', active.url || '');
     localStorage.setItem('app-key', active.key || '');
   }
-  window.dispatchEvent(new CustomEvent('profile-updated'));
 }
 
 function migrateToProfiles() {
@@ -543,8 +542,6 @@ document.getElementById('cfg-profile-delete').addEventListener('click', () => {
 urlInput.addEventListener('input', () => { saveActiveProfile(profileData); });
 keyInput.addEventListener('input', () => { saveActiveProfile(profileData); });
 
-// Listen for profile updates from other modules (e.g. register wizard)
-window.addEventListener('profile-updated', () => { saveActiveProfile(profileData); });
 document.getElementById('cfg-key-toggle').addEventListener('click', () => {
   const btn = document.getElementById('cfg-key-toggle');
   if (keyInput.type === 'password') { keyInput.type = 'text'; btn.textContent = 'hide'; }
@@ -559,7 +556,7 @@ maxUploadsInput.addEventListener('input', () => {
 debugLoggingCheckbox.addEventListener('change', () => {
   const level = debugLoggingCheckbox.checked ? 'debug' : 'info';
   localStorage.setItem('log-level', level);
-  setLogLevel(level);
+  set_log_level(level);
 });
 
 // Browser compatibility checks
@@ -871,7 +868,7 @@ function _rafGapCheck() {
   requestAnimationFrame(_rafGapCheck);
 }
 requestAnimationFrame(_rafGapCheck);
-if (debugLoggingCheckbox.checked) setLogLevel('debug');
+if (debugLoggingCheckbox.checked) set_log_level('debug');
 document.getElementById('loading').style.display = 'none';
 document.getElementById('app').style.display = 'flex';
 
@@ -897,7 +894,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
     if (saved.type === 'internal') {
       if (saved.panelName === 'register' && !window._wizardInitialized) {
         initRegistrationWizard({
-          Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+          SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
           closeTab, activateTab, tabs,
         });
         window._wizardInitialized = true;
@@ -914,7 +911,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
 } else if (isFirstRun) {
   // First run, no saved tabs: show registration wizard + Homepage
   initRegistrationWizard({
-    Builder, generateRecoveryPhrase, hex, fromHex, randomHex, AppKey,
+    SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
     closeTab, activateTab, tabs,
   });
   window._wizardInitialized = true;

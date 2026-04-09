@@ -2,8 +2,8 @@
 // service worker streaming, and disk-based download.
 
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
-import { connectSdk, getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
-import { DownloadOptions } from './pkg/indexd_wasm.js';
+import { connectSdk, resolveObject, getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
+import { DownloadOptions } from './pkg/sia_storage_wasm.js';
 
 async function streamingDownload(sdk, obj, status, progress, label) {
   progress.style.display = 'block';
@@ -14,19 +14,20 @@ async function streamingDownload(sdk, obj, status, progress, label) {
   const PROGRESS_THROTTLE_MS = 100;
 
   const blobParts = [];
-  const dlOpts = new DownloadOptions();
-  dlOpts.maxInflight = getMaxDownloads();
-  await sdk.downloadStreaming(obj, dlOpts,
+  const dlOpts = new DownloadOptions(getMaxDownloads());
+  await sdk.downloadStreaming(obj,
     (chunk) => { blobParts.push(chunk); },
     (current, total) => {
       const now = performance.now();
       if (now - lastProgressUpdate >= PROGRESS_THROTTLE_MS || current === total) {
         progress.max = total;
         progress.value = current;
-        status.textContent = `${label || 'Downloading'}... ${current}/${total} slabs`;
+        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+        status.textContent = `${label || 'Downloading'}... ${pct}% (${formatSize(current)} / ${formatSize(total)})`;
         lastProgressUpdate = now;
       }
     },
+    dlOpts,
   );
 
   const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
@@ -38,11 +39,11 @@ async function streamingDownload(sdk, obj, status, progress, label) {
 
 // Creates a pool of Web Workers, each with its own SDK instance.
 // Returns { workers, readyPromises } — await readyPromises before assigning work.
-function createWorkerPool(numWorkers, objectUrl) {
+function createWorkerPool(numWorkers, objectUrl, overrideConfig) {
   const config = {
     type: 'init',
-    indexerUrl: getUrl(),
-    keyHex: getKeyHex(),
+    indexerUrl: overrideConfig?.indexerUrl || getUrl(),
+    keyHex: overrideConfig?.keyHex || getKeyHex(),
     maxDownloads: getMaxDownloads(),
     objectUrl,
     logLevel: getLogLevel(),
@@ -196,21 +197,24 @@ async function parallelDownload(objectUrl, status, progress, label, numWorkers, 
   progress.style.display = 'block';
 
   const noopStatus = { set textContent(_) {}, set innerHTML(_) {} };
-  const sdk = await connectSdk(noopStatus);
-  if (!sdk) return null;
-  const obj = objectUrl.startsWith('sia://')
-    ? await sdk.sharedObject(objectUrl)
-    : await sdk.object(objectUrl);
+  const primarySdk = await connectSdk(noopStatus);
+  if (!primarySdk) return null;
+  const resolved = await resolveObject(objectUrl, primarySdk);
+  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
+  if (fallback) status.textContent = `Found on fallback indexer: ${fallback}`;
   const slabCount = obj.slabCount();
   const totalSize = obj.size();
   progress.max = slabCount;
 
-  if (slabCount <= 2) {
-    return streamingDownload(sdk, obj, status, progress, label);
-  }
+  // Use single-SDK streaming download for all files. Multi-worker parallel
+  // download is disabled until benchmarked — multiple SDK instances compete
+  // for Chrome's 64 WebTransport session limit, causing connection failures.
+  // The SDK already downloads shards in parallel internally.
+  return streamingDownload(sdk, obj, status, progress, label);
 
+  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
   const actualWorkers = Math.min(numWorkers, slabCount);
-  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl);
+  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl, workerConfig);
   await Promise.all(readyPromises);
   initWorkerStatus(workerStatusRef, workers);
 
@@ -233,19 +237,20 @@ async function parallelDownloadToDisk(objectUrl, writable, status, progress, byt
   numWorkers = numWorkers || getDownloadWorkers();
 
   const noopStatus = { set textContent(_) {}, set innerHTML(_) {} };
-  const sdk = await connectSdk(noopStatus);
-  if (!sdk) return null;
+  const primarySdk = await connectSdk(noopStatus);
+  if (!primarySdk) return null;
 
-  const obj = objectUrl.startsWith('sia://')
-    ? await sdk.sharedObject(objectUrl)
-    : await sdk.object(objectUrl);
+  const resolved = await resolveObject(objectUrl, primarySdk);
+  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
   const slabCount = obj.slabCount();
-  const slabLengths = Array.from(obj.slabLengths());
+  const slabs = obj.slabs();
+  const slabLengths = slabs.map(s => s.length());
   const totalSize = obj.size();
   progress.max = slabCount;
 
+  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
   const actualWorkers = Math.min(numWorkers, slabCount);
-  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl);
+  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl, workerConfig);
   await Promise.all(readyPromises);
   initWorkerStatus(workerStatusRef, workers);
 
@@ -333,26 +338,25 @@ async function parallelDownloadViaSW(objectUrl, filename, size, status, progress
     iframe.remove();
   }
 
-  // Spawn workers in parallel with main-thread SDK connection
-  const { workers, readyPromises } = createWorkerPool(numWorkers, objectUrl);
-
   const noopStatus = { set textContent(_) {}, set innerHTML(_) {} };
-  const sdkPromise = connectSdk(noopStatus);
-  const [sdk] = await Promise.all([sdkPromise, Promise.all(readyPromises)]);
-  if (!sdk) {
+  const primarySdk = await connectSdk(noopStatus);
+  if (!primarySdk) {
     sw.postMessage({ type: 'download-error', uuid, error: 'SDK connection failed' });
-    workers.forEach(w => w.terminate());
     cleanup();
     return null;
   }
 
-  if (cancelled) { workers.forEach(w => w.terminate()); cleanup(); return null; }
-  const obj = objectUrl.startsWith('sia://')
-    ? await sdk.sharedObject(objectUrl)
-    : await sdk.object(objectUrl);
+  if (cancelled) { cleanup(); return null; }
+  const resolved = await resolveObject(objectUrl, primarySdk);
+  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
   const slabCount = obj.slabCount();
-  const slabLengths = Array.from(obj.slabLengths());
+  const slabs = obj.slabs();
+  const slabLengths = slabs.map(s => s.length());
   const totalSize = obj.size();
+
+  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
+  const { workers, readyPromises } = createWorkerPool(numWorkers, objectUrl, workerConfig);
+  await Promise.all(readyPromises);
   progress.max = slabCount;
 
   if (onMetadata) onMetadata({ size: totalSize, slabCount });
