@@ -5,7 +5,7 @@ import * as chain from './chain.js';
 
 const NET_LABELS = { mainnet: 'Mainnet', mainnet_v2: 'V2-only', zen: 'Zen' };
 
-export function fmtSize(bytes) {
+function fmtSize(bytes) {
   if (!bytes) return '0';
   if (bytes < 1e3) return bytes + ' B';
   if (bytes < 1e6) return (bytes / 1e3).toFixed(1) + ' KB';
@@ -13,31 +13,6 @@ export function fmtSize(bytes) {
   return (bytes / 1e9).toFixed(2) + ' GB';
 }
 
-/**
- * Build the inner HTML for a status card. Returns an HTML string.
- * @param {string} net - Network key (mainnet, mainnet_v2, zen)
- * @param {string} [id] - Optional id attribute for the card div
- */
-export function createCardHTML(net, id) {
-  const label = NET_LABELS[net] || net;
-  const idAttr = id ? ` id="${id}"` : '';
-  return `<div${idAttr} class="sc-net-status-card">
-  <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
-    <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
-    <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">${label}</span>
-    <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
-  </div>
-  <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;"></div>
-  <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off</div>
-  <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
-    <span class="nb-idx"><span class="sc-net-filters">\u274C SCBF</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity index built from block headers</span></span></span>
-    <span class="nb-idx"><span class="sc-net-txindex">\u274C STXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs to block heights for fast lookup</span></span></span>
-    <span class="nb-idx"><span class="sc-net-utxoindex">\u274C SUXI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction outputs by address prefix</span></span></span>
-    <span class="nb-idx"><span class="sc-net-attestationindex">\u274C SAPI</span><span class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public keys to attestation entries</span></span></span>
-  </div>
-  <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
-</div>`;
-}
 
 /**
  * Update a status card element with current chain state for the given network.

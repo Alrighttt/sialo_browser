@@ -1,7 +1,6 @@
-// Upload helpers — simplified for sia_storage_wasm.
-// The old parallel worker architecture (slab-encode-worker + slab-upload-worker)
-// is replaced by the SDK's built-in Upload handle which handles erasure coding,
-// encryption, and parallel shard uploads internally.
+// Upload helper — the SDK's Upload handle does erasure coding,
+// encryption, and parallel shard uploads internally, so this is just
+// a thin wrapper that reports timing.
 
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { connectSdk, getMaxUploads } from './config.js';
@@ -20,12 +19,4 @@ async function parallelUpload(file, status, progress, _numWorkers) {
   return { obj, elapsed, size: obj.size(), objectId: obj.id() };
 }
 
-// parallelEncodeUpload is now identical to parallelUpload since the SDK
-// handles encoding internally.
-const parallelEncodeUpload = parallelUpload;
-
-async function encodeOnlyBenchmark(_file, _numWorkers) {
-  throw new Error('encodeOnlyBenchmark is not supported with sia_storage_wasm — encoding is handled internally by the SDK');
-}
-
-export { parallelUpload, parallelEncodeUpload, encodeOnlyBenchmark };
+export { parallelUpload };

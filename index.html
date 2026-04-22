@@ -36,8 +36,6 @@
           Site</button>
         <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span>
           Download</button>
-        <button class="gear-menu-item" data-panel="benchmark"><span class="gear-menu-icon">&#9201;</span>
-          Benchmark</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Share</div>
         <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share
@@ -56,8 +54,6 @@
         <button class="gear-menu-item" data-panel="setup"><span class="gear-menu-icon">&#9881;</span> Settings</button>
         <button class="gear-menu-item" data-panel="register"><span class="gear-menu-icon">&#128273;</span>
           Register</button>
-        <button class="gear-menu-item" data-panel="cors"><span class="gear-menu-icon">&#128295;</span> CORS
-          Diagnostics</button>
       </div>
       <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
       <input type="text" id="chrome-address-bar" placeholder="Paste Sia share URL or object ID..."
@@ -203,6 +199,7 @@
             <label class="label" for="cfg-key">App Key (hex seed)</label>
             <div style="position:relative; margin-bottom:0.5rem;">
               <input id="cfg-key" type="password" placeholder="e.g. ab12cd34..."
+                autocomplete="off" data-1p-ignore="true" data-lpignore="true" data-bwignore="true"
                 style="width:100%; padding-right:2.5rem;" />
               <button id="cfg-key-toggle" type="button"
                 style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; font-size:0.8rem; padding:2px 6px;"
@@ -401,24 +398,6 @@
         </div><!-- /internal-page-content -->
       </div><!-- /panel-dashboard -->
 
-      <!-- Panel: CORS Diagnostics -->
-      <div id="panel-cors" class="viewport-panel internal-page" data-panel="cors">
-        <div class="internal-page-content">
-          <div class="panel-section">
-            <h2>CORS Diagnostics</h2>
-            <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
-              Sends an OPTIONS preflight request to every API endpoint. The last two auth UI routes intentionally
-              have CORS disabled.
-            </p>
-            <button id="btn-cors-run-all"
-              style="width:100%; padding:0.6rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; margin-bottom:1rem;">
-              Run All CORS Tests
-            </button>
-            <div id="cors-results" style="font-size:0.85rem;"></div>
-          </div><!-- /panel-section: CORS -->
-        </div><!-- /internal-page-content -->
-      </div><!-- /panel-cors -->
-
       <!-- Panel: Upload Text -->
       <div id="panel-upload-text" class="viewport-panel internal-page" data-panel="upload-text">
         <div class="internal-page-content">
@@ -582,180 +561,6 @@
           </div><!-- /panel-section: Download -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-download -->
-
-      <!-- Panel: Benchmark -->
-      <div id="panel-benchmark" class="viewport-panel internal-page" data-panel="benchmark">
-        <div class="internal-page-content">
-          <div class="panel-section">
-            <h2>Upload Benchmark</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
-              Upload dummy data of various sizes using different methods and concurrency settings. Results are displayed
-              in a comparison table.
-            </p>
-
-            <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
-              <div>
-                <div class="label">File Sizes</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-10" checked> 10
-                  MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-50" checked> 50
-                  MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-100"> 100
-                  MB</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-size-500"> 500
-                  MB</label>
-              </div>
-              <div>
-                <div class="label">Methods</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-single"
-                    checked> Single-threaded</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-workers"
-                    checked> Web Workers</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encode"
-                    checked> Encode Workers</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-method-encodeonly">
-                  Encode Only (no network)</label>
-              </div>
-              <div>
-                <div class="label">Max Inflight</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-4" checked>
-                  4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-8" checked>
-                  8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-16">
-                  16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-24">
-                  24</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-inflight-32">
-                  32</label>
-              </div>
-              <div>
-                <div class="label">Workers (web/encode only)</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-4" checked>
-                  4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-8" checked>
-                  8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-16">
-                  16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="bench-workers-24">
-                  24</label>
-              </div>
-            </div>
-
-            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
-              <button id="btn-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Benchmark</button>
-              <button id="btn-bench-stop" style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
-              <button id="btn-bench-clear"
-                style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear
-                Results</button>
-            </div>
-
-            <div id="bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
-            <progress id="bench-progress" max="100" value="0"
-              style="width:100%; display:none; margin-bottom:1rem;"></progress>
-
-            <!-- Results Table -->
-            <div id="bench-results" style="display:none;">
-              <table
-                style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
-                <thead>
-                  <tr style="border-bottom:1px solid #222; color:#888;">
-                    <th style="text-align:left; padding:0.6rem 0.75rem; font-weight:500;">Size</th>
-                    <th style="text-align:left; padding:0.6rem 0.5rem; font-weight:500;">Method</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Inflight</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Workers</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Time</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Speed</th>
-                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500;">Wire Speed</th>
-                  </tr>
-                </thead>
-                <tbody id="bench-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-
-          <!-- Download Benchmark -->
-          <div class="panel-section"
-            style="margin-top:2rem; border-top:1px solid var(--border-subtle,#1a1a1a); padding-top:1.5rem;">
-            <h2>Download Benchmark</h2>
-            <p style="color:#888; font-size:0.85rem; margin-bottom:1rem;">
-              Download an existing object using different methods and concurrency settings. Provide an object ID or
-              share URL.
-            </p>
-
-            <div style="margin-bottom:1rem;">
-              <div class="label">Object ID or Share URL</div>
-              <input type="text" id="dl-bench-url" placeholder="Object ID (hex) or sia:// share URL"
-                style="width:100%; padding:0.5rem; font-size:0.85rem; background:var(--bg-card,#151515); border:1px solid var(--border-default,#2a2a2a); color:var(--text-primary,#e2e8f0); border-radius:4px;" />
-            </div>
-
-            <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1rem;">
-              <div>
-                <div class="label">Methods</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-workers"
-                    checked> Web Workers</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-method-single"
-                    checked> Single Worker</label>
-              </div>
-              <div>
-                <div class="label">Max Inflight</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-4"
-                    checked> 4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-8"
-                    checked> 8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-16">
-                  16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-24">
-                  24</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-inflight-32">
-                  32</label>
-              </div>
-              <div>
-                <div class="label">Workers (web workers only)</div>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-4" checked>
-                  4</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-8" checked>
-                  8</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-16">
-                  16</label>
-                <label style="font-size:0.85rem; display:block;"><input type="checkbox" id="dl-bench-workers-24">
-                  24</label>
-              </div>
-            </div>
-
-            <div style="display:flex; gap:0.5rem; align-items:center; margin-bottom:1rem;">
-              <button id="btn-dl-bench-run" style="padding:0.5rem 1.2rem; font-size:0.9rem;">Run Download
-                Benchmark</button>
-              <button id="btn-dl-bench-stop"
-                style="padding:0.5rem 0.8rem; font-size:0.85rem; display:none;">Stop</button>
-              <button id="btn-dl-bench-clear"
-                style="padding:0.5rem 0.8rem; font-size:0.85rem; background:#333; border:1px solid #444; color:#ccc; cursor:pointer; border-radius:4px;">Clear
-                Results</button>
-            </div>
-
-            <div id="dl-bench-status" style="font-size:0.85rem; color:#888; margin-bottom:1rem;"></div>
-            <progress id="dl-bench-progress" max="100" value="0"
-              style="width:100%; display:none; margin-bottom:1rem;"></progress>
-
-            <div id="dl-bench-results" style="display:none;">
-              <table
-                style="width:100%; border-collapse:collapse; font-size:0.8rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
-                <thead>
-                  <tr style="border-bottom:1px solid #222; color:#888;">
-                    <th style="text-align:left; padding:0.6rem 0.5rem; font-weight:500;">Method</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Inflight</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Workers</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Size</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500;">Time</th>
-                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500;">Speed</th>
-                  </tr>
-                </thead>
-                <tbody id="dl-bench-tbody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div><!-- /panel-benchmark -->
 
       <!-- Panel: My Objects -->
       <div id="panel-objects" class="viewport-panel internal-page" data-panel="objects">

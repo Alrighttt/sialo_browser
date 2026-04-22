@@ -43,10 +43,8 @@ import {
 import { initDownloadUI } from './download-ui.js';
 import { initUploadUI } from './upload-ui.js';
 import { initUploadSiteUI } from './upload-site-ui.js';
-import { initBenchmarkUI } from './benchmark-ui.js';
 import { initObjectsUI } from './objects-ui.js';
 import { initAccountUI } from './account-ui.js';
-import { initCorsUI } from './cors-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import { setLoadContentHandler as setManifestLoadContent } from './manifest.js';
 import {
@@ -499,7 +497,13 @@ function activateProfile(data, name) {
 
 function saveActiveProfile(data) {
   if (!data.active) return;
-  data.profiles[data.active] = { url: urlInput.value.trim(), key: keyInput.value.trim() };
+  const newUrl = urlInput.value.trim();
+  const newKey = keyInput.value.trim();
+  const current = data.profiles[data.active] || {};
+  // Guard against infinite recursion when a password manager re-injects
+  // its saved value after a localStorage write and re-fires `input`.
+  if (current.url === newUrl && current.key === newKey) return;
+  data.profiles[data.active] = { url: newUrl, key: newKey };
   saveProfiles(data);
 }
 
@@ -942,9 +946,6 @@ document.getElementById('preset-fast').addEventListener('click', () => setPreset
 // Account dashboard, host balances, prune → account-ui.js
 initAccountUI();
 
-// CORS diagnostics → cors-ui.js
-initCorsUI();
-
 // Upload UI → upload-ui.js
 initUploadUI();
 
@@ -954,9 +955,6 @@ initUploadSiteUI();
 // Download UI → download-ui.js
 initDownloadUI();
 
-
-// Benchmarks (upload + download) → benchmark-ui.js
-initBenchmarkUI();
 
 // Objects list, share, view, delete, info → objects-ui.js
 initObjectsUI();

@@ -728,22 +728,6 @@ export async function exploreAddressUnlimited(addr, logFn) {
   catch (e) { throw new Error('Failed to parse address scan result: ' + e.message); }
 }
 
-export async function lookupTransaction(txid, logFn) {
-  if (!_txindexBlobUrl) throw new Error('No txindex loaded');
-  const config = getNetworkConfig(_activeNetwork);
-  if (!config.peerUrl) throw new Error('No peer URL configured');
-
-  const resultJson = await _wasm.lookup_txid(
-    config.peerUrl, getGenesisHex(), txid, _txindexBlobUrl,
-    logFn || (() => {}),
-    config.certHash || undefined
-  );
-
-  if (resultJson === 'not_found') return null;
-  try { return JSON.parse(resultJson); }
-  catch (e) { throw new Error('Failed to parse transaction result: ' + e.message); }
-}
-
 export async function exploreQuery(query, logFn) {
   const config = getNetworkConfig(_activeNetwork);
   if (!config.peerUrl) throw new Error('No peer URL configured. Set one in the Syncer page.');
@@ -757,21 +741,6 @@ export async function exploreQuery(query, logFn) {
 
   try { return JSON.parse(resultJson); }
   catch (e) { throw new Error('Failed to parse query result: ' + e.message); }
-}
-
-export async function lookupUtxos(address, logFn) {
-  if (!_utxoindexBlobUrl) throw new Error('No UTXO index loaded');
-  const config = getNetworkConfig(_activeNetwork);
-  if (!config.peerUrl) throw new Error('No peer URL configured');
-
-  const resultJson = await _wasm.lookup_utxos(
-    config.peerUrl, getGenesisHex(), address, _utxoindexBlobUrl,
-    logFn || (() => {}),
-    config.certHash || undefined
-  );
-
-  try { return JSON.parse(resultJson); }
-  catch (e) { throw new Error('Failed to parse UTXO result: ' + e.message); }
 }
 
 // --- Public API: Attestation Index ---
@@ -942,10 +911,6 @@ async function _findConfirmedTxids(net) {
   return confirmed;
 }
 
-// --- Public API: Access raw WASM functions (for advanced panels) ---
-
-export function getWasm() { return _wasm; }
-
 // --- Public API: Subscribe to state changes ---
 
 export function onChange(callback) {
@@ -959,10 +924,6 @@ export function onChange(callback) {
 
 export function getSyncState(net) {
   return _syncState[net || _activeNetwork] || { status: 'idle' };
-}
-
-export function isSyncing() {
-  return Object.values(_syncState).some(s => s.status === 'syncing');
 }
 
 export function onSyncLog(callback) {

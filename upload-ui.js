@@ -171,12 +171,28 @@ export function initUploadUI() {
 
       let shardsDone = 0;
       let bytesUploaded = 0;
+      // Rolling-window throughput samples — {t, bytes} pairs spanning the
+      // most recent ~5s. All-time average badly under-reports because QUIC
+      // slow-start + contract-negotiation warmup drag it down long after
+      // the steady-state rate has stabilised, which doesn't match what
+      // system-level network tools show.
+      const SPEED_WINDOW_MS = 5000;
+      const speedSamples = [{ t: uploadStart, bytes: 0 }];
 
       function refreshDisplay() {
-        const elapsedSec = (performance.now() - uploadStart) / 1000;
+        const now = performance.now();
+        const elapsedSec = (now - uploadStart) / 1000;
         cardElapsed.textContent = formatTime(elapsedSec);
-        const speedMBs = elapsedSec > 0 ? (bytesUploaded / elapsedSec / 1e6) : 0;
+
+        speedSamples.push({ t: now, bytes: bytesUploaded });
+        while (speedSamples.length > 2 && now - speedSamples[0].t > SPEED_WINDOW_MS) {
+          speedSamples.shift();
+        }
+        const oldest = speedSamples[0];
+        const windowSec = (now - oldest.t) / 1000;
+        const speedMBs = windowSec > 0 ? ((bytesUploaded - oldest.bytes) / windowSec / 1e6) : 0;
         cardSpeed.textContent = `${speedMBs.toFixed(1)} MB/s`;
+
         cardShardsDone.textContent = `${shardsDone} / ${expectedShards} shards`;
         if (shardsDone > 0 && shardsDone < expectedShards) {
           const remainingShards = expectedShards - shardsDone;

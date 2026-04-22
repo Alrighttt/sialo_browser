@@ -15,7 +15,6 @@ export const PANEL_URLS = {
   'download':    'sialo://download',
   'objects':     'sialo://objects',
   'share':       'sialo://share',
-  'cors':        'sialo://diagnostics',
   'history':     'sialo://history',
   'explorer':    'sialo://explorer',
   'wallet':      'sialo://wallet',
@@ -27,7 +26,7 @@ export const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([
 export const PANEL_TITLES = {
   'register': 'Register', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
   'upload-text': 'Upload Text', 'upload-site': 'Upload Site', 'download': 'Download', 'objects': 'My Objects',
-  'share': 'Share', 'cors': 'CORS Diagnostics', 'history': 'History', 'explorer': 'Explorer',
+  'share': 'Share', 'history': 'History', 'explorer': 'Explorer',
   'wallet': 'Wallet', 'manifest': 'Manifest', 'syncer-config': 'Syncer',
 };
 
