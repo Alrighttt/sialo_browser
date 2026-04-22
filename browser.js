@@ -12,17 +12,17 @@ import {
   pushTabNav, updateNavButtons, isNavInProgress, setNavInProgress,
   setBrowserView, setStreamingTabId, setLastBrowserUrl, setLoadContentInProgress,
   saveTabState, goBack, createTab, openOrActivateInternalTab,
-  activePanel
+  activePanel, tabStatusProxy,
 } from './tabs.js';
 import {
   streamingDownload, parallelDownload, parallelDownloadViaSW,
   createWorkerPool, initWorkerStatus, runSlabDownload,
 } from './download.js';
-import { DownloadOptions } from './pkg/sia_storage_wasm.js';
 import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
+import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN } from './sia-site.js';
 
 // -- Decentralized Browser (HTML Viewer with Navigation) --
 
@@ -693,9 +693,8 @@ async function navigateToHistory(index) {
 
 // Re-download a history item (when blob URL is missing after refresh)
 async function redownloadHistoryItem(item, index) {
-  const status = document.getElementById('iframe-status');
-  const progress = document.getElementById('browser-progress');
   const tab = getOrCreateActiveBrowserTab();
+  const { status, progress } = tabStatusProxy(tab);
   const iframe = tab.iframeEl;
   const videoContainer = document.getElementById('video-container');
   const canvas = document.getElementById('stream-canvas');
@@ -922,14 +921,41 @@ async function loadContentWithAutoDetect() {
   tab.url = url;
   setLastBrowserUrl(url);
 
-  const status = document.getElementById('iframe-status');
-  const progress = document.getElementById('browser-progress');
+  const { status, progress } = tabStatusProxy(tab);
   const iframe = tab.iframeEl;
   const videoContainer = document.getElementById('video-container');
   const canvas = document.getElementById('stream-canvas');
   const video = document.getElementById('mse-video');
 
   if (!iframe) { setLoadContentInProgress(false); return; }
+
+  // sia-site:// <manifestId> — decentralised multi-file hosting.
+  // Hand off to the service-worker bridge on the sandbox origin; the
+  // iframe's SW intercepts every fetch and resolves against the manifest.
+  if (url.startsWith('sia-site://')) {
+    try {
+      const manifestId = url.slice('sia-site://'.length).replace(/\/+$/, '');
+      if (!/^[0-9a-fA-F]+$/.test(manifestId)) throw new Error('invalid manifest id');
+      iframe.style.display = 'block';
+      videoContainer.style.display = 'none';
+      setBrowserView(false);
+      tab.isStreaming = false;
+      status.textContent = 'Loading Sia site…';
+      loadSiaSiteIntoIframe(iframe, manifestId);
+      tab.label = 'Sia site: ' + manifestId.slice(0, 12) + '…';
+      tab.contentLoaded = true;
+      renderTabBar();
+      if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'sia-site' });
+      updateNavButtons();
+      status.innerHTML = '<span class="pass">Site loaded</span>';
+    } catch (e) {
+      status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
+    } finally {
+      updateNavButtons();
+      setLoadContentInProgress(false);
+    }
+    return;
+  }
 
   // Reset display: show this tab's iframe, hide video
   iframe.style.display = 'block';
@@ -939,6 +965,12 @@ async function loadContentWithAutoDetect() {
   canvas.style.display = 'block';
   video.style.display = 'none';
   video.src = '';
+
+  // If this tab previously hosted a Sia site, its iframe has a relaxed
+  // sandbox (allow-same-origin, required for service-worker registration).
+  // Reset to the strict sandbox so blob: URLs we're about to load run in
+  // an opaque origin with no access to the main app's localStorage.
+  iframe.setAttribute('sandbox', 'allow-scripts');
 
   progress.style.display = 'none';
   progress.value = 0;
@@ -965,10 +997,47 @@ async function loadContentWithAutoDetect() {
     if (resolved.fallback) status.textContent = `Found on fallback indexer: ${resolved.fallback}`;
     const size = obj.size();
 
-    // Large files: try streaming via WebCodecs (preferred) or MSE (fallback)
+    // Large files: route through the Sia-site video viewer. This uses a
+    // native <video> element inside an iframe on the sandbox origin,
+    // backed by the same SW bridge that powers sia-sites. The browser makes Range
+    // requests naturally on seek; the SW forwards offset/length into
+    // sdk.download(), so jumping to byte N doesn't require downloading
+    // 0..N-1 first. Zero WebCodecs, zero mp4box.js demuxing in the worker.
     const canStream = size > 40000000;
     if (canStream) {
-      // Try WebCodecs first (handles B-frames, all codecs the browser supports)
+      try {
+        const viewerUrl = SIA_HOSTED_ORIGIN + '/_sia-video-viewer.html#' + encodeURIComponent(url);
+        iframe.setAttribute(
+          'sandbox',
+          'allow-scripts allow-same-origin allow-forms allow-popups allow-modals',
+        );
+        iframe.style.display = 'block';
+        videoContainer.style.display = 'none';
+        setBrowserView(false);
+        tab.isStreaming = false;
+        canvas.style.display = 'none';
+        video.style.display = 'none';
+        video.src = '';
+        iframe.src = viewerUrl;
+        tab.label = 'Video: ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
+        tab.contentLoaded = true;
+        renderTabBar();
+        const displayUrl = `Video (streaming): ${url}`;
+        addToHistory(displayUrl, null, displayUrl, false, url, 'video');
+        if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
+        status.innerHTML = '<span class="pass">Video player ready</span>';
+        return;
+      } catch (viewerErr) {
+        console.error('[browser] video viewer setup failed, falling back to legacy pipelines:', viewerErr);
+      }
+    }
+
+    // Legacy WebCodecs / MSE streaming pipelines. Reached only if the
+    // viewer setup above threw (otherwise that block returns). Kept as
+    // a fallback for edge cases where the SW bridge can't serve the
+    // object — eventually we can delete this whole block once the
+    // viewer path proves sturdy enough.
+    if (canStream) {
       if (typeof VideoDecoder !== 'undefined') {
         status.textContent = 'Large file detected. Attempting WebCodecs streaming...';
         try {
@@ -1186,6 +1255,7 @@ async function loadContentWithAutoDetect() {
     console.error('loadContent error:', e);
     status.innerHTML = `<span class="fail">Error: ${_esc(e.message || e.toString?.() || String(e))}</span>`;
   } finally {
+    updateNavButtons();
     setLoadContentInProgress(false);
   }
 }
@@ -1206,7 +1276,8 @@ document.getElementById('btn-external-tab').addEventListener('click', async () =
 
   if (!confirmed) return;
 
-  const status = document.getElementById('iframe-status');
+  const tab = getOrCreateActiveBrowserTab();
+  const { status, progress } = tabStatusProxy(tab);
 
   // Check if we have a current history item with blob URL - reuse it!
   if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
@@ -1227,9 +1298,6 @@ document.getElementById('btn-external-tab').addEventListener('click', async () =
     status.innerHTML = '<span style="color:#f59e0b">⚠️ Enter a URL in the address bar first.</span>';
     return;
   }
-
-  // Download and open in new tab
-  const progress = document.getElementById('browser-progress');
 
   progress.style.display = 'none';
   progress.value = 0;
@@ -1304,8 +1372,7 @@ window.addEventListener('message', async (event) => {
     setLastBrowserUrl(url);
     renderTabBar();
 
-    const status = document.getElementById('iframe-status');
-    const progress = document.getElementById('browser-progress');
+    const { status, progress } = tabStatusProxy(tab);
     const iframe = tab.iframeEl;
 
     progress.style.display = 'none';
@@ -1333,8 +1400,8 @@ window.addEventListener('message', async (event) => {
     }
   } else if (type === 'LOAD_IN_NEW_TAB') {
     // Download and open in new tab
-    const status = document.getElementById('iframe-status');
-    const progress = document.getElementById('browser-progress');
+    const tab = getOrCreateActiveBrowserTab();
+    const { status, progress } = tabStatusProxy(tab);
 
     progress.style.display = 'none';
     progress.value = 0;

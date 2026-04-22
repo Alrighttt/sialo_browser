@@ -3,9 +3,8 @@
 
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
 import { connectSdk, resolveObject, getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
-import { DownloadOptions } from './pkg/sia_storage_wasm.js';
 
-async function streamingDownload(sdk, obj, status, progress, label) {
+async function streamingDownload(sdk, obj, status, progress, label, signal) {
   progress.style.display = 'block';
   status.textContent = label || 'Downloading...';
 
@@ -14,21 +13,34 @@ async function streamingDownload(sdk, obj, status, progress, label) {
   const PROGRESS_THROTTLE_MS = 100;
 
   const blobParts = [];
-  const dlOpts = new DownloadOptions(getMaxDownloads());
-  await sdk.downloadStreaming(obj,
-    (chunk) => { blobParts.push(chunk); },
-    (current, total) => {
+  const totalSize = obj.size();
+  const stream = sdk.download(obj, { maxInflight: getMaxDownloads() });
+  const reader = stream.getReader();
+  const onAbort = () => { reader.cancel('aborted').catch(() => {}); };
+  if (signal) {
+    if (signal.aborted) throw new DOMException('Download cancelled', 'AbortError');
+    signal.addEventListener('abort', onAbort);
+  }
+  let byteOffset = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      blobParts.push(value);
+      byteOffset += value.byteLength;
       const now = performance.now();
-      if (now - lastProgressUpdate >= PROGRESS_THROTTLE_MS || current === total) {
-        progress.max = total;
-        progress.value = current;
-        const pct = total > 0 ? Math.round((current / total) * 100) : 0;
-        status.textContent = `${label || 'Downloading'}... ${pct}% (${formatSize(current)} / ${formatSize(total)})`;
+      if (now - lastProgressUpdate >= PROGRESS_THROTTLE_MS || byteOffset === totalSize) {
+        progress.max = totalSize;
+        progress.value = byteOffset;
+        const pct = totalSize > 0 ? Math.round((byteOffset / totalSize) * 100) : 0;
+        status.textContent = `${label || 'Downloading'}... ${pct}% (${formatSize(byteOffset)} / ${formatSize(totalSize)})`;
         lastProgressUpdate = now;
       }
-    },
-    dlOpts,
-  );
+    }
+  } finally {
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
+  if (signal && signal.aborted) throw new DOMException('Download cancelled', 'AbortError');
 
   const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
   progress.value = progress.max;
@@ -192,7 +204,7 @@ function runSlabDownload(workers, slabCount, progress, options) {
 // Parallel slab download — spawns a pool of Web Workers, each with its own
 // SDK instance and thread, to download slabs in true parallelism.
 // Falls back to streamingDownload for files with <= 2 slabs.
-async function parallelDownload(objectUrl, status, progress, label, numWorkers, workerStatusRef, hostStatsRef) {
+async function parallelDownload(objectUrl, status, progress, label, numWorkers, workerStatusRef, hostStatsRef, signal) {
   numWorkers = numWorkers || getDownloadWorkers();
   progress.style.display = 'block';
 
@@ -202,7 +214,7 @@ async function parallelDownload(objectUrl, status, progress, label, numWorkers, 
   const resolved = await resolveObject(objectUrl, primarySdk);
   const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
   if (fallback) status.textContent = `Found on fallback indexer: ${fallback}`;
-  const slabCount = obj.slabCount();
+  const slabCount = obj.slabs().length;
   const totalSize = obj.size();
   progress.max = slabCount;
 
@@ -210,7 +222,7 @@ async function parallelDownload(objectUrl, status, progress, label, numWorkers, 
   // download is disabled until benchmarked — multiple SDK instances compete
   // for Chrome's 64 WebTransport session limit, causing connection failures.
   // The SDK already downloads shards in parallel internally.
-  return streamingDownload(sdk, obj, status, progress, label);
+  return streamingDownload(sdk, obj, status, progress, label, signal);
 
   const workerConfig = fallback ? { indexerUrl, keyHex } : null;
   const actualWorkers = Math.min(numWorkers, slabCount);
@@ -242,9 +254,9 @@ async function parallelDownloadToDisk(objectUrl, writable, status, progress, byt
 
   const resolved = await resolveObject(objectUrl, primarySdk);
   const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
-  const slabCount = obj.slabCount();
   const slabs = obj.slabs();
-  const slabLengths = slabs.map(s => s.length());
+  const slabCount = slabs.length;
+  const slabLengths = slabs.map(s => s.length);
   const totalSize = obj.size();
   progress.max = slabCount;
 
@@ -349,9 +361,9 @@ async function parallelDownloadViaSW(objectUrl, filename, size, status, progress
   if (cancelled) { cleanup(); return null; }
   const resolved = await resolveObject(objectUrl, primarySdk);
   const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
-  const slabCount = obj.slabCount();
   const slabs = obj.slabs();
-  const slabLengths = slabs.map(s => s.length());
+  const slabCount = slabs.length;
+  const slabLengths = slabs.map(s => s.length);
   const totalSize = obj.size();
 
   const workerConfig = fallback ? { indexerUrl, keyHex } : null;

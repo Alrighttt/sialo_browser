@@ -590,6 +590,14 @@ progress::-moz-progress-bar {
   flex-shrink: 0;
 }
 
+/* Video-player controls: visible on hover or when paused. CSS :hover
+   tracks the real pointer position so the UI comes back as soon as the
+   mouse is inside, without needing JS mouseenter/leave bookkeeping. */
+#video-container:hover #video-controls,
+#video-container[data-paused="true"] #video-controls {
+  opacity: 1 !important;
+}
+
 /* Browser progress bar (thin) */
 #browser-progress {
   width: 100%;

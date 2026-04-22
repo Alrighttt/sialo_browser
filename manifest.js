@@ -740,14 +740,19 @@ async function mfstDownloadAndRestore(shareUrl) {
   const obj = await sdk.sharedObject(shareUrl);
 
   const blobParts = [];
-  await sdk.downloadStreaming(obj,
-    (chunk) => { blobParts.push(chunk); },
-    (current, total) => {
-      progressEl.max = total;
-      progressEl.value = current;
-      statusEl.textContent = 'Downloading... ' + (current / 1024 / 1024).toFixed(1) + ' / ' + (total / 1024 / 1024).toFixed(1) + ' MB';
-    },
-  );
+  const totalSize = obj.size();
+  const stream = sdk.download(obj);
+  const reader = stream.getReader();
+  let dlByteOffset = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    blobParts.push(value);
+    dlByteOffset += value.byteLength;
+    progressEl.max = totalSize;
+    progressEl.value = dlByteOffset;
+    statusEl.textContent = 'Downloading... ' + (dlByteOffset / 1024 / 1024).toFixed(1) + ' / ' + (totalSize / 1024 / 1024).toFixed(1) + ' MB';
+  }
   const totalLen = blobParts.reduce((s, p) => s + p.length, 0);
   const packed = new Uint8Array(totalLen);
   let off = 0;

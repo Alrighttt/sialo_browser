@@ -1,4 +1,4 @@
-import { UploadOptions } from './pkg/sia_storage_wasm.js';
+import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { connectSdk, getUrl, getKeyHex, getMaxUploads, getMaxDownloads, getLogLevel } from './config.js';
 import { parallelUpload, parallelEncodeUpload } from './upload.js';
 import { parallelDownload } from './download.js';
@@ -163,13 +163,7 @@ export function initBenchmarkUI() {
             // Single-threaded upload via main thread SDK
             const sdk = await connectSdk(statusEl());
             if (!sdk) continue;
-            const upload = sdk.upload(new UploadOptions(null, null, inflight));
-            const CHUNK_SIZE = 128 * 1024 * 1024;
-            const data = new Uint8Array(await file.arrayBuffer());
-            for (let off = 0; off < data.length; off += CHUNK_SIZE) {
-              await upload.pushChunk(data.subarray(off, off + CHUNK_SIZE));
-            }
-            const obj = await upload.finish();
+            const obj = await sdk.upload(new PinnedObject(), file.stream(), { maxInflight: inflight });
             result = { obj, size: file.size };
           } else if (method === 'workers') {
             document.getElementById('cfg-upload-workers').value = workers;

@@ -1,7 +1,19 @@
-import { UploadOptions } from './pkg/sia_storage_wasm.js';
+import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
+import { getActiveTab, trackAbort } from './tabs.js';
+
+// Produces a promise that rejects when the signal fires. Used via
+// Promise.race so the UI can unblock even though the SDK's upload has no
+// way to actually interrupt mid-flight — the bytes continue uploading in
+// the background until the SDK finishes, but we move on logically.
+function abortSignalAsReject(signal) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) { reject(new DOMException('Cancelled', 'AbortError')); return; }
+    signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true });
+  });
+}
 
 export function initUploadUI() {
   // -- Upload Text --
@@ -18,6 +30,9 @@ export function initUploadUI() {
     progress.style.display = 'none';
     progress.value = 0;
 
+    const abortCtrl = new AbortController();
+    const untrack = trackAbort(getActiveTab(), abortCtrl);
+
     try {
       const sdk = await connectSdk(status);
       if (!sdk) return;
@@ -27,17 +42,17 @@ export function initUploadUI() {
       status.textContent = 'Uploading...';
 
       const uploadStart = performance.now();
-      const upload = sdk.upload(new UploadOptions(null, null, getMaxUploads()));
-      upload.setOnProgress((current) => {
-        progress.value = current;
-        status.textContent = `Uploading... ${current} shards`;
+      const src = new ReadableStream({
+        type: 'bytes',
+        start(controller) {
+          controller.enqueue(data);
+          controller.close();
+        }
       });
-
-      const CHUNK_SIZE = 128 * 1024 * 1024;
-      for (let offset = 0; offset < data.length; offset += CHUNK_SIZE) {
-        await upload.pushChunk(data.subarray(offset, offset + CHUNK_SIZE));
-      }
-      const obj = await upload.finish();
+      const obj = await Promise.race([
+        sdk.upload(new PinnedObject(), src, { maxInflight: getMaxUploads() }),
+        abortSignalAsReject(abortCtrl.signal),
+      ]);
       const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
       const objectId = obj.id();
       const size = obj.size();
@@ -48,7 +63,10 @@ export function initUploadUI() {
 
       status.innerHTML += `\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
     } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+      if (abortCtrl.signal.aborted) status.innerHTML = '<span class="fail">Upload cancelled</span>';
+      else status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+    } finally {
+      untrack();
     }
   });
 
@@ -72,8 +90,7 @@ export function initUploadUI() {
     document.getElementById('uf-card-shards-done').textContent = '';
     document.getElementById('uf-card-hosts-active').textContent = '';
     document.getElementById('uf-progress').value = 0;
-    document.getElementById('uf-host-table').style.display = 'none';
-    document.getElementById('uf-host-tbody').innerHTML = '';
+    startUpload();
   }
 
   dropzone.addEventListener('click', () => fileInput.click());
@@ -93,8 +110,14 @@ export function initUploadUI() {
     if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
   });
 
-  // -- File Upload --
-  document.getElementById('btn-upload-file-simple').addEventListener('click', async () => {
+  // -- File Upload (triggered by setFile as soon as a file is chosen/dropped) --
+  const cancelBtn = document.getElementById('uf-cancel');
+  let currentUploadAbort = null;
+  cancelBtn.addEventListener('click', () => {
+    if (currentUploadAbort) currentUploadAbort.abort();
+  });
+
+  async function startUpload() {
     const status = document.getElementById('uf-status');
     const progress = document.getElementById('uf-progress');
     const cardSpeed = document.getElementById('uf-card-speed');
@@ -102,8 +125,6 @@ export function initUploadUI() {
     const cardElapsed = document.getElementById('uf-card-elapsed');
     const cardEta = document.getElementById('uf-card-eta');
     const cardShardsDone = document.getElementById('uf-card-shards-done');
-    const hostTable = document.getElementById('uf-host-table');
-    const hostTbody = document.getElementById('uf-host-tbody');
 
     if (!selectedFile) {
       status.innerHTML = '<span class="fail">Select a file first</span>';
@@ -112,10 +133,18 @@ export function initUploadUI() {
 
     progress.value = 0;
     status.innerHTML = '';
-    hostTable.style.display = 'none';
+
+    // Abort wiring: the Cancel button aborts via currentUploadAbort, and
+    // closeTab() in tabs.js triggers every registered abort controller.
+    // Cancelling pipes through an AbortSignal on pipeTo → TransformStream,
+    // which errors the readable the SDK is consuming, so sdk.upload rejects.
+    const abortCtrl = new AbortController();
+    currentUploadAbort = abortCtrl;
+    const tab = getActiveTab();
+    const untrack = trackAbort(tab, abortCtrl);
+    cancelBtn.style.display = '';
 
     await withKeepAlive(async () => {
-    hostTbody.innerHTML = '';
 
     function formatTime(s) {
       if (s < 60) return `${Math.round(s)}s`;
@@ -129,51 +158,80 @@ export function initUploadUI() {
       if (!sdk) return;
 
       const uploadStart = performance.now();
-      const CHUNK_SIZE = 128 * 1024 * 1024;
-      const fileSize = selectedFile.size;
 
-      const upload = sdk.upload(new UploadOptions(null, null, getMaxUploads()));
+      // Estimate total shards for progress bar: default 10 data + 20 parity
+      // shards per slab, 4 MiB per shard. Matches sia_storage defaults.
+      const SECTOR_SIZE = 4 * 1024 * 1024;
+      const DATA_SHARDS = 10;
+      const TOTAL_SHARDS = 30;
+      const slabCount = Math.max(1, Math.ceil(selectedFile.size / (DATA_SHARDS * SECTOR_SIZE)));
+      const expectedShards = slabCount * TOTAL_SHARDS;
+      progress.max = expectedShards;
+      progress.value = 0;
 
-      let shardsUploaded = 0;
-      upload.setOnProgress((current) => {
-        shardsUploaded = current;
-        progress.value = current;
+      let shardsDone = 0;
+      let bytesUploaded = 0;
 
-        const elapsed = (performance.now() - uploadStart) / 1000;
-        const bytesPerShard = fileSize / Math.max(current, 1);
-        const bytesUploaded = current * bytesPerShard;
-        const speed = bytesUploaded / elapsed;
-        const eta = speed > 0 ? (fileSize - bytesUploaded) / speed : 0;
+      function refreshDisplay() {
+        const elapsedSec = (performance.now() - uploadStart) / 1000;
+        cardElapsed.textContent = formatTime(elapsedSec);
+        const speedMBs = elapsedSec > 0 ? (bytesUploaded / elapsedSec / 1e6) : 0;
+        cardSpeed.textContent = `${speedMBs.toFixed(1)} MB/s`;
+        cardShardsDone.textContent = `${shardsDone} / ${expectedShards} shards`;
+        if (shardsDone > 0 && shardsDone < expectedShards) {
+          const remainingShards = expectedShards - shardsDone;
+          const etaSec = remainingShards * (elapsedSec / shardsDone);
+          cardEta.textContent = formatTime(etaSec);
+        } else if (shardsDone >= expectedShards) {
+          cardEta.textContent = '0s';
+        }
+        cardDetail.textContent = `${formatSize(bytesUploaded)} uploaded`;
+      }
 
-        cardSpeed.textContent = `${(speed / 1e6).toFixed(1)} MB/s`;
-        cardDetail.textContent = `${current} shards`;
-        cardElapsed.textContent = formatTime(elapsed);
-        cardEta.textContent = eta > 0 ? formatTime(eta) : '--';
-        cardShardsDone.textContent = `${current} shards done`;
-      });
+      const refreshTimer = setInterval(refreshDisplay, 500);
 
       status.textContent = 'Uploading...';
-      for (let offset = 0; offset < fileSize; offset += CHUNK_SIZE) {
-        const chunk = selectedFile.slice(offset, offset + CHUNK_SIZE);
-        const data = new Uint8Array(await chunk.arrayBuffer());
-        await upload.pushChunk(data);
+      try {
+        const obj = await Promise.race([
+          sdk.upload(new PinnedObject(), selectedFile.stream(), {
+            maxInflight: getMaxUploads(),
+            onShardUploaded: (p) => {
+              shardsDone++;
+              bytesUploaded += p.shardSize || 0;
+              progress.value = shardsDone;
+            },
+          }),
+          abortSignalAsReject(abortCtrl.signal),
+        ]);
+
+        clearInterval(refreshTimer);
+        refreshDisplay();
+
+        const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
+        const objectId = obj.id();
+        const size = obj.size();
+
+        cardSpeed.textContent = `${(size / parseFloat(elapsed) / 1e6).toFixed(1)} MB/s avg`;
+        cardEta.textContent = '0s';
+        status.innerHTML = `Pinning to indexer...`;
+
+        await sdk.pinObject(obj);
+
+        status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
+      } finally {
+        clearInterval(refreshTimer);
       }
-      const obj = await upload.finish();
-
-      const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
-      const objectId = obj.id();
-      const size = obj.size();
-
-      cardSpeed.textContent = `${(size / parseFloat(elapsed) / 1e6).toFixed(1)} MB/s avg`;
-      cardEta.textContent = '0s';
-      status.innerHTML = `Pinning to indexer...`;
-
-      await sdk.pinObject(obj);
-
-      status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
     } catch (e) {
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+      if (abortCtrl.signal.aborted) {
+        status.innerHTML = '<span class="fail">Upload cancelled</span>';
+      } else {
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+      }
+    } finally {
+      cancelBtn.style.display = 'none';
+      untrack();
+      if (currentUploadAbort === abortCtrl) currentUploadAbort = null;
     }
     }); // withKeepAlive
-  });
+  }
 }

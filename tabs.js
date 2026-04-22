@@ -11,6 +11,7 @@ export const PANEL_URLS = {
   'dashboard':   'sialo://dashboard',
   'upload-file': 'sialo://upload',
   'upload-text': 'sialo://upload/text',
+  'upload-site': 'sialo://upload/site',
   'download':    'sialo://download',
   'objects':     'sialo://objects',
   'share':       'sialo://share',
@@ -25,7 +26,7 @@ export const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([
 
 export const PANEL_TITLES = {
   'register': 'Register', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
-  'upload-text': 'Upload Text', 'download': 'Download', 'objects': 'My Objects',
+  'upload-text': 'Upload Text', 'upload-site': 'Upload Site', 'download': 'Download', 'objects': 'My Objects',
   'share': 'Share', 'cors': 'CORS Diagnostics', 'history': 'History', 'explorer': 'Explorer',
   'wallet': 'Wallet', 'manifest': 'Manifest', 'syncer-config': 'Syncer',
 };
@@ -77,18 +78,6 @@ export function loadTabState() {
   } catch { return null; }
 }
 
-// ── Status observer ──
-
-export function initStatusObserver() {
-  const el = document.getElementById('iframe-status');
-  if (el) {
-    new MutationObserver(() => {
-      const tab = tabs.find(t => t.id === activeTabId);
-      if (tab) tab.statusHTML = el.innerHTML;
-    }).observe(el, { childList: true, characterData: true, subtree: true });
-  }
-}
-
 // ── Tab CRUD ──
 
 export function createTab({ type, panelName, url, label }) {
@@ -110,6 +99,7 @@ export function createTab({ type, panelName, url, label }) {
     progressValue: 0,  // per-tab progress bar state
     progressMax: 100,
     progressVisible: false,
+    abortControllers: [], // AbortControllers for in-flight uploads/downloads
   };
 
   if (type === 'browser') {
@@ -134,18 +124,7 @@ export function activateTab(tabId) {
   if (!tab) return;
   if (activeTabId === tabId) return; // already active
 
-  // Save previous tab's status and progress
-  const iframeStatus = document.getElementById('iframe-status');
-  const progressEl = document.getElementById('browser-progress');
   const prevTab = tabs.find(t => t.id === activeTabId);
-  if (prevTab) {
-    if (iframeStatus) prevTab.statusHTML = iframeStatus.innerHTML;
-    if (progressEl) {
-      prevTab.progressValue = progressEl.value;
-      prevTab.progressMax = progressEl.max;
-      prevTab.progressVisible = progressEl.style.display !== 'none' && progressEl.style.display !== '';
-    }
-  }
 
   // Hide previous tab's content
   if (prevTab) {
@@ -186,14 +165,7 @@ export function activateTab(tabId) {
   highlightActiveMenuItem(tab.type === 'internal' ? tab.panelName : null);
   renderTabBar();
   updateNavButtons();
-
-  // Restore this tab's status text and progress bar
-  if (iframeStatus) iframeStatus.innerHTML = tab.statusHTML;
-  if (progressEl) {
-    progressEl.value = tab.progressValue;
-    progressEl.max = tab.progressMax;
-    progressEl.style.display = tab.progressVisible ? 'block' : 'none';
-  }
+  renderTabStatus();
 
   saveTabState();
 
@@ -207,6 +179,12 @@ export function closeTab(tabId) {
   const idx = tabs.findIndex(t => t.id === tabId);
   if (idx === -1) return;
   const tab = tabs[idx];
+
+  // Abort any in-flight uploads/downloads owned by this tab.
+  for (const ctrl of tab.abortControllers || []) {
+    try { ctrl.abort(); } catch (_) {}
+  }
+  tab.abortControllers = [];
 
   // Clean up browser tab resources
   if (tab.type === 'browser') {
@@ -222,11 +200,8 @@ export function closeTab(tabId) {
       streamingTabId = null;
     }
     tab.isStreaming = false;
-    // Clear streaming status from status bar
-    const iframeStatus = document.getElementById('iframe-status');
-    if (iframeStatus && iframeStatus.textContent.includes('Streaming')) {
-      iframeStatus.textContent = '';
-    }
+    tab.statusHTML = '';
+    tab.progressVisible = false;
   } else {
     // Hide the internal panel
     const panel = document.getElementById('panel-' + tab.panelName);
@@ -383,10 +358,84 @@ export function updateConnectionStatus(connected, detail) {
   if (text) text.textContent = detail || (connected ? 'Connected' : 'Not connected');
 }
 
+// Register an AbortController as owned by a tab. closeTab() aborts everything
+// in the list. Returns a cleanup function to deregister on successful completion.
+export function trackAbort(tab, controller) {
+  if (!tab || !controller) return () => {};
+  tab.abortControllers.push(controller);
+  return () => {
+    const i = tab.abortControllers.indexOf(controller);
+    if (i >= 0) tab.abortControllers.splice(i, 1);
+  };
+}
+
 // Track which browser element is active (iframe or video) for the current streaming tab
 export function setBrowserView(showVideo) {
   const vc = document.getElementById('video-container');
   if (vc) vc.dataset.active = showVideo ? 'true' : 'false';
+}
+
+// Render the active tab's status/progress state into the global DOM bar.
+// Called after any proxy write for the active tab, and on tab switch.
+export function renderTabStatus() {
+  const tab = tabs.find(t => t.id === activeTabId);
+  const statusEl = document.getElementById('iframe-status');
+  const progressEl = document.getElementById('browser-progress');
+  if (statusEl) {
+    statusEl.innerHTML = (tab && tab.statusHTML) || '';
+  }
+  if (progressEl) {
+    if (tab && tab.progressVisible) {
+      progressEl.value = tab.progressValue || 0;
+      progressEl.max = tab.progressMax || 100;
+      progressEl.style.display = 'block';
+    } else {
+      progressEl.style.display = 'none';
+      progressEl.value = 0;
+    }
+  }
+}
+
+// Status/progress proxies bound to a specific tab. Writes are recorded on
+// the tab; the global status bar / progress bar are only updated when the
+// write is for the currently-active tab. Background tabs can't leak into
+// the footer.
+export function tabStatusProxy(tab) {
+  if (!tab._statusBuf) tab._statusBuf = document.createElement('span');
+  const buf = tab._statusBuf;
+  const syncIfActive = () => { if (activeTabId === tab.id) renderTabStatus(); };
+
+  const status = {
+    set textContent(v) {
+      buf.textContent = v;
+      tab.statusHTML = buf.innerHTML;
+      syncIfActive();
+    },
+    get textContent() { return buf.textContent; },
+    set innerHTML(v) {
+      buf.innerHTML = v;
+      tab.statusHTML = v;
+      syncIfActive();
+    },
+    get innerHTML() { return buf.innerHTML; },
+  };
+
+  const progressStyle = {
+    get display() { return tab.progressVisible ? 'block' : 'none'; },
+    set display(v) {
+      tab.progressVisible = v !== 'none' && v !== '';
+      syncIfActive();
+    },
+  };
+  const progress = {
+    get value() { return tab.progressValue || 0; },
+    set value(v) { tab.progressValue = v; syncIfActive(); },
+    get max() { return tab.progressMax || 100; },
+    set max(v) { tab.progressMax = v; syncIfActive(); },
+    style: progressStyle,
+  };
+
+  return { status, progress };
 }
 
 // ── Per-tab back/forward navigation ──
@@ -409,11 +458,30 @@ export function pushTabNav(tab, entry) {
   updateNavButtons();
 }
 
+export function isSiaSiteTab(tab) {
+  return !!(tab && tab.type === 'browser' &&
+    typeof tab.url === 'string' && tab.url.startsWith('sia-site://'));
+}
+
 export function updateNavButtons() {
   const tab = getActiveTab();
   const back = document.getElementById('btn-back');
   if (!back) return;
-  back.disabled = !(tab && tab.type === 'browser' && tab.navIndex > 0);
+  // Sia-site tabs: delegate back/forward to the iframe's own history.
+  // The iframe knows when there's nothing to go back to (silent no-op).
+  // Keyed off the URL because it's the only thing persisted across
+  // tab-state save/restore.
+  if (isSiaSiteTab(tab)) {
+    back.disabled = false;
+    return;
+  }
+  if (!tab || tab.type !== 'browser') { back.disabled = true; return; }
+  // A failed navigation leaves tab.url set to the broken URL while
+  // navHistory[navIndex] still points at the last-good page. Enable back
+  // in that case so the user can rewind to what they were viewing.
+  const cur = tab.navHistory[tab.navIndex];
+  const failedNav = !!(cur && cur.url !== tab.url);
+  back.disabled = !(tab.navIndex > 0 || failedNav);
 }
 
 let navInProgress = false; // guard to prevent pushTabNav during back/forward
@@ -422,7 +490,27 @@ export function setNavInProgress(v) { navInProgress = v; }
 
 export function goBack() {
   const tab = getActiveTab();
-  if (!tab || tab.type !== 'browser' || tab.navIndex <= 0) return;
+  if (!tab || tab.type !== 'browser') return;
+  // Sia-site tabs: ask the iframe to step back in its own history. If
+  // the iframe is already at the first page it loaded, this is a silent
+  // no-op — the user can close the tab or paste a new URL to leave.
+  if (isSiaSiteTab(tab) && tab.iframeEl && tab.iframeEl.contentWindow) {
+    try {
+      let targetOrigin = '*';
+      try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}
+      tab.iframeEl.contentWindow.postMessage({ type: 'sia-nav-back' }, targetOrigin);
+    } catch (_) {}
+    return;
+  }
+  // Failed-nav recovery: tab.url was updated during a load that errored
+  // out, so the current nav entry is actually the last-good one. Rewind
+  // there instead of stepping further back.
+  const cur = tab.navHistory[tab.navIndex];
+  if (cur && cur.url !== tab.url) {
+    navigateTabNavEntry(tab);
+    return;
+  }
+  if (tab.navIndex <= 0) return;
   tab.navIndex--;
   navigateTabNavEntry(tab);
 }

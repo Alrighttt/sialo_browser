@@ -1,7 +1,7 @@
 // Single web worker for downloading files via one SDK instance.
 // Keeps the main thread responsive while using a single connection pool.
 
-import init, { AppKey, SdkBuilder, DownloadOptions, set_log_level } from './pkg/sia_storage_wasm.js';
+import init, { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
 
 let sdk = null;
@@ -13,11 +13,10 @@ self.onmessage = async (e) => {
     const { indexerUrl, keyHex, maxDownloads, logLevel } = e.data;
     try {
       await init();
-      if (logLevel) set_log_level(logLevel);
+      if (logLevel) setLogger((msg) => console.log(msg), logLevel);
 
-      
-      const appKey = AppKey.fromHex(keyHex);
-      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
+      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
+      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
       sdk = await builder.connected(appKey);
       if (!sdk) {
         self.postMessage({ type: 'error', message: 'SDK connection failed' });
@@ -40,21 +39,18 @@ self.onmessage = async (e) => {
       self.postMessage({ type: 'metadata', size });
 
       // Download with streaming chunks
-      const opts = new DownloadOptions(maxDownloads || null);
-
-      await sdk.downloadStreaming(obj,
-        (chunk) => {
-          // Transfer chunk to main thread (zero-copy)
-          const buf = chunk.buffer.slice(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
-          self.postMessage({ type: 'chunk', data: buf, length: chunk.length }, [buf]);
-        },
-        (current, total) => {
-          self.postMessage({ type: 'progress', current, total });
-        },
-        (host) => {
-          self.postMessage({ type: 'host-active', host });
-        },
-      );
+      const stream = sdk.download(obj, { maxInflight: maxDownloads || undefined });
+      const reader = stream.getReader();
+      const totalSize = obj.size();
+      let byteOffset = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const buf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+        self.postMessage({ type: 'chunk', data: buf, length: value.byteLength }, [buf]);
+        byteOffset += value.byteLength;
+        self.postMessage({ type: 'progress', current: byteOffset, total: totalSize });
+      }
 
       self.postMessage({ type: 'done' });
     } catch (err) {

@@ -7,7 +7,7 @@
 // - 'stream-demux': Download + MP4 demux — posts parsed video/audio samples
 //   (moves mp4box.appendBuffer off the main thread to prevent render stalls)
 
-import init, { AppKey, SdkBuilder, DownloadOptions, set_log_level } from './pkg/sia_storage_wasm.js';
+import init, { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { fromHex } from './worker-utils.js';
 
@@ -18,6 +18,18 @@ let _mp4box = null;
 let _debugEnabled = false;
 function _dbg(...args) { if (_debugEnabled) console.log(...args); }
 function _dbgWarn(...args) { if (_debugEnabled) console.warn(...args); }
+
+// Score an audio track codec by how well browsers can play it. Higher is
+// better. Used to pick among multiple audio tracks so AC-3 (unsupported on
+// Chrome/macOS) never wins over MP3/AAC/Opus.
+function audioCodecScore(codec) {
+  if (codec.startsWith('mp4a.40.2')) return 100; // AAC-LC — universally supported
+  if (codec.startsWith('mp4a.40')) return 90;    // other AAC profiles / MP3-in-MP4
+  if (codec === 'mp4a.6b' || codec === 'mp4a.69') return 80; // raw MP3
+  if (codec.startsWith('opus')) return 70;       // Opus
+  if (codec === 'ac-3' || codec === 'ec-3') return 10; // AC-3/EC-3 — platform-dependent
+  return 50;
+}
 
 self.onmessage = async (e) => {
   const { type } = e.data;
@@ -35,12 +47,11 @@ self.onmessage = async (e) => {
       // Initialize WASM module
       await init();
       _debugEnabled = !!logLevel;
-      if (logLevel) set_log_level(logLevel);
+      if (logLevel) setLogger((msg) => console.log(msg), logLevel);
 
       // Build SDK
-      
-      const appKey = AppKey.fromHex(keyHex);
-      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
+      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
+      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
 
       const sdk = await builder.connected(appKey);
       if (!sdk) {
@@ -55,26 +66,25 @@ self.onmessage = async (e) => {
 
       // Stream download — post chunks back to main thread
       let byteOffset = 0;
-      const opts = new DownloadOptions(maxDownloads);
-      await sdk.downloadStreaming(
-        obj,
-        (chunk) => {
-          const buf = chunk.buffer.slice(
-            chunk.byteOffset,
-            chunk.byteOffset + chunk.byteLength,
-          );
-          self.postMessage(
-            { type: 'chunk', offset: byteOffset, size: chunk.byteLength, data: buf },
-            [buf], // Transfer the ArrayBuffer (zero-copy)
-          );
-          byteOffset += chunk.byteLength;
-        },
-        (current, total) => {
-          self.postMessage({ type: 'progress', current, total });
-        },
-      );
+      const totalSize = obj.size();
+      const stream = sdk.download(obj, { maxInflight: maxDownloads });
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const buf = value.buffer.slice(
+          value.byteOffset,
+          value.byteOffset + value.byteLength,
+        );
+        self.postMessage(
+          { type: 'chunk', offset: byteOffset, size: value.byteLength, data: buf },
+          [buf],
+        );
+        byteOffset += value.byteLength;
+        self.postMessage({ type: 'progress', current: byteOffset, total: totalSize });
+      }
 
-      _dbg(`[worker-perf] downloadStreaming resolved (start mode) at ${performance.now().toFixed(1)}`);
+      _dbg(`[worker-perf] download resolved (start mode) at ${performance.now().toFixed(1)}`);
       self.postMessage({ type: 'complete' });
     } catch (err) {
       self.postMessage({ type: 'error', message: err.message || String(err) });
@@ -92,12 +102,11 @@ self.onmessage = async (e) => {
       _dbg('[worker-demux] Initializing WASM...');
       await init();
       _debugEnabled = !!logLevel;
-      if (logLevel) set_log_level(logLevel);
+      if (logLevel) setLogger((msg) => console.log(msg), logLevel);
       _dbg('[worker-demux] WASM initialized. Connecting SDK...');
 
-      
-      const appKey = AppKey.fromHex(keyHex);
-      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
+      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
+      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
 
       const sdk = await builder.connected(appKey);
       if (!sdk) {
@@ -162,53 +171,46 @@ self.onmessage = async (e) => {
           }
         }
 
-        // Audio config — Pass 1: fMP4 MSE (AAC, Opus, AC-3)
-        let audioTrackId = null;
-        let audioConfig = null;
+        // Pick the best audio track by codec preference so files with
+        // multiple audio streams (e.g. AC-3 + MP3) don't land on a codec
+        // Chrome can't play.
         const rawMimeMap = { 'mp4a.6b': 'audio/mpeg', 'mp4a.69': 'audio/mpeg' };
-
+        let audioTrackId = null;
+        let audioTrack = null;
+        let bestScore = -1;
         for (const track of mediaTracks) {
-          if (!track.audio || audioTrackId !== null) continue;
-          // Worker can't call MediaSource.isTypeSupported — assume common codecs work.
-          // Main thread gracefully handles unsupported codecs.
-          if (track.codec.startsWith('mp4a.40') || track.codec.startsWith('opus')) {
+          if (!track.audio) continue;
+          const isRaw = !!rawMimeMap[track.codec];
+          const isFmp4 = track.codec.startsWith('mp4a.40') || track.codec.startsWith('opus') || track.codec === 'ac-3' || track.codec === 'ec-3';
+          if (!isRaw && !isFmp4) continue;
+          const score = audioCodecScore(track.codec);
+          if (score > bestScore) {
+            bestScore = score;
             audioTrackId = track.id;
-            audioMode = 'fmp4-mse';
-            mp4box.setSegmentOptions(audioTrackId, 'audio', { nbSamples: 100, rapAlignment: true });
+            audioTrack = track;
+            audioMode = isRaw ? 'raw-mse' : 'fmp4-mse';
           }
         }
 
-        // Pass 2: raw MSE (MP3)
-        if (!audioTrackId) {
-          for (const track of mediaTracks) {
-            if (!track.audio) continue;
-            if (rawMimeMap[track.codec]) {
-              audioTrackId = track.id;
-              audioMode = 'raw-mse';
-              break;
-            }
-          }
-        }
-
-        // Set extraction options SYNCHRONOUSLY before mp4box.start()
         if (videoTrackId !== null) {
           mp4box.setExtractionOptions(videoTrackId, 'video', { nbSamples: 200 });
         }
         if (audioTrackId !== null && audioMode === 'raw-mse') {
           mp4box.setExtractionOptions(audioTrackId, 'audio', { nbSamples: 200 });
         }
+        if (audioTrackId !== null && audioMode === 'fmp4-mse') {
+          mp4box.setSegmentOptions(audioTrackId, 'audio', { nbSamples: 100, rapAlignment: true });
+        }
 
-        // Init segment for fMP4 audio
         let audioInitBuf = null;
         let audioMime = null;
+        let audioConfig = null;
         if (audioTrackId !== null && audioMode === 'fmp4-mse') {
           const initResult = mp4box.initializeSegmentation();
-          audioInitBuf = initResult.buffer || null;
-          const t = mediaTracks.find(x => x.id === audioTrackId);
-          audioMime = `video/mp4; codecs="${t.codec}"`;
+          audioInitBuf = initResult && initResult.buffer ? initResult.buffer : null;
+          audioMime = `video/mp4; codecs="${audioTrack.codec}"`;
         } else if (audioTrackId !== null && audioMode === 'raw-mse') {
-          const t = mediaTracks.find(x => x.id === audioTrackId);
-          audioMime = rawMimeMap[t.codec];
+          audioMime = rawMimeMap[audioTrack.codec];
         }
         if (audioTrackId !== null) {
           audioConfig = { mode: audioMode, mime: audioMime, initSegment: audioInitBuf };
@@ -267,35 +269,33 @@ self.onmessage = async (e) => {
       };
 
       // Download + demux
-      _dbg('[worker-demux] Starting downloadStreaming...');
-      const opts = new DownloadOptions(maxDownloads);
-      await sdk.downloadStreaming(
-        obj,
-        (chunk) => {
-          const _chunkT0 = performance.now();
-          const buf = chunk.buffer.slice(
-            chunk.byteOffset,
-            chunk.byteOffset + chunk.byteLength,
+      _dbg('[worker-demux] Starting download...');
+      const stream = sdk.download(obj, { maxInflight: maxDownloads });
+      const reader = stream.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const _chunkT0 = performance.now();
+        const buf = value.buffer.slice(
+          value.byteOffset,
+          value.byteOffset + value.byteLength,
+        );
+        buf.fileStart = byteOffset;
+        byteOffset += value.byteLength;
+        mp4box.appendBuffer(buf);
+        const _chunkDt = performance.now() - _chunkT0;
+        if (_chunkDt > 20) _dbgWarn(`[worker-perf] chunk callback: ${_chunkDt.toFixed(1)}ms (${value.byteLength} bytes, offset=${byteOffset})`);
+
+        if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
+          throw new Error(
+            'No moov atom found after 50 MB. The file may have moov at the end. ' +
+            'Re-encode with "ffmpeg -i input.mp4 -movflags +faststart output.mp4" to fix.'
           );
-          buf.fileStart = byteOffset;
-          byteOffset += chunk.byteLength;
-          mp4box.appendBuffer(buf);
-          const _chunkDt = performance.now() - _chunkT0;
-          if (_chunkDt > 20) _dbgWarn(`[worker-perf] chunk callback: ${_chunkDt.toFixed(1)}ms (${chunk.byteLength} bytes, offset=${byteOffset})`);
+        }
+        self.postMessage({ type: 'stream-progress', current: byteOffset, total: totalSize, byteOffset, totalSize });
+      }
 
-          if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
-            throw new Error(
-              'No moov atom found after 50 MB. The file may have moov at the end. ' +
-              'Re-encode with "ffmpeg -i input.mp4 -movflags +faststart output.mp4" to fix.'
-            );
-          }
-        },
-        (current, total) => {
-          self.postMessage({ type: 'stream-progress', current, total, byteOffset, totalSize });
-        },
-      );
-
-      _dbg(`[worker-perf] downloadStreaming resolved at ${performance.now().toFixed(1)}`);
+      _dbg(`[worker-perf] download resolved at ${performance.now().toFixed(1)}`);
       const _flushT0 = performance.now();
       mp4box.flush();
       _dbg(`[worker-perf] mp4box.flush() took ${(performance.now() - _flushT0).toFixed(1)}ms`);

@@ -1,8 +1,7 @@
 import init, {
-  generate_recovery_phrase,
-  AppKey,
-  SdkBuilder,
-  set_log_level,
+  generateRecoveryPhrase,
+  Builder,
+  setLogger,
 } from './pkg/sia_storage_wasm.js';
 
 // Import registration wizard
@@ -43,6 +42,7 @@ import {
 } from './config.js';
 import { initDownloadUI } from './download-ui.js';
 import { initUploadUI } from './upload-ui.js';
+import { initUploadSiteUI } from './upload-site-ui.js';
 import { initBenchmarkUI } from './benchmark-ui.js';
 import { initObjectsUI } from './objects-ui.js';
 import { initAccountUI } from './account-ui.js';
@@ -54,7 +54,7 @@ import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,
   activePanel, lastBrowserUrl,
   setLoadContentHandler, setLoadContentInProgress, setStreamingTabId, setLastBrowserUrl, setActivePanel,
-  initStatusObserver, saveTabState, loadTabState,
+  saveTabState, loadTabState,
   createTab, activateTab, closeTab, renderTabBar,
   getActiveTab, getActiveTabIframe, findTabByIframeWindow,
   openOrActivateInternalTab, getOrCreateActiveBrowserTab,
@@ -95,9 +95,12 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // Tab management, nav history, panel URLs → tabs.js
-initStatusObserver();
 // Wire loadContentWithAutoDetect into tabs.js (async function declarations are hoisted)
 setLoadContentHandler(loadContentWithAutoDetect);
+
+// Install the Sia-site postMessage bridge so sandboxed iframes can
+// request resources from the SDK. Idempotent if called again.
+import('./sia-site.js').then(m => m.initSiaSiteHandler());
 
 
 // --- Attestation Explorer ---
@@ -374,7 +377,7 @@ function initGearMenu() {
         // Initialize wizard handlers if not already done
         if (!window._wizardInitialized) {
           initRegistrationWizard({
-            SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
+            Builder, generateRecoveryPhrase, hex, fromHex,
             closeTab, activateTab, tabs,
           });
           window._wizardInitialized = true;
@@ -556,7 +559,7 @@ maxUploadsInput.addEventListener('input', () => {
 debugLoggingCheckbox.addEventListener('change', () => {
   const level = debugLoggingCheckbox.checked ? 'debug' : 'info';
   localStorage.setItem('log-level', level);
-  set_log_level(level);
+  setLogger((msg) => console.log(msg), level);
 });
 
 // Browser compatibility checks
@@ -868,7 +871,7 @@ function _rafGapCheck() {
   requestAnimationFrame(_rafGapCheck);
 }
 requestAnimationFrame(_rafGapCheck);
-if (debugLoggingCheckbox.checked) set_log_level('debug');
+if (debugLoggingCheckbox.checked) setLogger((msg) => console.log(msg), 'debug');
 document.getElementById('loading').style.display = 'none';
 document.getElementById('app').style.display = 'flex';
 
@@ -894,7 +897,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
     if (saved.type === 'internal') {
       if (saved.panelName === 'register' && !window._wizardInitialized) {
         initRegistrationWizard({
-          SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
+          Builder, generateRecoveryPhrase, hex, fromHex,
           closeTab, activateTab, tabs,
         });
         window._wizardInitialized = true;
@@ -911,7 +914,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
 } else if (isFirstRun) {
   // First run, no saved tabs: show registration wizard + Homepage
   initRegistrationWizard({
-    SdkBuilder, generate_recovery_phrase, hex, fromHex, randomHex, AppKey,
+    Builder, generateRecoveryPhrase, hex, fromHex,
     closeTab, activateTab, tabs,
   });
   window._wizardInitialized = true;
@@ -944,6 +947,9 @@ initCorsUI();
 
 // Upload UI → upload-ui.js
 initUploadUI();
+
+// Upload Site UI (directory → packed upload → site manifest) → upload-site-ui.js
+initUploadSiteUI();
 
 // Download UI → download-ui.js
 initDownloadUI();

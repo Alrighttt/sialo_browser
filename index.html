@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self'; connect-src 'self' blob: https: http:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
+    content="default-src 'self'; connect-src 'self' blob: https: http:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob: http://localhost:* http://127.0.0.1:* https://sandbox.sialo.io; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
   <title>Sialo Browser</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -32,6 +32,8 @@
           File</button>
         <button class="gear-menu-item" data-panel="upload-text"><span class="gear-menu-icon">&#128221;</span> Upload
           Text</button>
+        <button class="gear-menu-item" data-panel="upload-site"><span class="gear-menu-icon">&#127760;</span> Upload
+          Site</button>
         <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span>
           Download</button>
         <button class="gear-menu-item" data-panel="benchmark"><span class="gear-menu-icon">&#9201;</span>
@@ -81,9 +83,9 @@
 
       <!-- Browser: shared video container (used by streaming browser tabs) -->
       <div id="video-container" class="viewport-panel" data-panel="browser"
-        style="background:#0a0a0a; position:relative; overflow:hidden;">
+        style="background:#0a0a0a; overflow:hidden;">
         <canvas id="stream-canvas"
-          style="width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
+          style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; display:block; cursor:pointer;"></canvas>
         <div id="video-controls"
           style="position:absolute; bottom:0; left:0; right:0; padding:8px 12px; background:linear-gradient(transparent, rgba(0,0,0,0.8)); display:flex; align-items:center; gap:10px; opacity:0; transition:opacity 0.3s; z-index:10;">
           <button id="vc-playpause"
@@ -101,7 +103,7 @@
             style="background:none; border:none; color:#fff; font-size:16px; cursor:pointer; padding:4px 8px;">&#x26F6;</button>
         </div>
         <video id="mse-video" controls controlsList="nodownload" autoplay
-          style="width:100%; height:100%; background:#000; display:none;"></video>
+          style="position:absolute; inset:0; width:100%; height:100%; object-fit:contain; background:#000; display:none;"></video>
       </div>
 
       <!-- Panel: Registration Wizard (first-run only) -->
@@ -461,7 +463,7 @@
                   <span style="color:#444;">&#x2022;</span>
                   <span id="uf-card-detail" style="font-size:0.8rem; color:#888;"></span>
                 </div>
-                <div style="display:flex; gap:2rem; margin-top:0.5rem;">
+                <div style="display:flex; gap:2rem; margin-top:0.5rem; align-items:center;">
                   <div style="text-align:center;">
                     <div id="uf-card-elapsed" style="font-size:1.8rem; font-weight:700; color:#e2e8f0;">0s</div>
                     <div style="font-size:0.7rem; color:#666;">Elapsed</div>
@@ -472,35 +474,94 @@
                     <div style="font-size:0.7rem; color:#666;">Remaining</div>
                     <div id="uf-card-hosts-active" style="font-size:0.65rem; color:#555;"></div>
                   </div>
+                  <button id="uf-cancel" style="margin-left:auto; display:none; padding:0.5rem 1rem; background:#dc2626; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">Cancel</button>
                 </div>
               </div>
             </div>
 
             <div id="uf-file-info" style="font-size:0.85rem; color:#888; margin-bottom:0.5rem;"></div>
 
-            <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-              <button id="btn-upload-file-simple">Upload</button>
-            </div>
-
-            <!-- Host table -->
-            <div id="uf-host-table"
-              style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; overflow:hidden;">
-              <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                <thead>
-                  <tr style="border-bottom:1px solid #222; color:#888;">
-                    <th style="text-align:left; padding:0.6rem 0.75rem; font-weight:500;">Host</th>
-                    <th style="text-align:right; padding:0.6rem 0.5rem; font-weight:500; width:90px;">Speed</th>
-                    <th style="text-align:right; padding:0.6rem 0.75rem; font-weight:500; width:100px;">Shard</th>
-                  </tr>
-                </thead>
-                <tbody id="uf-host-tbody"></tbody>
-              </table>
-            </div>
-
             <div class="output" id="uf-status" style="margin-top:0.75rem;"></div>
           </div><!-- /panel-section: Upload File -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-file -->
+
+      <!-- Panel: Upload Site — pack a directory of files into a Sia site -->
+      <div id="panel-upload-site" class="viewport-panel internal-page" data-panel="upload-site">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Upload Site</h2>
+            <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
+              Pick a folder to publish as a Sia-hosted site. Every file is uploaded as
+              its own Sia object; a manifest mapping path &rarr; object ID is uploaded last.
+              The manifest ID is your <code>sia-site://</code> URL.
+            </p>
+
+            <!-- Folder selection + info card -->
+            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
+              <div class="dropzone" id="us-dropzone"
+                style="flex:0 0 220px; min-height:120px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+                <div style="font-size:2rem; margin-bottom:0.5rem; opacity:0.4;">&#127760;</div>
+                <div style="font-size:0.8rem; color:#666;">Drop a folder here<br>or click to select</div>
+                <input type="file" id="us-dir" webkitdirectory directory multiple style="display:none" />
+              </div>
+              <div id="us-info-card"
+                style="flex:1; display:none; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; padding:1rem;">
+                <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                  <span style="color:#60a5fa; font-size:1.1rem;">&#127760;</span>
+                  <span id="us-card-root" style="font-weight:600; font-size:1rem;"></span>
+                  <span id="us-card-summary" style="color:#888; font-size:0.85rem;"></span>
+                </div>
+                <progress id="us-progress" max="100" value="0"
+                  style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
+                <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.25rem;">
+                  <span id="us-card-current" style="font-size:0.8rem; color:#888;"></span>
+                </div>
+                <div style="display:flex; gap:2rem; margin-top:0.5rem; align-items:center;">
+                  <div style="text-align:center;">
+                    <div id="us-card-files-done" style="font-size:1.4rem; font-weight:700; color:#e2e8f0;">0</div>
+                    <div style="font-size:0.7rem; color:#666;">Files done</div>
+                  </div>
+                  <div style="text-align:center;">
+                    <div id="us-card-elapsed" style="font-size:1.4rem; font-weight:700; color:#e2e8f0;">0s</div>
+                    <div style="font-size:0.7rem; color:#666;">Elapsed</div>
+                  </div>
+                  <button id="us-cancel" style="margin-left:auto; display:none; padding:0.5rem 1rem; background:#dc2626; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- File list preview (before upload) -->
+            <details id="us-files-details" style="display:none; margin-bottom:0.75rem; background:#111; border:1px solid #1e1e1e; border-radius:6px;">
+              <summary style="padding:0.5rem 0.75rem; cursor:pointer; font-size:0.85rem; color:#888;">Files in this site</summary>
+              <div id="us-files-list" style="max-height:240px; overflow-y:auto; padding:0.5rem 0.75rem; font-family:var(--font-mono); font-size:0.75rem; color:#999;"></div>
+            </details>
+
+            <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
+              <button id="us-upload-btn" disabled>Upload Site</button>
+            </div>
+
+            <!-- Result card (shown after successful upload) -->
+            <div id="us-result"
+              style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid rgba(96,165,250,0.3); border-radius:8px; padding:1rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+                <span style="color:#4ade80; font-size:1.1rem;">&#10003;</span>
+                <span style="font-weight:600; font-size:0.95rem; color:#e2e8f0;">Site published</span>
+              </div>
+              <div style="color:#888; font-size:0.8rem; margin-bottom:0.25rem;">Manifest ID</div>
+              <div id="us-result-id" style="font-family:var(--font-mono); font-size:0.8rem; color:#60a5fa; word-break:break-all; margin-bottom:0.75rem;"></div>
+              <div style="color:#888; font-size:0.8rem; margin-bottom:0.25rem;">URL</div>
+              <div id="us-result-url" style="font-family:var(--font-mono); font-size:0.8rem; color:#4ade80; word-break:break-all; margin-bottom:0.75rem;"></div>
+              <div class="row" style="gap:0.5rem;">
+                <button id="us-open-btn" style="background:#3b82f6; color:white;">Open site</button>
+                <button id="us-copy-btn">Copy URL</button>
+              </div>
+            </div>
+
+            <div class="output" id="us-status" style="margin-top:0.75rem;"></div>
+          </div><!-- /panel-section: Upload Site -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-upload-site -->
 
       <!-- Panel: Download -->
       <div id="panel-download" class="viewport-panel internal-page" data-panel="download">

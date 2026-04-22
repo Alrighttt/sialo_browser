@@ -4,6 +4,7 @@ import { withKeepAlive } from './keep-alive.js';
 import {
   parallelDownload, parallelDownloadToDisk, getActiveServiceWorker, parallelDownloadViaSW,
 } from './download.js';
+import { getActiveTab, trackAbort } from './tabs.js';
 
 export function initDownloadUI() {
   let _downloadInProgress = false;
@@ -135,6 +136,9 @@ export function initDownloadUI() {
       status.textContent = hostLines ? `${line1}\n${line2}\n${hostLines}` : `${line1}\n${line2}`;
     };
 
+    const abortCtrl = new AbortController();
+    const untrack = trackAbort(getActiveTab(), abortCtrl);
+
     try { await withKeepAlive(async () => {
       // Path 1: File System Access API (Chrome/Edge — file picker already shown above)
       if (writable) {
@@ -200,7 +204,7 @@ export function initDownloadUI() {
         progress.style.display = 'block';
         downloadStart = performance.now();
         progressInterval = setInterval(updateProgress, 100);
-        const result = await parallelDownload(input, status, progress, 'Downloading', undefined, workerStatus, hostStats);
+        const result = await parallelDownload(input, status, progress, 'Downloading', undefined, workerStatus, hostStats, abortCtrl.signal);
         bytesDownloaded = result.size;
         size = result.size;
         const blob = result.blob;
@@ -217,9 +221,14 @@ export function initDownloadUI() {
       status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(size)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
     }); } catch (e) {
       if (progressInterval) clearInterval(progressInterval);
-      console.error('Download error:', e);
-      status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e.toString?.() || String(e))}</span>`;
+      if (abortCtrl.signal.aborted) {
+        status.innerHTML = '<span class="fail">Download cancelled</span>';
+      } else {
+        console.error('Download error:', e);
+        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || e.toString?.() || String(e))}</span>`;
+      }
     } finally {
+      untrack();
       _downloadInProgress = false;
       document.getElementById('btn-download').disabled = false;
       document.getElementById('btn-download-simple').disabled = false;

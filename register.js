@@ -13,8 +13,8 @@
 
 export function initRegistrationWizard(helpers) {
   const {
-    SdkBuilder,
-    generate_recovery_phrase,
+    Builder,
+    generateRecoveryPhrase,
     hex,
     fromHex,
     closeTab,
@@ -86,12 +86,14 @@ export function initRegistrationWizard(helpers) {
       btn.textContent = 'Requesting connection...';
       status.textContent = 'Requesting connection from indexer...';
 
-      regBuilder = new SdkBuilder(
+      regBuilder = new Builder(
         url,
-        'c0000000000000000000000000000000000000000000000000000000000000de',
-        'Sialo',
-        'Sialo - a decentralized browser and CLI tool for the Sia network',
-        'https://sialo.io',
+        {
+          appId: 'c0000000000000000000000000000000000000000000000000000000000000de',
+          name: 'Sialo',
+          description: 'Sialo - a decentralized browser and CLI tool for the Sia network',
+          serviceUrl: 'https://sialo.io',
+        },
       );
 
       await regBuilder.requestConnection();
@@ -150,7 +152,7 @@ export function initRegistrationWizard(helpers) {
   // --- Step 4: Recovery Phrase + Register ---
 
   document.getElementById('wiz-btn-generate').addEventListener('click', () => {
-    document.getElementById('wiz-mnemonic').value = generate_recovery_phrase();
+    document.getElementById('wiz-mnemonic').value = generateRecoveryPhrase();
   });
 
   document.getElementById('wiz-btn-register').addEventListener('click', async () => {

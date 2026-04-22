@@ -6,7 +6,7 @@ import { withKeepAlive } from './keep-alive.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import {
   openOrActivateInternalTab, getOrCreateActiveBrowserTab,
-  setLastBrowserUrl, renderTabBar,
+  setLastBrowserUrl, renderTabBar, getActiveTab, trackAbort,
 } from './tabs.js';
 
 export function initObjectsUI() {
@@ -24,7 +24,7 @@ export function initObjectsUI() {
       if (!sdk) return;
 
       status.textContent = 'Fetching objects...';
-      const objects = await sdk.objectEvents(null, null, limit || 500);
+      const objects = await sdk.objectEvents(null, limit || 500);
 
       if (objects.length === 0) {
         objectsList.innerHTML = '<div style="padding:1rem; color:#888; text-align:center;">No objects found. Upload something first!</div>';
@@ -56,13 +56,14 @@ export function initObjectsUI() {
 
       for (const obj of objects) {
         const shortId = obj.id.substring(0, 8) + '...' + obj.id.substring(obj.id.length - 8);
-        const size = obj.size ? formatSize(obj.size) : 'N/A';
+        const sizeBytes = obj.object ? obj.object.size() : 0;
+        const size = sizeBytes ? formatSize(sizeBytes) : 'N/A';
         const date = new Date(obj.updatedAt).toLocaleString();
         const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
 
         html += `
           <tr style="border-bottom:1px solid #222;">
-            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${obj.size || 0}" />` : ''}</td>
+            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" />` : ''}</td>
             <td style="padding:0.5rem; font-family:monospace; font-size:0.85rem;" title="${obj.id}">${shortId}</td>
             <td style="padding:0.5rem;">${size}</td>
             <td style="padding:0.5rem;">${date}</td>
@@ -162,6 +163,13 @@ export function initObjectsUI() {
         const tbody = document.getElementById('zip-builder-tbody');
         const rows = [...tbody.querySelectorAll('tr')];
         if (rows.length === 0) return;
+
+        // Close-tab cancel: flips the existing zipCancelled flag so the
+        // inter-file loop breaks out the next time it checks.
+        const zipAbort = new AbortController();
+        const zipUntrack = trackAbort(getActiveTab(), zipAbort);
+        zipAbort.signal.addEventListener('abort', () => { zipCancelled = true; });
+
         await withKeepAlive(async () => {
 
         const entries = rows.map(tr => ({
@@ -291,6 +299,7 @@ export function initObjectsUI() {
           if (writable) try { await writable.abort(); } catch (_) {}
         }
         }); // withKeepAlive
+        zipUntrack();
         btn.disabled = false;
       });
     } catch (e) {
@@ -455,7 +464,7 @@ export function initObjectsUI() {
 
         // Generate share URL with configured duration
         const validUntilMs = Date.now() + (duration * unit);
-        const shareUrl = sdk.shareObject(obj, validUntilMs);
+        const shareUrl = sdk.shareObject(obj, new Date(validUntilMs));
 
         // Calculate human-readable duration
         let durationText = `${duration} ${configModal.querySelector('#share-modal-unit').selectedOptions[0].text}`;
@@ -609,7 +618,7 @@ export function initObjectsUI() {
       const obj = await sdk.object(objectId);
 
       const validUntilMs = Date.now() + (duration * unit);
-      const shareUrl = sdk.shareObject(obj, validUntilMs);
+      const shareUrl = sdk.shareObject(obj, new Date(validUntilMs));
 
       const expiresAt = new Date(validUntilMs).toLocaleString();
       status.textContent = '';

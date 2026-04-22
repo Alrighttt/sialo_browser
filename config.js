@@ -2,7 +2,7 @@
 
 import { _dbg, _dbgWarn, fromHex, formatSize } from './utils.js';
 import { updateConnectionStatus } from './tabs.js';
-import { AppKey, SdkBuilder, DownloadOptions } from './pkg/sia_storage_wasm.js';
+import { AppKey, Builder } from './pkg/sia_storage_wasm.js';
 
 const APP_ID = 'c0000000000000000000000000000000000000000000000000000000000000de';
 const APP_NAME = 'Sialo';
@@ -25,7 +25,7 @@ export function getLogLevel() { return document.getElementById('cfg-debug-loggin
 
 // --- Stream helpers (passed to video-streaming.js) ---
 
-const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, DownloadOptions, createMP4Box, _dbg, _dbgWarn };
+const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, createMP4Box, _dbg, _dbgWarn };
 
 export function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, overrideConfig) {
   return _webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, { ...streamHelpers, overrideConfig });
@@ -38,6 +38,18 @@ export function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl) {
 
 let cachedSdk = null;
 let cachedConfig = null;
+
+/**
+ * Drop the cached SDK so the next `connectSdk()` rebuilds it. Call this
+ * after a download/upload fails in a way that suggests the WebTransport
+ * pool is dead (e.g. `"not enough shards: 0/N"` after a QUIC idle-timeout
+ * on every host). The old handle is left alive — other in-flight ops
+ * still hold references to it — so we just clear the cache pointer.
+ */
+export function invalidateSdk() {
+  cachedSdk = null;
+  cachedConfig = null;
+}
 
 export async function connectSdk(statusEl) {
   const url = getUrl();
@@ -54,20 +66,14 @@ export async function connectSdk(statusEl) {
   }
 
   statusEl.textContent = 'Creating app key...';
-  const appKey = AppKey.fromHex(keyHex);
+  const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
   statusEl.textContent = `App key created. Public key: ${appKey.publicKey()}\nConnecting to indexer...`;
-  const builder = new SdkBuilder(url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
+  const builder = new Builder(url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
   const sdk = await builder.connected(appKey);
   if (!sdk) {
     statusEl.innerHTML = '<span class="fail">App key not recognized by this indexer. Register first.</span>';
     return null;
   }
-
-  // Warm host connections (main thread only — workers skip this).
-  // Caches price data and host latency metrics. Connections themselves
-  // go stale after QUIC idle timeout but are recreated on demand.
-  statusEl.textContent = 'Warming host connections...';
-  await sdk.warmConnections().catch(e => _dbg('warmConnections:', e));
 
   // Cache the SDK
   cachedSdk = sdk;
@@ -105,8 +111,8 @@ export async function resolveSharedObject(shareUrl, primarySdk) {
     if (!profile.url || !profile.key || profile.url === activeUrl) continue;
     try {
       _dbg(`Trying profile "${name}" (${profile.url})...`);
-      const key = AppKey.fromHex(profile.key);
-      const builder = new SdkBuilder(profile.url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
+      const key = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(profile.key)));
+      const builder = new Builder(profile.url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
       const sdk = await builder.connected(key);
       if (!sdk) continue;
       const obj = await sdk.sharedObject(shareUrl);
@@ -124,8 +130,9 @@ export async function resolveSharedObject(shareUrl, primarySdk) {
 }
 
 /**
- * Resolves an object by ID or share URL across all configured indexer profiles.
- * Tries the primary SDK first, then falls back to other profiles.
+ * Resolves an object by ID or share URL. Share URLs are indexer-specific
+ * and only tried against the primary SDK. Object IDs try the primary SDK
+ * first, then fall back through all other configured indexer profiles.
  * Returns { sdk, obj } for the first profile that succeeds.
  */
 export async function resolveObject(input, primarySdk) {
@@ -138,10 +145,12 @@ export async function resolveObject(input, primarySdk) {
       : await primarySdk.object(input);
     return { sdk: primarySdk, obj, fallback: null };
   } catch (primaryErr) {
+    // Share URLs are indexer-specific — don't fall back to other indexers.
+    if (isShareUrl) throw primaryErr;
     _dbg(`Primary indexer failed for object: ${primaryErr.message || primaryErr}`);
   }
 
-  // Load all profiles and try each one
+  // Object ID fallback: try all other configured profiles
   let profiles;
   try {
     profiles = JSON.parse(localStorage.getItem(PROFILES_KEY));
@@ -155,13 +164,11 @@ export async function resolveObject(input, primarySdk) {
     if (!profile.url || !profile.key || profile.url === activeUrl) continue;
     try {
       _dbg(`Trying profile "${name}" (${profile.url})...`);
-      const key = AppKey.fromHex(profile.key);
-      const builder = new SdkBuilder(profile.url, APP_ID, APP_NAME, APP_DESCRIPTION, APP_SERVICE_URL);
+      const key = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(profile.key)));
+      const builder = new Builder(profile.url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
       const sdk = await builder.connected(key);
       if (!sdk) continue;
-      const obj = isShareUrl
-        ? await sdk.sharedObject(input)
-        : await sdk.object(input);
+      const obj = await sdk.object(input);
       _dbg(`Resolved object via profile "${name}"`);
       return { sdk, obj, fallback: name, indexerUrl: profile.url, keyHex: profile.key };
     } catch (e) {

@@ -167,6 +167,10 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
     // --- Audio setup (via shared core MSE helpers) ---
     if (msg.audioConfig && audioMediaSourceReady) {
       try {
+        if (!MediaSource.isTypeSupported(msg.audioConfig.mime)) {
+          _dbgWarn(`[webcodec] Audio mime not supported: ${msg.audioConfig.mime}`);
+          throw new Error('unsupported');
+        }
         s.audioMode = msg.audioConfig.mode;
         s.audioSourceBuffer = s.audioMediaSource.addSourceBuffer(msg.audioConfig.mime);
         s.audioSourceBuffer.addEventListener('updateend', () => {
@@ -237,26 +241,19 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   // timeSpan is updated by core's updateTimeUI
   s.timeSpan = document.getElementById('vc-time');
 
-  let hideTimeout;
-  function showControls() {
-    controlsEl.style.opacity = '1';
-    clearTimeout(hideTimeout);
-    hideTimeout = setTimeout(() => {
-      if (!s.paused) controlsEl.style.opacity = '0';
-    }, 3000);
+  // Controls visibility is driven by CSS :hover on #video-container plus a
+  // data-paused="true" attribute we keep in sync below — see style.css. No
+  // JS timers or mouseenter/leave bookkeeping: :hover reflects the pointer's
+  // real position, which handles the case where the cursor was already over
+  // the container when it first appeared.
+  function syncPausedAttr() {
+    container.dataset.paused = s.paused ? 'true' : 'false';
   }
-  container.addEventListener('mousemove', showControls);
-  container.addEventListener('mouseenter', showControls);
-  container.addEventListener('touchstart', showControls);
-  container.addEventListener('click', showControls);
-  // Always show controls when paused
-  const origToggle = VPC.togglePause;
-  const showOnPause = () => { if (s.paused) showControls(); };
-  // Keep controls visible while paused (checked in hide timeout above)
-  showControls();
+  function togglePauseAndSync() { VPC.togglePause(s); syncPausedAttr(); }
+  syncPausedAttr();
 
-  canvasEl.addEventListener('click', () => VPC.togglePause(s));
-  playBtn.addEventListener('click', () => VPC.togglePause(s));
+  canvasEl.addEventListener('click', togglePauseAndSync);
+  playBtn.addEventListener('click', togglePauseAndSync);
   playBtn.innerHTML = '&#9646;&#9646;';
 
   volSlider.addEventListener('input', () => {
@@ -274,7 +271,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
   // Keyboard controls (Space=pause, F=fullscreen)
   const keyHandler = (e) => {
     if (!container.offsetParent && !document.fullscreenElement) return; // not visible
-    if (e.key === ' ') { e.preventDefault(); VPC.togglePause(s); showControls(); }
+    if (e.key === ' ') { e.preventDefault(); togglePauseAndSync(); }
     else if (e.key === 'f' || e.key === 'F') { fsBtn.click(); }
   };
   document.addEventListener('keydown', keyHandler);
@@ -466,7 +463,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 // --- MSE streaming pipeline (legacy fallback for browsers without WebCodecs) ---
 
 export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl, helpers) {
-  const { formatSize, getMaxDownloads, DownloadOptions, createMP4Box, _dbg, _dbgWarn } = helpers;
+  const { formatSize, getMaxDownloads, createMP4Box, _dbg, _dbgWarn } = helpers;
 
   if (!window.MediaSource) {
     throw new Error('MediaSource Extensions not supported in this browser');
@@ -667,28 +664,28 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
   const downloadStart = performance.now();
 
   let chunkCount = 0;
-  const dlOpts2 = new DownloadOptions(getMaxDownloads());
-  const streamPromise = sdk.downloadStreaming(obj,
-    (chunk) => {
-      if (aborted) return;
+  const dlStream = sdk.download(obj, { maxInflight: getMaxDownloads() });
+  const dlReader = dlStream.getReader();
+  const streamPromise = (async () => {
+    while (true) {
+      const { done, value } = await dlReader.read();
+      if (done || aborted) break;
       chunkCount++;
-      const buf = chunk.buffer.slice(
-        chunk.byteOffset,
-        chunk.byteOffset + chunk.byteLength
+      const buf = value.buffer.slice(
+        value.byteOffset,
+        value.byteOffset + value.byteLength
       );
       buf.fileStart = byteOffset;
       if (chunkCount <= 3) {
-        _dbg(`[stream] chunk #${chunkCount}: size=${chunk.byteLength} fileStart=${byteOffset}`);
+        _dbg(`[stream] chunk #${chunkCount}: size=${value.byteLength} fileStart=${byteOffset}`);
       }
-      byteOffset += chunk.byteLength;
+      byteOffset += value.byteLength;
       mp4box.appendBuffer(buf);
-    },
-    (current, total) => {
-      if (aborted) return;
-      progressEl.max = total;
-      progressEl.value = current;
-      const pct = total > 0 ? ((current / total) * 100).toFixed(0) : 0;
-      statusEl.textContent = `Streaming: ${pct}% — ${formatSize(current)} / ${formatSize(total)}`;
+
+      progressEl.max = totalSize;
+      progressEl.value = byteOffset;
+      const pct = totalSize > 0 ? ((byteOffset / totalSize) * 100).toFixed(0) : 0;
+      statusEl.textContent = `Streaming: ${pct}% — ${formatSize(byteOffset)} / ${formatSize(totalSize)}`;
 
       if (byteOffset > 50 * 1024 * 1024 && !mp4boxReady) {
         aborted = true;
@@ -697,9 +694,8 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
           'Re-encode with "ffmpeg -i input.mp4 -movflags +faststart output.mp4" to fix, or use the Download section.'
         ));
       }
-    },
-    dlOpts2,
-  );
+    }
+  })();
 
   try {
     await Promise.race([streamPromise, abortPromise]);

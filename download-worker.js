@@ -1,8 +1,8 @@
 // Web Worker for file downloads
-// Creates independent SDK instance, downloads via downloadStreaming,
+// Creates independent SDK instance, downloads via ReadableStream,
 // posts decrypted chunks back via Transferable ArrayBuffers (zero-copy).
 
-import init, { AppKey, SdkBuilder, DownloadOptions } from './pkg/sia_storage_wasm.js';
+import init, { AppKey, Builder } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
 
 self.onmessage = async (e) => {
@@ -19,8 +19,8 @@ self.onmessage = async (e) => {
     await init();
 
     
-    const appKey = AppKey.fromHex(keyHex);
-    const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
+    const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
+    const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
 
     const sdk = await builder.connected(appKey);
     if (!sdk) {
@@ -37,24 +37,23 @@ self.onmessage = async (e) => {
 
     // Stream download — post chunks back to main thread
     let byteOffset = 0;
-    const opts = new DownloadOptions(maxDownloads);
-    await sdk.downloadStreaming(
-        obj,
-      (chunk) => {
-        const buf = chunk.buffer.slice(
-          chunk.byteOffset,
-          chunk.byteOffset + chunk.byteLength,
-        );
-        self.postMessage(
-          { type: 'chunk', offset: byteOffset, size: chunk.byteLength, data: buf },
-          [buf],
-        );
-        byteOffset += chunk.byteLength;
-      },
-      (current, total) => {
-        self.postMessage({ type: 'progress', current, total });
-      },
-    );
+    const stream = sdk.download(obj, { maxInflight: maxDownloads });
+    const reader = stream.getReader();
+    const totalSize = obj.size();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const buf = value.buffer.slice(
+        value.byteOffset,
+        value.byteOffset + value.byteLength,
+      );
+      self.postMessage(
+        { type: 'chunk', offset: byteOffset, size: value.byteLength, data: buf },
+        [buf],
+      );
+      byteOffset += value.byteLength;
+      self.postMessage({ type: 'progress', current: byteOffset, total: totalSize });
+    }
 
     self.postMessage({ type: 'complete' });
   } catch (err) {

@@ -2,7 +2,7 @@
 // Each worker creates its own SDK instance and downloads individual slabs
 // on demand. A pool of these workers enables true parallel slab downloads.
 
-import init, { AppKey, SdkBuilder, DownloadOptions, set_log_level } from './pkg/sia_storage_wasm.js';
+import init, { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
 
 let sdk = null;
@@ -25,11 +25,10 @@ self.onmessage = async (e) => {
       maxDownloads = maxDownloadsInit || maxDownloads;
       self.postMessage({ type: 'status', phase: 'wasm' });
       await init();
-      if (logLevel) set_log_level(logLevel);
+      if (logLevel) setLogger((msg) => console.log(msg), logLevel);
 
-      
-      const appKey = AppKey.fromHex(keyHex);
-      const builder = new SdkBuilder(indexerUrl, 'c0000000000000000000000000000000000000000000000000000000000000de', 'Sialo', 'Sialo Browser worker', 'https://sialo.io');
+      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
+      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
 
       self.postMessage({ type: 'status', phase: 'connecting' });
       sdk = await builder.connected(appKey);
