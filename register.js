@@ -62,12 +62,18 @@ export function initRegistrationWizard(helpers) {
   // --- Step 1: Indexer URL ---
 
   document.getElementById('wiz-btn-next').addEventListener('click', () => {
-    const url = document.getElementById('wiz-url').value.trim();
+    let url = document.getElementById('wiz-url').value.trim();
     if (!url) {
       alert('Please enter an indexer URL.');
       return;
     }
-    // Save URL to config + localStorage + profile system
+    // Normalize: the SDK's Rust reqwest::Url::parse rejects bare
+    // hostnames and surfaces them as "client error: http error:
+    // builder error", which is opaque to end users. Default to https
+    // when no scheme is present, and drop a trailing slash.
+    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+    url = url.replace(/\/+$/, '');
+    document.getElementById('wiz-url').value = url;
     document.getElementById('cfg-url').value = url;
     localStorage.setItem('indexer-url', url);
     window.dispatchEvent(new CustomEvent('profile-updated'));
