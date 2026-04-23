@@ -309,6 +309,9 @@ progress::-moz-progress-bar {
   min-width: 220px;
   padding: 0.5rem 0;
   box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .gear-menu-header {
   padding: 0.5rem 1rem;
