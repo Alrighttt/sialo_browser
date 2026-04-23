@@ -13,17 +13,20 @@
 // etc. — anything a normal HTTP server can serve — because the SW
 // returns a real same-origin Response for every request.
 //
-// Manifest format:
-//   { "index.html": "sia://...?sv=...#encryption_key=...", "app.js": "sia://...", ... }
+// Manifest format (version 1):
+//   { "type": "sia-site", "version": 1, "files": {
+//       "index.html": "sia://...?sv=...#encryption_key=...",
+//       "app.js":     "sia://...", ...
+//   }}
 //
-// Values are full `sia://` share URLs (not bare object IDs) so the site
-// is portable: any account can resolve and decrypt each entry using the
-// signature + encryption key embedded in the URL. Bare hex IDs are still
-// accepted on read for backwards compatibility with older manifests.
+// Values are full `sia://` share URLs so the site is portable: any
+// account can resolve and decrypt each entry using the signature +
+// encryption key embedded in the URL.
 
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
-import { _dbg, _dbgWarn } from './utils.js';
+import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import { connectSdk, resolveObject, invalidateSdk } from './config.js';
+import { findTabByIframeWindow, tabStatusProxy } from './tabs.js';
 
 // "not enough shards: 0/N" after a period of idle usually means every
 // cached WebTransport connection got killed by the QUIC idle timeout.
@@ -66,8 +69,8 @@ export const HOSTED_HOSTNAME = (() => {
   try { return new URL(HOSTED_ORIGIN).hostname; } catch (_) { return location.hostname; }
 })();
 
-const manifestCache = new Map(); // manifestId → { "path": shareUrl|objectId, ... }
-const objectCache = new Map();   // shareUrl|objectId → Uint8Array
+const manifestCache = new Map(); // manifestId → { "path": shareUrl, ... }
+const objectCache = new Map();   // shareUrl → Uint8Array
 
 // Share URLs baked into site manifests should outlive the lifetime of
 // the site. 100 years from upload time is effectively "forever" from
@@ -230,6 +233,16 @@ async function resolveManifestPath(manifestId, path) {
   const manifest = await getManifest(manifestId);
   const lookup = resolveManifestKey(manifest, path);
   if (!lookup) {
+    // No file matched AND the request is for a directory-like path
+    // (root or trailing slash) — synthesise an index listing from the
+    // manifest so the user can browse a site that has no index.html.
+    const normalized = (path || '').replace(/^\/+/, '');
+    if (normalized === '' || normalized.endsWith('/')) {
+      const html = renderAutoIndex(manifest, normalized);
+      const injected = injectBridge(html);
+      const body = new TextEncoder().encode(injected).buffer;
+      return { body, contentType: 'text/html' };
+    }
     throw new Error('not in manifest: ' + path);
   }
   const data = await fetchObject(lookup.objectId);
@@ -347,6 +360,46 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
   const entry = { cancelled: false, reader };
   activeExtStreams.set(id, entry);
 
+  // Report throughput to the tab's status bar for large streams (video,
+  // big PDFs, etc). Small assets don't need a readout, and a percent
+  // counter is meaningless here because seeking fires a fresh Range
+  // request each time — we'd just reset 0→100 repeatedly. MB/s over a
+  // rolling 5 s window stays informative through seeks.
+  const PROGRESS_THRESHOLD_BYTES = 4 * 1024 * 1024;
+  const showProgress = totalSize >= PROGRESS_THRESHOLD_BYTES;
+  const tab = showProgress ? findTabByIframeWindow(source) : null;
+  const statusBar = tab ? tabStatusProxy(tab).status : null;
+  const kind = contentType.startsWith('video/') ? 'video'
+    : contentType.startsWith('audio/') ? 'audio'
+    : contentType.startsWith('image/') ? 'image'
+    : 'file';
+  let bytesSent = 0;
+  let lastProgressUpdate = 0;
+  const SPEED_WINDOW_MS = 5000;
+  const speedSamples = [{ t: performance.now(), bytes: 0 }];
+  // Messages that streaming is allowed to overwrite. Anything else
+  // (e.g. a "Downloading…" line from an External download) wins and
+  // holds the bar until it's cleared. The pre-stream placeholder the
+  // browser code writes ("Loading video…") counts as overwritable,
+  // otherwise the first streaming update gets stuck and never shows.
+  const OVERWRITABLE_RX = /Streaming |Loading video|Loading Sia site|Fetching object|Connecting/;
+  function updateProgress() {
+    if (!statusBar) return;
+    const now = performance.now();
+    if (now - lastProgressUpdate < 200) return;
+    const current = statusBar.innerHTML || '';
+    if (current && !OVERWRITABLE_RX.test(current)) return;
+    lastProgressUpdate = now;
+    speedSamples.push({ t: now, bytes: bytesSent });
+    while (speedSamples.length > 2 && now - speedSamples[0].t > SPEED_WINDOW_MS) {
+      speedSamples.shift();
+    }
+    const oldest = speedSamples[0];
+    const windowSec = (now - oldest.t) / 1000;
+    const mbs = windowSec > 0 ? ((bytesSent - oldest.bytes) / windowSec / 1e6) : 0;
+    statusBar.innerHTML = `<span class="pass">Streaming ${kind}: ${mbs.toFixed(1)} MB/s</span>`;
+  }
+
   try {
     source.postMessage({ type: 'sia-ext-meta', id, size: totalSize, contentType }, HOSTED_ORIGIN);
     if (done) {
@@ -354,19 +407,29 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
       return;
     }
     if (firstChunk) {
+      bytesSent += firstChunk.byteLength;
       const buf = firstChunk.buffer.slice(firstChunk.byteOffset, firstChunk.byteOffset + firstChunk.byteLength);
       source.postMessage({ type: 'sia-ext-chunk', id, chunk: buf }, HOSTED_ORIGIN, [buf]);
+      updateProgress();
     }
 
     while (!entry.cancelled) {
       const { done: d, value } = await reader.read();
       if (d) break;
       if (entry.cancelled) break;
+      bytesSent += value.byteLength;
       const buf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
       source.postMessage({ type: 'sia-ext-chunk', id, chunk: buf }, HOSTED_ORIGIN, [buf]);
+      updateProgress();
     }
     if (!entry.cancelled) {
       source.postMessage({ type: 'sia-ext-end', id }, HOSTED_ORIGIN);
+      if (statusBar) {
+        const current = statusBar.innerHTML || '';
+        if (!current || OVERWRITABLE_RX.test(current)) {
+          statusBar.innerHTML = `<span class="pass">✓ Streamed ${formatSize(bytesSent)} ${kind}</span>`;
+        }
+      }
     }
   } finally {
     activeExtStreams.delete(id);
@@ -431,6 +494,77 @@ function resolveManifestKey(manifest, path) {
   return null;
 }
 
+// Render a minimal directory-listing page for a sia-site that has no
+// index.html at `dirPath`. Files directly in the directory appear as
+// links; anything further nested collapses into a subdirectory link
+// the user can click to drill into (the service worker will land back
+// here with the new path and list that subtree).
+function renderAutoIndex(manifest, dirPath) {
+  const keys = Object.keys(manifest).sort();
+  const files = [];
+  const subdirs = new Set();
+  for (const key of keys) {
+    if (!key.startsWith(dirPath)) continue;
+    const rest = key.slice(dirPath.length);
+    if (!rest) continue;
+    const slashIdx = rest.indexOf('/');
+    if (slashIdx >= 0) subdirs.add(rest.slice(0, slashIdx + 1));
+    else files.push(rest);
+  }
+
+  const rows = [];
+  if (dirPath) {
+    rows.push(`<li class="up"><a href="../">..</a></li>`);
+  }
+  for (const d of Array.from(subdirs).sort()) {
+    rows.push(`<li class="dir"><a href="${_esc(d)}">${_esc(d)}</a></li>`);
+  }
+  for (const f of files) {
+    rows.push(`<li class="file"><a href="${_esc(f)}">${_esc(f)}</a></li>`);
+  }
+
+  const title = `Index of /${_esc(dirPath)}`;
+  const count = files.length + subdirs.size;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${title}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 2rem 1.5rem; background: #0a0a0a; color: #d0d0d0; font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; }
+  .wrap { max-width: 820px; margin: 0 auto; }
+  header { border-bottom: 1px solid #1e1e1e; padding-bottom: 1rem; margin-bottom: 1.25rem; }
+  h1 { font-size: 1.4rem; font-weight: 600; color: #e5e5e5; margin: 0 0 0.35rem; font-family: var(--font-mono, ui-monospace, monospace); }
+  .sub { color: #6b7280; font-size: 0.85rem; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { border-bottom: 1px solid #141414; }
+  li:last-child { border-bottom: 0; }
+  a { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.5rem; color: #cbd5e1; text-decoration: none; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9rem; border-radius: 4px; }
+  a:hover { background: #11151a; color: #fff; }
+  li.up a { color: #60a5fa; }
+  li.dir a::before { content: '📁'; }
+  li.file a::before { content: '📄'; }
+  li.up a::before { content: '↩'; }
+  footer { margin-top: 2rem; color: #4b5563; font-size: 0.75rem; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>${title}</h1>
+      <div class="sub">${count} entr${count === 1 ? 'y' : 'ies'}</div>
+    </header>
+    <ul>
+      ${rows.join('\n      ')}
+    </ul>
+    <footer>Auto-generated by Sialo Browser</footer>
+  </div>
+</body>
+</html>`;
+}
+
 async function fetchObject(objectId) {
   const cached = objectCache.get(objectId);
   if (cached) return cached;
@@ -444,6 +578,53 @@ async function fetchObject(objectId) {
   return data;
 }
 
+// Only version 1 is supported. Older legacy formats (unversioned flat
+// maps, bare-object-ID entries) were dropped — any site published
+// before the envelope existed needs to be re-uploaded.
+const MANIFEST_TYPE = 'sia-site';
+const MANIFEST_VERSION = 1;
+
+/**
+ * Wrap a `{ path -> shareUrl }` map in the versioned manifest envelope
+ * produced by this client. Exposed so the CLI / other callers use the
+ * same shape.
+ */
+export function buildSiaSiteManifest(files) {
+  return { type: MANIFEST_TYPE, version: MANIFEST_VERSION, files };
+}
+
+/**
+ * Parse and validate a v1 sia-site manifest. Returns the flat
+ * `{ path -> shareUrl }` map the rest of the code works with.
+ */
+function parseManifest(data) {
+  let m;
+  try {
+    m = JSON.parse(new TextDecoder().decode(data));
+  } catch (e) {
+    throw new Error('manifest is not valid JSON: ' + e.message);
+  }
+  if (!m || typeof m !== 'object' || Array.isArray(m)) {
+    throw new Error('manifest is not a JSON object');
+  }
+  if (m.type !== MANIFEST_TYPE) {
+    throw new Error(`not a sia-site manifest (type=${JSON.stringify(m.type)})`);
+  }
+  if (typeof m.version !== 'number') throw new Error('sia-site manifest missing `version`');
+  if (m.version !== MANIFEST_VERSION) {
+    throw new Error(`unsupported sia-site manifest version ${m.version} (expected ${MANIFEST_VERSION})`);
+  }
+  if (!m.files || typeof m.files !== 'object' || Array.isArray(m.files)) {
+    throw new Error('sia-site manifest missing `files` map');
+  }
+  for (const [k, v] of Object.entries(m.files)) {
+    if (typeof v !== 'string' || !v.startsWith('sia://')) {
+      throw new Error(`manifest entry \`${k}\` is not a sia:// share URL`);
+    }
+  }
+  return m.files;
+}
+
 async function getManifest(manifestId) {
   const cached = manifestCache.get(manifestId);
   if (cached) return cached;
@@ -453,16 +634,10 @@ async function getManifest(manifestId) {
     const { obj } = await resolveObject(manifestId, sdk);
     return await readStreamFully(sdk.download(obj));
   });
-  let m;
-  try {
-    m = JSON.parse(new TextDecoder().decode(data));
-  } catch (e) {
-    throw new Error('manifest is not valid JSON: ' + e.message);
-  }
-  if (!m || typeof m !== 'object') throw new Error('manifest is not a JSON object');
-  manifestCache.set(manifestId, m);
-  _dbg('[sia-site] loaded manifest', manifestId.slice(0, 16), 'entries:', Object.keys(m).length);
-  return m;
+  const files = parseManifest(data);
+  manifestCache.set(manifestId, files);
+  _dbg('[sia-site] loaded manifest', manifestId.slice(0, 16), 'entries:', Object.keys(files).length);
+  return files;
 }
 
 async function readStreamFully(stream) {
@@ -601,7 +776,7 @@ export async function uploadSite(sdk, files) {
     manifest[path] = sdk.shareObject(obj, validUntil);
     _dbg('[sia-site] uploaded', path, '→', obj.id());
   }
-  const manifestJson = JSON.stringify(manifest, null, 2);
+  const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
   const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
   const manifestObj = await sdk.upload(new PinnedObject(), manifestBlob.stream());
   await sdk.pinObject(manifestObj);

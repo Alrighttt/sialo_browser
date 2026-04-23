@@ -2,12 +2,29 @@
 
 import { _dbg, _dbgWarn, fromHex, formatSize } from './utils.js';
 import { updateConnectionStatus } from './tabs.js';
-import { AppKey, Builder } from './pkg/sia_storage_wasm.js';
+import { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
+
+// Install the SDK logger once — writes WASM-side `log::debug!` /
+// `log::warn!` messages to the browser console when debug logging is on.
+// Helps diagnose per-host WebTransport connect failures (e.g. "[WT]
+// connect to <host> failed: ...") that would otherwise be invisible.
+let _loggerInstalled = false;
+function ensureLoggerInstalled() {
+  if (_loggerInstalled) return;
+  const level = (() => { try { return getLogLevel(); } catch { return null; } })();
+  if (!level) return;
+  try {
+    setLogger((msg) => console.log(msg), level);
+    _loggerInstalled = true;
+  } catch (e) {
+    console.warn('[sialo] setLogger failed:', e);
+  }
+}
 
 const APP_ID = 'c0000000000000000000000000000000000000000000000000000000000000de';
 const APP_NAME = 'Sialo';
 const APP_DESCRIPTION = 'Decentralized storage browser for the Sia network';
-const APP_SERVICE_URL = 'https://sialo.app';
+const APP_SERVICE_URL = 'https://sialo.io';
 
 const PROFILES_KEY = 'indexer-profiles';
 import { createFile as createMP4Box } from './vendor/mp4box.bundle.js';
@@ -65,6 +82,7 @@ export async function connectSdk(statusEl) {
     return cachedSdk;
   }
 
+  ensureLoggerInstalled();
   statusEl.textContent = 'Creating app key...';
   const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
   statusEl.textContent = `App key created. Public key: ${appKey.publicKey()}\nConnecting to indexer...`;

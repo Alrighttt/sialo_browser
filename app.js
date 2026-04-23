@@ -79,10 +79,13 @@ window.addEventListener('DOMContentLoaded', () => {
   _dbg('  Secure context:', window.isSecureContext ? '✅ Yes' : '❌ No (requires HTTPS)');
   _dbg('  Browser:', navigator.userAgent);
 
+  // Safari banner is handled by an inline script in index.html so it
+  // still shows if any module import fails. Here we only warn about
+  // non-Safari compat issues.
   if (typeof WebTransport === 'undefined') {
     const warning = document.createElement('div');
     warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
-    warning.innerHTML = '⚠️ WebTransport not supported in this browser. Downloads will fail.<br>Please use Chrome 97+, Edge 97+, or check Safari Feature Flags (Develop → Feature Flags → WebTransport)';
+    warning.innerHTML = '⚠️ WebTransport not supported in this browser. Downloads will fail.<br>Please use Chrome 97+, Edge 97+, or Firefox 114+.';
     document.body.prepend(warning);
   } else if (!window.isSecureContext) {
     const warning = document.createElement('div');
@@ -435,6 +438,27 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
 // Returns { blob, elapsed } where blob is assembled from streamed chunks.
 // Download helpers → download.js
 // Upload helpers → upload.js
+
+// Mouse-wheel scrolling over the tab bar pans the tabs horizontally
+// instead of the page, so users with many tabs can flick between them
+// without hunting for the scrollbar. Trackpad horizontal swipes are
+// already native; this only maps vertical-wheel input (deltaY) into
+// horizontal scrolling when the bar actually overflows.
+{
+  const tabBar = document.getElementById('tab-bar');
+  if (tabBar) {
+    tabBar.addEventListener('wheel', (e) => {
+      // Only hijack if the tab bar can actually scroll horizontally.
+      if (tabBar.scrollWidth <= tabBar.clientWidth) return;
+      // If the user is already scrolling horizontally (trackpad two-finger
+      // swipe), let the browser handle it natively.
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+      if (e.deltaY === 0) return;
+      e.preventDefault();
+      tabBar.scrollLeft += e.deltaY;
+    }, { passive: false });
+  }
+}
 
 // Auto-restore config from localStorage on page load
 const urlInput = document.getElementById('cfg-url');

@@ -24,8 +24,14 @@
 import { _esc, formatSize } from './utils.js';
 import { connectSdk } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
-import { getActiveTab, trackAbort } from './tabs.js';
+import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
+
+// Bottom-right status bar proxy for the currently-active tab.
+function panelStatus() {
+  return tabStatusProxy(getActiveTab()).status;
+}
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
+import { buildSiaSiteManifest } from './sia-site.js';
 
 const FILE_ROW_LIMIT = 500; // cap on rendered preview rows (avoid huge DOM)
 
@@ -41,14 +47,14 @@ export function initUploadSiteUI() {
   const progress  = document.getElementById('us-progress');
   const filesPane = document.getElementById('us-files-details');
   const filesList = document.getElementById('us-files-list');
-  const uploadBtn = document.getElementById('us-upload-btn');
   const cancelBtn = document.getElementById('us-cancel');
   const result    = document.getElementById('us-result');
   const resultId  = document.getElementById('us-result-id');
   const resultUrl = document.getElementById('us-result-url');
   const openBtn   = document.getElementById('us-open-btn');
   const copyBtn   = document.getElementById('us-copy-btn');
-  const status    = document.getElementById('us-status');
+  const validityNum  = document.getElementById('us-validity-num');
+  const validityUnit = document.getElementById('us-validity-unit');
 
   /** Currently-selected file list with relative paths. */
   let selected = null; // [{ relPath, file }]
@@ -108,7 +114,7 @@ export function initUploadSiteUI() {
       currentAbort = null;
     }
     hideResult();
-    status.innerHTML = '';
+    panelStatus().innerHTML = '';
     // finalize() switches the bar to indeterminate via removeAttribute;
     // restore the value attribute so it's determinate again.
     progress.value = 0;
@@ -116,17 +122,16 @@ export function initUploadSiteUI() {
     const { files, rootPrefix } = collectFiles(fileList);
     if (files.length === 0) {
       selected = null;
-      uploadBtn.disabled = true;
       card.style.display = 'none';
       filesPane.style.display = 'none';
-      status.innerHTML = '<span class="fail">No uploadable files in that folder.</span>';
+      panelStatus().innerHTML = '<span class="fail">No uploadable files in that folder.</span>';
       return;
     }
     selected = files;
     rootLabel = rootPrefix || 'site';
     cardRoot.textContent = rootLabel;
     cardSum.textContent = summarise(files);
-    cardCur.textContent = 'Ready to upload';
+    cardCur.textContent = 'Starting…';
     cardDone.textContent = '0 / ' + files.length;
     cardElap.textContent = '0s';
     progress.max = files.length + 1; // +1 for the final manifest upload
@@ -134,7 +139,9 @@ export function initUploadSiteUI() {
     card.style.display = '';
     filesPane.style.display = '';
     renderFileList(files);
-    uploadBtn.disabled = false;
+    // Upload begins immediately — matches the Upload File page's behavior
+    // where selecting a file kicks off the upload without a confirm step.
+    startUpload();
   }
 
   function hideResult() {
@@ -193,7 +200,7 @@ export function initUploadSiteUI() {
       if (entry) await walk(entry, '');
     }
     if (collected.length === 0) {
-      status.innerHTML = '<span class="fail">Drop a folder, not individual files.</span>';
+      panelStatus().innerHTML = '<span class="fail">Drop a folder, not individual files.</span>';
       return;
     }
     setFiles(collected);
@@ -223,14 +230,11 @@ export function initUploadSiteUI() {
     } catch (_) {}
   });
 
-  uploadBtn.addEventListener('click', () => startUpload());
-
   async function startUpload() {
     if (!selected || selected.length === 0) return;
 
     hideResult();
-    status.innerHTML = '';
-    uploadBtn.disabled = true;
+    panelStatus().innerHTML = '';
     cancelBtn.style.display = '';
 
     const abortCtrl = new AbortController();
@@ -245,11 +249,11 @@ export function initUploadSiteUI() {
     let packed = null;
     await withKeepAlive(async () => {
       try {
-        status.textContent = 'Connecting…';
-        const sdk = await connectSdk(status);
+        panelStatus().textContent = 'Connecting…';
+        const sdk = await connectSdk(panelStatus());
         if (!sdk) throw new Error('SDK not connected');
 
-        status.textContent = 'Packing files into shared slabs…';
+        panelStatus().textContent = 'Packing files into shared slabs…';
         packed = sdk.uploadPacked();
 
         // Hand every file to the packed upload. packed.add() just
@@ -298,10 +302,15 @@ export function initUploadSiteUI() {
         // Pin each packed object so it survives the indexer's GC, then
         // build the manifest. Values are `sia://` share URLs rather than
         // bare object IDs so the manifest resolves from any account, not
-        // just the one that uploaded it. 100-year validity = effectively
-        // forever from a user perspective.
+        // just the one that uploaded it. The validity window is taken
+        // from the user-controlled input at the top of the panel — it's
+        // baked into the manifest and can't be changed after upload.
         const manifest = {};
-        const validUntil = new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000);
+        const durMs = parseFloat(validityNum.value) * parseInt(validityUnit.value, 10);
+        if (!isFinite(durMs) || durMs <= 0) {
+          throw new Error('Invalid inner share URL validity');
+        }
+        const validUntil = new Date(Date.now() + durMs);
         for (let i = 0; i < objects.length; i++) {
           if (abortCtrl.signal.aborted) throw new DOMException('cancelled', 'AbortError');
           cardCur.textContent = `Pinning ${paths[i]}`;
@@ -313,7 +322,7 @@ export function initUploadSiteUI() {
         // handle above because its bytes depend on the object IDs we
         // just learned. It's tiny, so a one-off upload is fine.
         cardCur.textContent = 'Uploading manifest';
-        const manifestJson = JSON.stringify(manifest, null, 2);
+        const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
         const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
         const manifestObj = await Promise.race([
           sdk.upload(new PinnedObject(), manifestBlob.stream()),
@@ -324,17 +333,21 @@ export function initUploadSiteUI() {
         progress.value = progress.max;
         cardCur.textContent = 'Done';
 
-        const url = 'sia-site://' + manifestId;
+        // Result URL is a portable sia-site:// share URL signed with
+        // the same validity window as the inner file URLs — anyone with
+        // it can resolve the site regardless of their indexer account.
+        const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
+        const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestId;
         resultUrl.textContent = url;
         result.style.display = '';
-        status.innerHTML = `<span class="pass">Site uploaded in ${formatElapsed((performance.now() - uploadStart) / 1000)}</span>`;
+        panelStatus().innerHTML = `<span class="pass">Site uploaded in ${formatElapsed((performance.now() - uploadStart) / 1000)}</span>`;
       } catch (e) {
         if (abortCtrl.signal.aborted) {
-          status.innerHTML = '<span class="fail">Upload cancelled</span>';
+          panelStatus().innerHTML = '<span class="fail">Upload cancelled</span>';
           cardCur.textContent = 'Cancelled';
         } else {
-          status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
+          panelStatus().innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
           cardCur.textContent = 'Failed';
         }
         if (packed) {
@@ -343,7 +356,6 @@ export function initUploadSiteUI() {
       } finally {
         clearInterval(elapsedTimer);
         cancelBtn.style.display = 'none';
-        uploadBtn.disabled = !selected;
         untrack();
         if (currentAbort === abortCtrl) currentAbort = null;
       }

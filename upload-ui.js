@@ -2,7 +2,12 @@ import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
-import { getActiveTab, trackAbort } from './tabs.js';
+import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
+
+// Bottom-right status bar proxy for the currently-active tab.
+function panelStatus() {
+  return tabStatusProxy(getActiveTab()).status;
+}
 
 // Produces a promise that rejects when the signal fires. Used via
 // Promise.race so the UI can unblock even though the SDK's upload has no
@@ -81,6 +86,8 @@ export function initUploadUI() {
     fileInfo.textContent = `${file.name} (${formatSize(file.size)})`;
     const card = document.getElementById('uf-info-card');
     card.style.display = '';
+    // Hide the previous upload's success card — a new upload is starting.
+    document.getElementById('uf-result').style.display = 'none';
     document.getElementById('uf-card-filename').textContent = file.name;
     document.getElementById('uf-card-size').textContent = `(${formatSize(file.size)})`;
     document.getElementById('uf-card-speed').textContent = 'Ready';
@@ -118,7 +125,7 @@ export function initUploadUI() {
   });
 
   async function startUpload() {
-    const status = document.getElementById('uf-status');
+    const status = panelStatus();
     const progress = document.getElementById('uf-progress');
     const cardSpeed = document.getElementById('uf-card-speed');
     const cardDetail = document.getElementById('uf-card-detail');
@@ -166,6 +173,11 @@ export function initUploadUI() {
       const TOTAL_SHARDS = 30;
       const slabCount = Math.max(1, Math.ceil(selectedFile.size / (DATA_SHARDS * SECTOR_SIZE)));
       const expectedShards = slabCount * TOTAL_SHARDS;
+      // Total wire bytes = every shard × sector size. For 10/20 erasure
+      // coding this is ~3× the user file size (plus padding to the
+      // slab boundary). Shown alongside the running uploaded count so
+      // the user sees the true volume of data the SDK is pushing.
+      const expectedBytes = expectedShards * SECTOR_SIZE;
       progress.max = expectedShards;
       progress.value = 0;
 
@@ -201,13 +213,19 @@ export function initUploadUI() {
         } else if (shardsDone >= expectedShards) {
           cardEta.textContent = '0s';
         }
-        cardDetail.textContent = `${formatSize(bytesUploaded)} uploaded`;
+        cardDetail.textContent = `${formatSize(bytesUploaded)} / ${formatSize(expectedBytes)} uploaded`;
       }
 
       const refreshTimer = setInterval(refreshDisplay, 500);
 
       status.textContent = 'Uploading...';
       try {
+        // Passing File#stream() directly: the SDK's BYOB-capable reader
+        // consumes it natively, so progress callbacks fire per-shard
+        // as expected. Cancellation here releases the UI/SDK-await,
+        // but the SDK task keeps pulling bytes until its in-flight
+        // shards finish — a deeper stream wrapper that actually errors
+        // the SDK's reader was attempted but broke BYOB progress.
         const obj = await Promise.race([
           sdk.upload(new PinnedObject(), selectedFile.stream(), {
             maxInflight: getMaxUploads(),
@@ -229,11 +247,21 @@ export function initUploadUI() {
 
         cardSpeed.textContent = `${(size / parseFloat(elapsed) / 1e6).toFixed(1)} MB/s avg`;
         cardEta.textContent = '0s';
-        status.innerHTML = `Pinning to indexer...`;
+        status.innerHTML = 'Pinning to indexer…';
 
         await sdk.pinObject(obj);
 
-        status.innerHTML = `File: ${_esc(selectedFile.name)}\nSize: ${formatSize(size)}\nUpload + pin completed in ${elapsed}s\n<span class="pass">Pinned!</span>\n\nObject ID: ${_esc(objectId)}`;
+        // Populate + show the success card. Transient status is cleared.
+        document.getElementById('uf-result-name').textContent = selectedFile.name;
+        document.getElementById('uf-result-size').textContent = formatSize(size);
+        document.getElementById('uf-result-elapsed').textContent = `${elapsed}s`;
+        const idEl = document.getElementById('uf-result-objectid');
+        idEl.textContent = objectId;
+        idEl.onclick = () => {
+          if (window.copyToClipboard) window.copyToClipboard(objectId);
+        };
+        document.getElementById('uf-result').style.display = '';
+        status.innerHTML = `<span class="pass">✓ Pinned ${_esc(selectedFile.name)} (${formatSize(size)})</span>`;
       } finally {
         clearInterval(refreshTimer);
       }
@@ -241,7 +269,7 @@ export function initUploadUI() {
       if (abortCtrl.signal.aborted) {
         status.innerHTML = '<span class="fail">Upload cancelled</span>';
       } else {
-        status.innerHTML += `\n<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+        status.innerHTML = `<span class="fail">Upload failed: ${_esc(e.message || String(e))}</span>`;
       }
     } finally {
       cancelBtn.style.display = 'none';

@@ -2,7 +2,7 @@
 // service worker streaming, and disk-based download.
 
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
-import { connectSdk, resolveObject, getUrl, getKeyHex, getMaxDownloads, getDownloadWorkers, getLogLevel } from './config.js';
+import { connectSdk, resolveObject, getMaxDownloads } from './config.js';
 
 async function streamingDownload(sdk, obj, status, progress, label, signal) {
   progress.style.display = 'block';
@@ -47,260 +47,59 @@ async function streamingDownload(sdk, obj, status, progress, label, signal) {
   return { blob: new Blob(blobParts), elapsed };
 }
 
-// ── Shared helpers for parallel download functions ────────────────────
-
-// Creates a pool of Web Workers, each with its own SDK instance.
-// Returns { workers, readyPromises } — await readyPromises before assigning work.
-function createWorkerPool(numWorkers, objectUrl, overrideConfig) {
-  const config = {
-    type: 'init',
-    indexerUrl: overrideConfig?.indexerUrl || getUrl(),
-    keyHex: overrideConfig?.keyHex || getKeyHex(),
-    maxDownloads: getMaxDownloads(),
-    objectUrl,
-    logLevel: getLogLevel(),
-  };
-  const workers = [];
-  const readyPromises = [];
-  for (let i = 0; i < numWorkers; i++) {
-    const w = new Worker('./slab-download-worker.js', { type: 'module' });
-    const ready = new Promise((resolve, reject) => {
-      const handler = (e) => {
-        if (e.data.type === 'ready') { w.removeEventListener('message', handler); resolve(); }
-        if (e.data.type === 'error') { w.removeEventListener('message', handler); reject(new Error(e.data.message)); }
-      };
-      w.addEventListener('message', handler);
-    });
-    w.postMessage(config);
-    workers.push(w);
-    readyPromises.push(ready);
-  }
-  return { workers, readyPromises };
-}
-
-// Initializes workerStatusRef after workers are ready.
-function initWorkerStatus(workerStatusRef, workers) {
-  if (!workerStatusRef) return;
-  workerStatusRef.length = 0;
-  for (let i = 0; i < workers.length; i++) {
-    workerStatusRef.push({ currentSlab: null, completed: 0, bytes: 0, activeHost: null });
-  }
-}
-
-// Manages slab assignment, message handling, retries, and completion.
-//
-// options:
-//   workerStatusRef  — array for per-worker status tracking
-//   hostStatsRef     — Map for per-host stats
-//   slabLengths      — array of per-slab byte lengths (if null, uses data.byteLength)
-//   bytesCallback    — optional (totalBytes) => void
-//   onSlabData(idx, data) — called with each completed slab's ArrayBuffer
-//   onAllDone()      — called when all slabs complete; may return a Promise
-//   onFatalError(msg)— optional; called on unrecoverable slab error
-//   isCancelled()    — optional; returns boolean (for SW cancel support)
-function runSlabDownload(workers, slabCount, progress, options) {
-  const {
-    workerStatusRef, hostStatsRef, slabLengths,
-    bytesCallback, onSlabData, onAllDone, onFatalError, isCancelled,
-  } = options;
-
-  let nextSlab = 0;
-  let completedSlabs = 0;
-  let bytesDownloaded = 0;
-  const slabRetryCounts = new Map();
-  const maxSlabRetries = 3;
-
-  return new Promise((resolve, reject) => {
-    let rejected = false;
-    const workerIndexMap = new Map();
-
-    function assignWork(worker) {
-      if (nextSlab >= slabCount || rejected) return;
-      if (isCancelled && isCancelled()) return;
-      const idx = nextSlab++;
-      const wi = workerIndexMap.get(worker);
-      if (wi !== undefined && workerStatusRef) workerStatusRef[wi].currentSlab = idx;
-      worker.postMessage({ type: 'download-slab', slabIndex: idx });
-    }
-
-    for (let i = 0; i < workers.length; i++) {
-      const w = workers[i];
-      workerIndexMap.set(w, i);
-      w.onmessage = (e) => {
-        if (rejected) return;
-        if (isCancelled && isCancelled()) return;
-
-        if (e.data.type === 'host-active') {
-          const host = e.data.host;
-          const key = host.publicKey;
-          const wi = workerIndexMap.get(w);
-          if (wi !== undefined && workerStatusRef) workerStatusRef[wi].activeHost = key;
-          if (hostStatsRef) {
-            const t = performance.now();
-            if (!hostStatsRef.has(key)) hostStatsRef.set(key, { host, sectors: 0, firstSeen: t, lastSeen: t });
-            const hs = hostStatsRef.get(key);
-            hs.sectors++;
-            hs.lastSeen = t;
-          }
-          return;
-        }
-
-        if (e.data.type === 'slab-data') {
-          const idx = e.data.slabIndex;
-          const wi = workerIndexMap.get(w);
-          const slabBytes = slabLengths ? slabLengths[idx] : e.data.data.byteLength;
-          if (wi !== undefined && workerStatusRef) {
-            workerStatusRef[wi].completed++;
-            workerStatusRef[wi].bytes += slabBytes;
-            workerStatusRef[wi].currentSlab = null;
-            workerStatusRef[wi].activeHost = null;
-          }
-          onSlabData(idx, e.data.data);
-          completedSlabs++;
-          bytesDownloaded += slabBytes;
-          if (bytesCallback) bytesCallback(bytesDownloaded);
-
-          progress.max = slabCount;
-          progress.value = completedSlabs;
-
-          if (completedSlabs === slabCount) {
-            workers.forEach(w => w.terminate());
-            progress.value = progress.max;
-            Promise.resolve(onAllDone()).then(resolve, reject);
-          } else {
-            assignWork(w);
-          }
-        }
-
-        if (e.data.type === 'slab-error') {
-          const idx = e.data.slabIndex;
-          const retries = (slabRetryCounts.get(idx) || 0) + 1;
-          slabRetryCounts.set(idx, retries);
-          if (retries <= maxSlabRetries) {
-            const delay = 3000 * retries + Math.random() * 2000;
-            console.warn(`Slab ${idx} failed (attempt ${retries}/${maxSlabRetries}), re-queuing in ${(delay/1000).toFixed(1)}s...`);
-            const wi = workerIndexMap.get(w);
-            if (wi !== undefined && workerStatusRef) workerStatusRef[wi].currentSlab = null;
-            setTimeout(() => {
-              if (rejected) return;
-              if (isCancelled && isCancelled()) return;
-              const wi = workerIndexMap.get(w);
-              if (wi !== undefined && workerStatusRef) workerStatusRef[wi].currentSlab = idx;
-              w.postMessage({ type: 'download-slab', slabIndex: idx });
-            }, delay);
-          } else {
-            rejected = true;
-            if (onFatalError) onFatalError(e.data.message);
-            workers.forEach(w => w.terminate());
-            reject(new Error(`Slab ${idx}: ${e.data.message} (after ${retries} attempts)`));
-          }
-        }
-      };
-      assignWork(w);
-    }
-  });
-}
-
-// Parallel slab download — spawns a pool of Web Workers, each with its own
-// SDK instance and thread, to download slabs in true parallelism.
-// Falls back to streamingDownload for files with <= 2 slabs.
-async function parallelDownload(objectUrl, status, progress, label, numWorkers, workerStatusRef, hostStatsRef, signal) {
-  numWorkers = numWorkers || getDownloadWorkers();
+// Download an object through the SDK's built-in parallel shard fetching.
+// The multi-worker Web Worker pool is kept around (see parallelDownloadToDisk)
+// for the write-to-disk path, but is disabled for in-memory downloads —
+// multiple SDK instances compete for Chrome's 64 WebTransport session limit
+// and the SDK already parallelises shards internally.
+async function parallelDownload(objectUrl, status, progress, label, _numWorkers, _workerStatusRef, _hostStatsRef, signal) {
   progress.style.display = 'block';
 
   const noopStatus = { set textContent(_) {}, set innerHTML(_) {} };
   const primarySdk = await connectSdk(noopStatus);
   if (!primarySdk) return null;
-  const resolved = await resolveObject(objectUrl, primarySdk);
-  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
+  const { sdk, obj, fallback } = await resolveObject(objectUrl, primarySdk);
   if (fallback) status.textContent = `Found on fallback indexer: ${fallback}`;
-  const slabCount = obj.slabs().length;
-  const totalSize = obj.size();
-  progress.max = slabCount;
+  progress.max = obj.slabs().length;
 
-  // Use single-SDK streaming download for all files. Multi-worker parallel
-  // download is disabled until benchmarked — multiple SDK instances compete
-  // for Chrome's 64 WebTransport session limit, causing connection failures.
-  // The SDK already downloads shards in parallel internally.
   return streamingDownload(sdk, obj, status, progress, label, signal);
-
-  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
-  const actualWorkers = Math.min(numWorkers, slabCount);
-  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl, workerConfig);
-  await Promise.all(readyPromises);
-  initWorkerStatus(workerStatusRef, workers);
-
-  const downloadStart = performance.now();
-  const slabData = new Array(slabCount);
-
-  return runSlabDownload(workers, slabCount, progress, {
-    workerStatusRef, hostStatsRef,
-    onSlabData: (idx, data) => { slabData[idx] = data; },
-    onAllDone: () => {
-      const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
-      return { blob: new Blob(slabData), elapsed, size: totalSize };
-    },
-  });
 }
 
-// Parallel slab download to disk via File System Access API.
-// Writes slabs to a FileSystemWritableStream in order as they complete.
-async function parallelDownloadToDisk(objectUrl, writable, status, progress, bytesCallback, numWorkers, workerStatusRef, hostStatsRef) {
-  numWorkers = numWorkers || getDownloadWorkers();
-
+// Stream an object to a writable destination via the SDK's built-in
+// parallel shard download. `writable` is anything with an `async write(bytes)`
+// method — a FileSystemWritableStream from `showSaveFilePicker`, or a
+// CRC-tracking proxy from the ZIP builder. `bytesCallback(totalBytes)`
+// is invoked after each chunk for UI updates.
+async function parallelDownloadToDisk(objectUrl, writable, status, progress, bytesCallback, _numWorkers, _workerStatusRef, _hostStatsRef) {
   const noopStatus = { set textContent(_) {}, set innerHTML(_) {} };
   const primarySdk = await connectSdk(noopStatus);
   if (!primarySdk) return null;
 
-  const resolved = await resolveObject(objectUrl, primarySdk);
-  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
-  const slabs = obj.slabs();
-  const slabCount = slabs.length;
-  const slabLengths = slabs.map(s => s.length);
-  const totalSize = obj.size();
-  progress.max = slabCount;
+  const { sdk, obj } = await resolveObject(objectUrl, primarySdk);
+  const totalSize = Number(obj.size());
+  progress.max = totalSize || 1;
+  progress.value = 0;
 
-  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
-  const actualWorkers = Math.min(numWorkers, slabCount);
-  const { workers, readyPromises } = createWorkerPool(actualWorkers, objectUrl, workerConfig);
-  await Promise.all(readyPromises);
-  initWorkerStatus(workerStatusRef, workers);
-
+  const reader = sdk.download(obj).getReader();
   const downloadStart = performance.now();
-  let nextSlabToWrite = 0;
-  const pendingSlabs = new Map();
-  let flushDone = Promise.resolve();
-  let flushing = false;
-  let writeError = null;
-
-  function tryFlush() {
-    if (flushing || writeError) return;
-    flushing = true;
-    flushDone = (async () => {
-      try {
-        while (pendingSlabs.has(nextSlabToWrite)) {
-          const data = pendingSlabs.get(nextSlabToWrite);
-          await writable.write(new Uint8Array(data));
-          pendingSlabs.delete(nextSlabToWrite);
-          nextSlabToWrite++;
-        }
-      } catch (e) {
-        writeError = e;
-        throw e;
-      } finally {
-        flushing = false;
-      }
-    })();
+  let bytesWritten = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+      await writable.write(bytes);
+      bytesWritten += bytes.length;
+      progress.value = bytesWritten;
+      if (bytesCallback) bytesCallback(bytesWritten);
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
   }
 
-  return runSlabDownload(workers, slabCount, progress, {
-    workerStatusRef, hostStatsRef, slabLengths, bytesCallback,
-    onSlabData: (idx, data) => { pendingSlabs.set(idx, data); tryFlush(); },
-    onAllDone: () => flushDone.then(() => {
-      const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
-      return { elapsed, size: totalSize };
-    }),
-  });
+  const elapsed = ((performance.now() - downloadStart) / 1000).toFixed(1);
+  return { elapsed, size: totalSize };
 }
 
 // Check if the download streaming Service Worker is ready
@@ -320,14 +119,13 @@ async function getActiveServiceWorker() {
   }
 }
 
-// Parallel slab download via Service Worker streaming.
-// Pushes ordered slab data through a MessagePort to the SW, which
-// responds to a synthetic fetch with a ReadableStream — giving the
-// browser a normal streaming download with download-bar progress.
-async function parallelDownloadViaSW(objectUrl, filename, size, status, progress, bytesCallback, numWorkers, workerStatusRef, onMetadata, hostStatsRef) {
-  numWorkers = numWorkers || getDownloadWorkers();
-
-  // Trigger the browser download immediately — before any SDK connection.
+// Streaming download via Service Worker. The SW intercepts a synthetic
+// /_download/<uuid> fetch and serves a ReadableStream that we feed
+// chunk-by-chunk — giving the browser a native download entry with
+// progress bar. We pull bytes straight from sdk.download(obj) and post
+// each chunk across. Unused `numWorkers` / `workerStatusRef` / `hostStatsRef`
+// params stay for callsite compatibility.
+async function parallelDownloadViaSW(objectUrl, filename, size, status, progress, bytesCallback, _numWorkers, _workerStatusRef, onMetadata, _hostStatsRef) {
   const uuid = crypto.randomUUID();
   const sw = await getActiveServiceWorker();
   sw.postMessage({ type: 'start-download', uuid, filename, size: size || 0 });
@@ -359,61 +157,46 @@ async function parallelDownloadViaSW(objectUrl, filename, size, status, progress
   }
 
   if (cancelled) { cleanup(); return null; }
-  const resolved = await resolveObject(objectUrl, primarySdk);
-  const { sdk, obj, fallback, indexerUrl, keyHex } = resolved;
-  const slabs = obj.slabs();
-  const slabCount = slabs.length;
-  const slabLengths = slabs.map(s => s.length);
-  const totalSize = obj.size();
+  const { sdk, obj } = await resolveObject(objectUrl, primarySdk);
+  const totalSize = Number(obj.size());
+  if (onMetadata) onMetadata({ size: totalSize, slabCount: obj.slabs().length });
+  progress.max = totalSize || 1;
+  progress.value = 0;
 
-  const workerConfig = fallback ? { indexerUrl, keyHex } : null;
-  const { workers, readyPromises } = createWorkerPool(numWorkers, objectUrl, workerConfig);
-  await Promise.all(readyPromises);
-  progress.max = slabCount;
-
-  if (onMetadata) onMetadata({ size: totalSize, slabCount });
-  if (cancelled) { workers.forEach(w => w.terminate()); cleanup(); return null; }
-
-  // Trim excess workers if fewer slabs than workers
-  while (workers.length > Math.min(numWorkers, slabCount)) {
-    workers.pop().terminate();
-  }
-  initWorkerStatus(workerStatusRef, workers);
-
-  let nextSlabToWrite = 0;
-  const pendingSlabs = new Map();
-
-  function tryFlush() {
-    while (pendingSlabs.has(nextSlabToWrite)) {
-      const data = pendingSlabs.get(nextSlabToWrite);
-      pendingSlabs.delete(nextSlabToWrite);
-      sw.postMessage({ type: 'download-chunk', uuid, data }, [data]);
-      nextSlabToWrite++;
+  const reader = sdk.download(obj).getReader();
+  let bytesWritten = 0;
+  try {
+    for (;;) {
+      if (cancelled) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      // Hand the chunk to the SW. Transfer the buffer so no copy is made.
+      const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+      const buf = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      sw.postMessage({ type: 'download-chunk', uuid, data: buf }, [buf]);
+      bytesWritten += bytes.length;
+      progress.value = bytesWritten;
+      if (bytesCallback) bytesCallback(bytesWritten);
     }
-  }
-
-  return runSlabDownload(workers, slabCount, progress, {
-    workerStatusRef, hostStatsRef, slabLengths, bytesCallback,
-    isCancelled: () => cancelled,
-    onSlabData: (idx, data) => { pendingSlabs.set(idx, data); tryFlush(); },
-    onAllDone: () => {
+    if (cancelled) {
+      sw.postMessage({ type: 'download-error', uuid, error: 'cancelled' });
+    } else {
       sw.postMessage({ type: 'download-end', uuid });
-      cleanup();
-      return { size: totalSize };
-    },
-    onFatalError: (msg) => {
-      sw.postMessage({ type: 'download-error', uuid, error: msg });
-      cleanup();
-    },
-  });
+    }
+  } catch (e) {
+    sw.postMessage({ type: 'download-error', uuid, error: e.message || String(e) });
+    throw e;
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+    cleanup();
+  }
+  return { size: totalSize };
 }
 
 
 export {
   streamingDownload,
-  createWorkerPool,
-  initWorkerStatus,
-  runSlabDownload,
   parallelDownload,
   parallelDownloadToDisk,
   getActiveServiceWorker,

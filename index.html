@@ -7,10 +7,28 @@
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'self'; connect-src 'self' blob: https: http:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src blob: http://localhost:* http://127.0.0.1:* https://sandbox.sialo.io; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self';">
   <title>Sialo Browser</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
+  <!-- Safari check runs before any module scripts. If app.js fails to
+       load (Safari 26 wasm-streams bug, or any other import failure)
+       the module never executes, so we can't rely on its
+       DOMContentLoaded listener to show the banner. -->
+  <script>
+    (function () {
+      var ua = navigator.userAgent;
+      var isSafari = /WebKit/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|EdgiOS|Firefox|FxiOS|Android/i.test(ua);
+      if (!isSafari) return;
+      var warning = document.createElement('div');
+      warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
+      warning.innerHTML = '⚠️ Safari is not supported. Downloads will fail due to a WebKit streams bug.<br>Please use Chrome, Edge, or Firefox.';
+      if (document.body) document.body.prepend(warning);
+      else document.addEventListener('DOMContentLoaded', function () { document.body.prepend(warning); });
+    })();
+  </script>
+
   <div id="loading">Loading WASM module...</div>
 
   <div id="app">
@@ -36,10 +54,6 @@
           Site</button>
         <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span>
           Download</button>
-        <hr class="gear-menu-sep">
-        <div class="gear-menu-header">Share</div>
-        <button class="gear-menu-item" data-panel="share"><span class="gear-menu-icon">&#128279;</span> Share
-          Object</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Blockchain</div>
         <button class="gear-menu-item" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span>
@@ -197,14 +211,14 @@
             <label class="label" for="cfg-url">Indexer URL</label>
             <input id="cfg-url" type="text" placeholder="https://indexer.example.com" style="margin-bottom:0.5rem" />
             <label class="label" for="cfg-key">App Key (hex seed)</label>
-            <div style="position:relative; margin-bottom:0.5rem;">
+            <form onsubmit="return false" autocomplete="off" style="position:relative; margin-bottom:0.5rem;">
               <input id="cfg-key" type="password" placeholder="e.g. ab12cd34..."
                 autocomplete="off" data-1p-ignore="true" data-lpignore="true" data-bwignore="true"
                 style="width:100%; padding-right:2.5rem;" />
               <button id="cfg-key-toggle" type="button"
                 style="position:absolute; right:4px; top:50%; transform:translateY(-50%); background:none; border:none; color:#888; cursor:pointer; font-size:0.8rem; padding:2px 6px;"
                 title="Show/hide key">show</button>
-            </div>
+            </form>
           </div><!-- /panel-section: Configuration -->
 
           <div class="panel-section">
@@ -255,9 +269,6 @@
         <div class="internal-page-content">
           <div class="panel-section" id="account-dashboard">
             <h2>Account Dashboard</h2>
-            <div class="row" style="margin-bottom:1rem;">
-              <button id="btn-refresh-account">Load Account Data</button>
-            </div>
 
             <!-- Storage Usage Bar -->
             <div style="margin-bottom:1.5rem;">
@@ -333,67 +344,6 @@
               </div>
             </div>
 
-            <!-- Host Balances -->
-            <div style="margin-top:1.5rem;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
-                <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Host Balances</h3>
-                <button id="btn-check-balances"
-                  style="padding:0.4rem 0.8rem; background:#3b82f6; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.8rem;">
-                  Check Balances
-                </button>
-              </div>
-              <!-- Summary cards -->
-              <div id="host-balance-summary" style="display:none; margin-bottom:1rem;">
-                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:0.75rem;">
-                  <div
-                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Funded</div>
-                    <div id="hosts-funded-count" style="font-size:1.5rem; font-weight:600; color:#10b981;">-</div>
-                  </div>
-                  <div
-                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Unfunded</div>
-                    <div id="hosts-unfunded-count" style="font-size:1.5rem; font-weight:600; color:#f59e0b;">-</div>
-                  </div>
-                  <div
-                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Errors</div>
-                    <div id="hosts-error-count" style="font-size:1.5rem; font-weight:600; color:#ef4444;">-</div>
-                  </div>
-                  <div
-                    style="background:#0a0a0a; padding:1rem; border-radius:6px; border:1px solid #222; text-align:center;">
-                    <div style="color:#888; font-size:0.75rem; margin-bottom:0.25rem;">Total Download</div>
-                    <div id="hosts-total-download" style="font-size:1.5rem; font-weight:600; color:#38bdf8;">-</div>
-                  </div>
-                </div>
-              </div>
-              <!-- Host table -->
-              <div id="host-balance-table"
-                style="display:none; background:#0a0a0a; border-radius:6px; border:1px solid #222; overflow:hidden; max-height:400px; overflow-y:auto;">
-                <table style="width:100%; border-collapse:collapse; font-size:0.8rem;">
-                  <thead>
-                    <tr style="background:#111; position:sticky; top:0; z-index:1;">
-                      <th
-                        style="padding:0.6rem 0.75rem; text-align:left; color:#888; font-weight:500; border-bottom:1px solid #222;">
-                        Host</th>
-                      <th
-                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
-                        Balance (SC)</th>
-                      <th
-                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
-                        Download Left</th>
-                      <th
-                        style="padding:0.6rem 0.75rem; text-align:right; color:#888; font-weight:500; border-bottom:1px solid #222;">
-                        Upload Left</th>
-                    </tr>
-                  </thead>
-                  <tbody id="host-balance-rows"></tbody>
-                </table>
-              </div>
-              <div id="host-balance-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
-            </div>
-
-            <div class="output" id="account-status" style="margin-top:1rem;"></div>
           </div><!-- /panel-section: Dashboard -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-dashboard -->
@@ -460,7 +410,26 @@
 
             <div id="uf-file-info" style="font-size:0.85rem; color:#888; margin-bottom:0.5rem;"></div>
 
-            <div class="output" id="uf-status" style="margin-top:0.75rem;"></div>
+            <!-- Post-upload result card. Hidden by default; populated on success. -->
+            <div id="uf-result"
+              style="display:none; margin-top:1rem; background:linear-gradient(135deg,#0f1a12 0%,#0a0a0a 100%); border:1px solid #164229; border-radius:10px; padding:1rem 1.25rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                <span style="display:inline-flex; width:1.5rem; height:1.5rem; border-radius:999px; background:#10b981; color:#051a11; align-items:center; justify-content:center; font-size:0.9rem; font-weight:700;">✓</span>
+                <span style="font-weight:600; color:#d1fae5;">Pinned</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.5rem; font-size:0.9rem;">
+                <div style="min-width:0; flex:1;">
+                  <div id="uf-result-name" style="font-weight:500; color:#e2e8f0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+                  <div style="color:#888; font-size:0.8rem;">
+                    <span id="uf-result-size"></span> · uploaded in <span id="uf-result-elapsed"></span>
+                  </div>
+                </div>
+              </div>
+              <div style="font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:#6b7280; margin-top:0.5rem; margin-bottom:0.25rem;">Object ID</div>
+              <div id="uf-result-objectid"
+                style="font-family:var(--font-mono,monospace); font-size:0.8rem; color:#60a5fa; word-break:break-all; background:#0a0f14; border:1px solid #1e2a3a; border-radius:6px; padding:0.5rem 0.625rem; cursor:pointer;"
+                title="Click to copy"></div>
+            </div>
           </div><!-- /panel-section: Upload File -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-file -->
@@ -475,6 +444,23 @@
               its own Sia object; a manifest mapping path &rarr; object ID is uploaded last.
               The manifest ID is your <code>sia-site://</code> URL.
             </p>
+
+            <!-- Inner share URL validity — baked into the manifest at upload
+                 time. Determines how long viewers can resolve the site's
+                 files from any account. Not editable after upload. -->
+            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem; font-size:0.85rem;">
+              <label for="us-validity-num" style="color:#888;">Share for:</label>
+              <input id="us-validity-num" type="number" value="100" min="1"
+                style="width:5rem; padding:0.35rem 0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px;" />
+              <select id="us-validity-unit"
+                style="padding:0.35rem 0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px;">
+                <option value="3600000">hours</option>
+                <option value="86400000">days</option>
+                <option value="604800000">weeks</option>
+                <option value="2592000000">months (30d)</option>
+                <option value="31536000000" selected>years</option>
+              </select>
+            </div>
 
             <!-- Folder selection + info card -->
             <div style="display:flex; gap:1rem; margin-bottom:1rem;">
@@ -516,10 +502,6 @@
               <div id="us-files-list" style="max-height:240px; overflow-y:auto; padding:0.5rem 0.75rem; font-family:var(--font-mono); font-size:0.75rem; color:#999;"></div>
             </details>
 
-            <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-              <button id="us-upload-btn" disabled>Upload Site</button>
-            </div>
-
             <!-- Result card (shown after successful upload) -->
             <div id="us-result"
               style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid rgba(96,165,250,0.3); border-radius:8px; padding:1rem;">
@@ -536,8 +518,6 @@
                 <button id="us-copy-btn">Copy URL</button>
               </div>
             </div>
-
-            <div class="output" id="us-status" style="margin-top:0.75rem;"></div>
           </div><!-- /panel-section: Upload Site -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-site -->
@@ -554,7 +534,6 @@
             <div class="row">
               <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
               <button id="btn-download">Download</button>
-              <button id="btn-download-simple">Download ( single-threaded )</button>
             </div>
             <progress id="dl-progress" max="100" value="0" style="display:none"></progress>
             <div class="output" id="dl-status"></div>
@@ -569,14 +548,34 @@
             <h2>My Objects</h2>
             <label class="label">Active Indexer Profile</label>
             <select id="objects-profile-select" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
-            <div class="row">
-              <button id="btn-list-objects">Refresh List</button>
-              <input id="list-limit" type="number" value="50" min="1" max="1000" style="width:5rem"
-                placeholder="Limit" />
+            <div class="row" style="align-items:center; gap:0.75rem;">
+              <button id="btn-list-objects">Refresh</button>
+              <button id="btn-download-zip" style="padding:0.4rem 0.75rem; font-size:0.85rem; background:#3b82f6; color:white;" disabled>Download Selected as ZIP</button>
+              <span id="zip-selected-count" style="font-size:0.8rem; color:#888;">0 selected</span>
+              <span id="zip-status" style="font-size:0.8rem; color:#888;"></span>
             </div>
-            <div class="output" id="list-status"></div>
-            <div id="objects-list" style="margin-top:1rem; max-height:none; overflow-y:visible;">
-              <!-- Objects will be displayed here -->
+            <div id="objects-list-scroll" style="margin-top:1rem; max-height:60vh; overflow-y:auto; border:1px solid #222; border-radius:6px;">
+              <div id="objects-list"><!-- Objects will be displayed here --></div>
+            </div>
+            <div id="objects-pager" style="display:none; margin-top:0.5rem; justify-content:space-between; align-items:center; gap:0.5rem; font-size:0.85rem; color:#aaa;">
+              <div style="display:flex; align-items:center; gap:0.75rem;">
+                <span id="objects-page-info">—</span>
+                <label style="font-size:0.85rem; color:#aaa;">Per page
+                  <select id="list-page-size"
+                    style="margin-left:0.25rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.25rem;">
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                  </select>
+                </label>
+              </div>
+              <div style="display:flex; gap:0.25rem;">
+                <button id="objects-page-first" style="padding:0.25rem 0.5rem;">« First</button>
+                <button id="objects-page-prev"  style="padding:0.25rem 0.5rem;">‹ Prev</button>
+                <button id="objects-page-next"  style="padding:0.25rem 0.5rem;">Next ›</button>
+                <button id="objects-page-last"  style="padding:0.25rem 0.5rem;">Last »</button>
+              </div>
             </div>
           </div><!-- /panel-section: My Objects -->
 
@@ -605,29 +604,6 @@
 
         </div><!-- /internal-page-content -->
       </div><!-- /panel-objects -->
-
-      <!-- Panel: Share Object -->
-      <div id="panel-share" class="viewport-panel internal-page" data-panel="share">
-        <div class="internal-page-content">
-          <div class="panel-section">
-            <h2>Share Object</h2>
-            <div class="label">Object ID (hex)</div>
-            <input id="share-object-id" type="text" placeholder="e.g. 0e90d697f504..." style="margin-bottom:0.5rem" />
-            <div class="label">Expires in</div>
-            <div class="row">
-              <input id="share-duration" type="number" value="24" min="1" style="width:5rem" />
-              <select id="share-unit"
-                style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.5rem;">
-                <option value="3600000">hours</option>
-                <option value="86400000" selected>days</option>
-                <option value="604800000">weeks</option>
-              </select>
-              <button id="btn-share">Generate Link</button>
-            </div>
-            <div class="output" id="share-status"></div>
-          </div><!-- /panel-section: Share -->
-        </div><!-- /internal-page-content -->
-      </div><!-- /panel-share -->
 
       <!-- Panel: History -->
       <div id="panel-history" class="viewport-panel internal-page" data-panel="history">
@@ -835,10 +811,13 @@
 
               <!-- Compact unlock UI (shown when saved seed exists) -->
               <div id="wallet-unlock-ui" style="display:none; margin-top:0.75rem;">
-                <div class="row" style="gap:0.5rem; align-items:center;">
-                  <input id="wallet-password-unlock" type="password" placeholder="Password" style="flex:1;">
-                  <button id="btn-wallet-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
-                </div>
+                <form onsubmit="return false" class="row" style="gap:0.5rem; align-items:center;">
+                  <input type="text" name="username" value="sialo-wallet" autocomplete="username"
+                    style="display:none;" aria-hidden="true" tabindex="-1">
+                  <input id="wallet-password-unlock" type="password" placeholder="Password"
+                    autocomplete="current-password" style="flex:1;">
+                  <button id="btn-wallet-unlock" type="button" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+                </form>
                 <div style="margin-top:0.4rem;">
                   <span id="btn-wallet-show-setup" style="color:#60a5fa; font-size:0.75rem; cursor:pointer;">New /
                     Import</span>
@@ -854,11 +833,14 @@
                     24-word</button>
                   <button id="btn-wallet-gen12" style="font-size:0.8rem; padding:0.3rem 0.6rem;">12-word</button>
                 </div>
-                <div class="row" style="margin-top:0.5rem; gap:0.5rem;">
-                  <input id="wallet-password" type="password" placeholder="Encryption password" style="flex:1;">
-                  <button id="btn-wallet-save" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Encrypt &amp;
+                <form onsubmit="return false" class="row" style="margin-top:0.5rem; gap:0.5rem;">
+                  <input type="text" name="username" value="sialo-wallet" autocomplete="username"
+                    style="display:none;" aria-hidden="true" tabindex="-1">
+                  <input id="wallet-password" type="password" placeholder="Encryption password"
+                    autocomplete="new-password" style="flex:1;">
+                  <button id="btn-wallet-save" type="button" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Encrypt &amp;
                     Save</button>
-                </div>
+                </form>
               </div>
 
               <!-- Active wallet controls (shown when unlocked) -->
@@ -1098,10 +1080,13 @@
               </p>
               <!-- Inline unlock (shown when wallet is locked) -->
               <div id="mfst-unlock-ui" style="display:none; margin-top:0.75rem;">
-                <div class="row" style="gap:0.5rem; align-items:center;">
-                  <input id="mfst-password" type="password" placeholder="Wallet password" style="flex:1;">
-                  <button id="btn-mfst-unlock" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
-                </div>
+                <form onsubmit="return false" class="row" style="gap:0.5rem; align-items:center;">
+                  <input type="text" name="username" value="sialo-wallet" autocomplete="username"
+                    style="display:none;" aria-hidden="true" tabindex="-1">
+                  <input id="mfst-password" type="password" placeholder="Wallet password"
+                    autocomplete="current-password" style="flex:1;">
+                  <button id="btn-mfst-unlock" type="button" style="font-size:0.8rem; padding:0.3rem 0.6rem;">Unlock</button>
+                </form>
                 <div id="mfst-unlock-hint" style="margin-top:0.4rem; font-size:0.75rem; color:#666;">Unlock your wallet
                   to use manifest pointers.</div>
               </div>

@@ -16,7 +16,6 @@ import {
 } from './tabs.js';
 import {
   streamingDownload, parallelDownload, parallelDownloadViaSW,
-  createWorkerPool, initWorkerStatus, runSlabDownload,
 } from './download.js';
 import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
@@ -144,6 +143,59 @@ window.addEventListener('message', (event) => {
     }
   }
 });
+
+// Parse a `sia-site://` URL into the resolvable form the SDK expects
+// (either a bare hex object ID or a full `sia://…` share URL) plus
+// the 64-char hex object ID for display. Accepts both:
+//   • sia-site://<hex>
+//   • sia-site://<host>/objects/<hex>/shared?…#encryption_key=…
+// Returns null for anything that doesn't match.
+function parseSiaSiteUrl(url) {
+  if (typeof url !== 'string' || !url.startsWith('sia-site://')) return null;
+  const rest = url.slice('sia-site://'.length).replace(/\/+$/, '');
+  if (/^[0-9a-fA-F]{64}$/.test(rest)) {
+    return { resolvable: rest, objectId: rest };
+  }
+  // Share-URL form. Convert back to `sia://<rest>` so resolveObject's
+  // existing sharedObject() path handles it.
+  const shareUrl = 'sia://' + rest;
+  const m = rest.match(/objects\/([0-9a-fA-F]{64})(?:\/|$)/);
+  return { resolvable: shareUrl, objectId: m ? m[1] : null };
+}
+
+// Save a Blob to disk, always asking the user for a filename first.
+// On Chrome/Edge this is `showSaveFilePicker` (full save-as dialog with
+// location + name). On Firefox/Safari we fall back to an inline
+// `prompt()` because those browsers quietly save to ~/Downloads
+// otherwise. Returns the final filename if saved, null if cancelled.
+async function saveBlobAsDownload(blob, suggestedName, mime, ext) {
+  if (window.showSaveFilePicker) {
+    try {
+      const opts = { suggestedName };
+      if (mime && ext) {
+        opts.types = [{ description: mime, accept: { [mime]: ['.' + ext] } }];
+      }
+      const handle = await window.showSaveFilePicker(opts);
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return handle.name || suggestedName;
+    } catch (e) {
+      if (e.name === 'AbortError') return null;
+      // fall through to the prompt fallback
+    }
+  }
+  const chosenName = window.prompt('Save file as:', suggestedName);
+  if (chosenName === null) return null;
+  const name = chosenName.trim() || suggestedName;
+  const a = document.createElement('a');
+  const objectUrl = URL.createObjectURL(blob);
+  a.href = objectUrl;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(objectUrl);
+  return name;
+}
 
 // Queue for sia:// resource requests — serialized to avoid re-entering the WASM tokio runtime.
 const _siaResourceQueue = [];
@@ -929,20 +981,25 @@ async function loadContentWithAutoDetect() {
 
   if (!iframe) { setLoadContentInProgress(false); return; }
 
-  // sia-site:// <manifestId> — decentralised multi-file hosting.
-  // Hand off to the service-worker bridge on the sandbox origin; the
-  // iframe's SW intercepts every fetch and resolves against the manifest.
+  // sia-site:// — decentralised multi-file hosting. The URL after the
+  // scheme is either:
+  //   • a bare 64-hex object ID                      →  sia-site://<hex>
+  //   • a share URL path (host/objects/…/shared?…)   →  sia-site://sia.storage/objects/<hex>/shared?…#encryption_key=…
+  // The share form is portable across accounts; we convert it back into
+  // a full sia:// URL and hand it to resolveObject, which already
+  // handles both.
   if (url.startsWith('sia-site://')) {
     try {
-      const manifestId = url.slice('sia-site://'.length).replace(/\/+$/, '');
-      if (!/^[0-9a-fA-F]+$/.test(manifestId)) throw new Error('invalid manifest id');
+      const parsed = parseSiaSiteUrl(url);
+      if (!parsed) throw new Error('invalid sia-site URL');
       iframe.style.display = 'block';
       videoContainer.style.display = 'none';
       setBrowserView(false);
       tab.isStreaming = false;
       status.textContent = 'Loading Sia site…';
-      loadSiaSiteIntoIframe(iframe, manifestId);
-      tab.label = 'Sia site: ' + manifestId.slice(0, 12) + '…';
+      loadSiaSiteIntoIframe(iframe, parsed.resolvable);
+      const shortId = (parsed.objectId || parsed.resolvable).slice(0, 12);
+      tab.label = 'Sia site: ' + shortId + '…';
       tab.contentLoaded = true;
       renderTabBar();
       if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'sia-site' });
@@ -1017,7 +1074,10 @@ async function loadContentWithAutoDetect() {
         tab.isStreaming = false;
         canvas.style.display = 'none';
         video.style.display = 'none';
-        video.src = '';
+        // removeAttribute instead of assigning '' — empty string triggers
+        // a load of an invalid URI and logs "Invalid URI" in Firefox.
+        video.removeAttribute('src');
+        video.load();
         iframe.src = viewerUrl;
         tab.label = 'Video: ' + (url.length > 20 ? url.substring(0, 20) + '...' : url);
         tab.contentLoaded = true;
@@ -1025,7 +1085,7 @@ async function loadContentWithAutoDetect() {
         const displayUrl = `Video (streaming): ${url}`;
         addToHistory(displayUrl, null, displayUrl, false, url, 'video');
         if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'video' });
-        status.innerHTML = '<span class="pass">Video player ready</span>';
+        status.innerHTML = '<span class="pass">Loading video…</span>';
         return;
       } catch (viewerErr) {
         console.error('[browser] video viewer setup failed, falling back to legacy pipelines:', viewerErr);
@@ -1149,6 +1209,17 @@ async function loadContentWithAutoDetect() {
       } else if (mimeType.startsWith('text/')) {
         fileType = 'text';
         typeLabel = 'Text';
+      } else if (
+        mimeType === 'application/zip' ||
+        mimeType === 'application/x-zip-compressed' ||
+        mimeType === 'application/x-7z-compressed' ||
+        mimeType === 'application/x-rar-compressed' ||
+        mimeType === 'application/x-tar' ||
+        mimeType === 'application/gzip' ||
+        mimeType === 'application/x-bzip2'
+      ) {
+        fileType = 'archive';
+        typeLabel = detectedType.ext.toUpperCase();
       }
 
       status.textContent = `Detected: ${mimeType} (${detectedType.ext})`;
@@ -1233,8 +1304,29 @@ async function loadContentWithAutoDetect() {
       }
       const blob = new Blob([html], { type: 'text/html' });
       blobUrl = URL.createObjectURL(blob);
+    } else if (fileType === 'archive' || !detectedType) {
+      // Archives (.zip, .7z, .rar, .tar, .gz, .bz2) and unknown binary
+      // formats aren't viewable — prompt the user to save the file to
+      // disk instead of silently loading a binary blob into the iframe.
+      const ext = detectedType?.ext ? '.' + detectedType.ext : '.bin';
+      const fallbackName = (url.match(/[0-9a-fA-F]{16,}/)?.[0] || 'object').slice(0, 16) + ext;
+      const savedName = await saveBlobAsDownload(
+        new Blob([downloadedBlob], { type: mimeType }),
+        fallbackName,
+        detectedType?.mime || 'application/octet-stream',
+        detectedType?.ext,
+      );
+      status.innerHTML =
+        `Size: ${formatSize(size)}\nDetected: ${_esc(mimeType)}\nLoaded in ${downloadElapsed}s\n` +
+        (savedName
+          ? `<span class="pass">✓ Saved as ${_esc(savedName)}</span>`
+          : `<span style="color:#888;">Save cancelled</span>`);
+      const displayUrl = `${typeLabel}: ${url}`;
+      addToHistory(displayUrl, null, displayUrl, false, url, fileType);
+      if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: displayUrl, fileType });
+      return;
     } else {
-      // Unknown types: load directly
+      // Unknown viewable types: load directly in the iframe.
       blobUrl = URL.createObjectURL(new Blob([downloadedBlob], { type: mimeType }));
     }
 

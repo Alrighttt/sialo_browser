@@ -1,10 +1,16 @@
 import { _dbg, _esc, formatSize } from './utils.js';
 import { connectSdk, getUrl, getKeyHex } from './config.js';
+import { getActiveTab, tabStatusProxy } from './tabs.js';
+
+// Bottom-right status bar proxy for the currently-active tab.
+function panelStatus() {
+  return tabStatusProxy(getActiveTab()).status;
+}
 
 export function initAccountUI() {
   // -- Account Dashboard --
   async function loadAccountDashboard() {
-    const status = document.getElementById('account-status');
+    const status = panelStatus();
     const dashboard = document.getElementById('account-dashboard');
 
     try {
@@ -19,9 +25,18 @@ export function initAccountUI() {
       const accountData = await sdk.account();
       _dbg('Account data:', accountData);
 
-      // Fetch object count
-      const objects = await sdk.objectEvents(null, null, 10000);
-      const objectCount = objects.filter(o => !o.deleted).length;
+      // Count non-deleted objects. The indexer caps `objectEvents` at 500
+      // per page, so page with a cursor until we see a short page.
+      const PAGE_SIZE = 500;
+      let objectCount = 0;
+      let cursor = null;
+      for (;;) {
+        const page = await sdk.objectEvents(cursor, PAGE_SIZE);
+        for (const ev of page) if (!ev.deleted) objectCount++;
+        if (page.length < PAGE_SIZE) break;
+        const last = page[page.length - 1];
+        cursor = { id: last.id, after: last.updatedAt };
+      }
 
       // Calculate storage metrics
       const usedBytes = accountData.pinnedData;
@@ -52,7 +67,7 @@ export function initAccountUI() {
       document.getElementById('account-capacity-percent').textContent = `${usedPercent.toFixed(1)}%`;
 
       // Update account details
-      document.getElementById('account-app-name').textContent = accountData.appDescription || 'Unknown';
+      document.getElementById('account-app-name').textContent = accountData.app?.name || 'Unknown';
 
       const accountKey = accountData.accountKey;
       const shortKey = accountKey.substring(0, 24) + '...';
@@ -61,8 +76,7 @@ export function initAccountUI() {
       keyEl.title = accountKey; // Full key in tooltip
 
       // Format last used time
-      // lastUsed not available in new API — show as unknown
-      const lastUsed = new Date();
+      const lastUsed = accountData.lastUsed instanceof Date ? accountData.lastUsed : new Date(accountData.lastUsed);
       const now = new Date();
       const diffMs = now - lastUsed;
       const diffMins = Math.floor(diffMs / 60000);
@@ -91,157 +105,31 @@ export function initAccountUI() {
     }
   }
 
-  document.getElementById('btn-refresh-account').addEventListener('click', loadAccountDashboard);
+  // Auto-load once, then refresh every 30s while the dashboard is
+  // visible. The indexer call is cheap; we still skip it when the
+  // panel is hidden to avoid work nobody sees.
+  const panel = document.getElementById('panel-dashboard');
+  const isVisible = () =>
+    panel && panel.style.display !== 'none' && document.visibilityState !== 'hidden';
 
-  // -- Host Balances --
-  const SC_HASTINGS = 1000000000000000000000000n; // 10^24
-
-  function hastingsToSC(hastingsStr) {
-    if (!hastingsStr) return '0';
-    const h = BigInt(hastingsStr);
-    const whole = h / SC_HASTINGS;
-    const frac = h % SC_HASTINGS;
-    if (frac === 0n) return whole.toString();
-    // Show 4 decimal places
-    const fracStr = (frac * 10000n / SC_HASTINGS).toString().padStart(4, '0');
-    return `${whole}.${fracStr}`;
+  let loadInFlight = false;
+  async function refreshIfVisible() {
+    if (!isVisible() || loadInFlight) return;
+    loadInFlight = true;
+    try { await loadAccountDashboard(); } finally { loadInFlight = false; }
   }
 
-  function bandwidthRemaining(balanceStr, pricePerByteStr) {
-    if (!balanceStr || !pricePerByteStr) return null;
-    const balance = BigInt(balanceStr);
-    const price = BigInt(pricePerByteStr);
-    if (price === 0n) return null; // free / unknown
-    return Number(balance / price);
-  }
-
-  document.getElementById('btn-check-balances').addEventListener('click', async () => {
-    const btn = document.getElementById('btn-check-balances');
-    const statusEl = document.getElementById('host-balance-status');
-    const summaryEl = document.getElementById('host-balance-summary');
-    const tableEl = document.getElementById('host-balance-table');
-    const tbody = document.getElementById('host-balance-rows');
-
-    btn.disabled = true;
-    btn.textContent = 'Checking...';
-    statusEl.textContent = 'Connecting...';
-    summaryEl.style.display = 'none';
-    tableEl.style.display = 'none';
-    tbody.innerHTML = '';
-
-    try {
-      const sdk = await connectSdk(statusEl);
-      if (!sdk) { btn.disabled = false; btn.textContent = 'Check Balances'; return; }
-
-      // knownHosts() not yet available in sia_storage_wasm — use hosts() instead
-      const hostList = await sdk.hosts();
-      const hostKeys = hostList.map(h => h.publicKey);
-      const total = hostKeys.length;
-      let completed = 0, funded = 0, unfunded = 0, errored = 0;
-      let totalDownloadBytes = 0;
-
-      // Create placeholder rows for every host
-      const rowMap = new Map(); // hostKey -> <tr>
-      for (const hk of hostKeys) {
-        const shortKey = hk.substring(0, 16) + '...';
-        const tr = document.createElement('tr');
-        tr.style.borderBottom = '1px solid #1a1a1a';
-        tr.innerHTML = `
-          <td style="padding:0.5rem 0.75rem; font-family:monospace; color:#555;" title="${hk}">${shortKey}</td>
-          <td colspan="3" style="padding:0.5rem 0.75rem; color:#555; text-align:right;">querying...</td>`;
-        tbody.appendChild(tr);
-        rowMap.set(hk, tr);
-      }
-      tableEl.style.display = 'block';
-      summaryEl.style.display = 'block';
-      document.getElementById('hosts-funded-count').textContent = '0';
-      document.getElementById('hosts-unfunded-count').textContent = '0';
-      document.getElementById('hosts-error-count').textContent = '0';
-      document.getElementById('hosts-total-download').textContent = '-';
-      statusEl.textContent = `Querying 0 / ${total} hosts...`;
-
-      // Update a single row with results and re-sort the table
-      function applyResult(h) {
-        completed++;
-        const tr = rowMap.get(h.hostKey);
-        const shortKey = h.hostKey.substring(0, 16) + '...';
-        if (h.balanceError) {
-          errored++;
-          tr.dataset.sort = '2'; // errors last
-          tr.dataset.bal = '0';
-          tr.innerHTML = `
-            <td style="padding:0.5rem 0.75rem; font-family:monospace; color:#888;" title="${h.hostKey}">${shortKey}</td>
-            <td colspan="3" style="padding:0.5rem 0.75rem; color:#ef4444; text-align:right;">${h.balanceError}</td>`;
-        } else {
-          const bal = BigInt(h.balance);
-          if (bal === 0n) { unfunded++; tr.dataset.sort = '1'; } else { funded++; tr.dataset.sort = '0'; }
-          tr.dataset.bal = h.balance;
-          const sc = hastingsToSC(h.balance);
-          const dl = bandwidthRemaining(h.balance, h.egressPrice);
-          const ul = bandwidthRemaining(h.balance, h.ingressPrice);
-          if (dl !== null) totalDownloadBytes += dl;
-          const balColor = bal > 0n ? '#e0e0e0' : '#666';
-          tr.innerHTML = `
-            <td style="padding:0.5rem 0.75rem; font-family:monospace; color:#888;" title="${h.hostKey}">${shortKey}</td>
-            <td style="padding:0.5rem 0.75rem; text-align:right; color:${balColor}; font-family:monospace;">${sc} SC</td>
-            <td style="padding:0.5rem 0.75rem; text-align:right; color:#38bdf8; font-family:monospace;">${dl !== null ? formatSize(dl) : '-'}</td>
-            <td style="padding:0.5rem 0.75rem; text-align:right; color:#a78bfa; font-family:monospace;">${ul !== null ? formatSize(ul) : '-'}</td>`;
-        }
-        // Update summary
-        document.getElementById('hosts-funded-count').textContent = funded;
-        document.getElementById('hosts-unfunded-count').textContent = unfunded;
-        document.getElementById('hosts-error-count').textContent = errored;
-        document.getElementById('hosts-total-download').textContent = totalDownloadBytes > 0 ? formatSize(totalDownloadBytes) : '-';
-        statusEl.textContent = `Queried ${completed} / ${total} hosts...`;
-
-        // Re-sort: completed rows on top (funded > unfunded > error by balance desc), pending at bottom
-        const rows = Array.from(tbody.children);
-        rows.sort((a, b) => {
-          const sa = a.dataset.sort ?? '3'; // pending = 3
-          const sb = b.dataset.sort ?? '3';
-          if (sa !== sb) return sa.localeCompare(sb);
-          const ba = BigInt(a.dataset.bal || '0');
-          const bb = BigInt(b.dataset.bal || '0');
-          return ba > bb ? -1 : ba < bb ? 1 : 0;
-        });
-        for (const r of rows) tbody.appendChild(r);
-      }
-
-      // Query hosts with concurrency limit of 8
-      const CONCURRENCY = 8;
-      let idx = 0;
-      async function next() {
-        while (idx < hostKeys.length) {
-          const hk = hostKeys[idx++];
-          try {
-            const balance = await sdk.hostAccountBalance(hk);
-            const h = { hostKey: hk, balance };
-            applyResult(h);
-          } catch (e) {
-            applyResult({ hostKey: hk, balanceError: e.message || String(e) });
-          }
-        }
-      }
-      const workers = [];
-      for (let i = 0; i < Math.min(CONCURRENCY, hostKeys.length); i++) {
-        workers.push(next());
-      }
-      await Promise.all(workers);
-
-      statusEl.innerHTML = `<span class="pass">Queried ${total} hosts</span>`;
-    } catch (e) {
-      console.error('Failed to check balances:', e);
-      statusEl.innerHTML = `<span class="fail">Failed: ${_esc(e.message)}</span>`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Check Balances';
-    }
-  });
+  refreshIfVisible();
+  setInterval(refreshIfVisible, 30_000);
+  // Catch panel becoming visible after a tab switch or tab-return from
+  // background — load immediately instead of waiting for the next tick.
+  document.addEventListener('visibilitychange', refreshIfVisible);
+  new MutationObserver(refreshIfVisible).observe(panel, { attributes: true, attributeFilter: ['style'] });
 
   // -- Prune Slabs --
   document.getElementById('btn-prune-slabs').addEventListener('click', async () => {
     const button = document.getElementById('btn-prune-slabs');
-    const status = document.getElementById('account-status');
+    const status = panelStatus();
     const originalText = button.textContent;
 
     // Confirmation dialog

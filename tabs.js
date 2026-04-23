@@ -14,7 +14,6 @@ export const PANEL_URLS = {
   'upload-site': 'sialo://upload/site',
   'download':    'sialo://download',
   'objects':     'sialo://objects',
-  'share':       'sialo://share',
   'history':     'sialo://history',
   'explorer':    'sialo://explorer',
   'wallet':      'sialo://wallet',
@@ -26,7 +25,7 @@ export const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([
 export const PANEL_TITLES = {
   'register': 'Register', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
   'upload-text': 'Upload Text', 'upload-site': 'Upload Site', 'download': 'Download', 'objects': 'My Objects',
-  'share': 'Share', 'history': 'History', 'explorer': 'Explorer',
+  'history': 'History', 'explorer': 'Explorer',
   'wallet': 'Wallet', 'manifest': 'Manifest', 'syncer-config': 'Syncer',
 };
 
@@ -105,9 +104,18 @@ export function createTab({ type, panelName, url, label }) {
     const iframe = document.createElement('iframe');
     iframe.className = 'viewport-panel';
     iframe.dataset.tabId = id;
-    iframe.style.cssText = 'border:none; background:white; display:none; width:100%; height:100%;';
+    // Background matches the app's dark theme so the iframe doesn't flash
+    // white while loading a new document (especially noticeable when the
+    // viewer/Sia-site bootstrap hasn't committed its own <body> yet).
+    iframe.style.cssText = 'border:none; background:#0a0a0a; display:none; width:100%; height:100%;';
     iframe.sandbox = 'allow-scripts';
     iframe.allowFullscreen = true;
+    // Delegate autoplay permission to the iframe so <video autoplay>
+    // inside the sandbox video viewer (and autoplaying assets inside
+    // sia-sites) can actually start without a synthetic user gesture.
+    // `allowFullscreen` above covers fullscreen; `allow` only needs
+    // autoplay here (Firefox rejects unknown names in the list).
+    iframe.allow = 'autoplay';
     document.getElementById('viewport').appendChild(iframe);
     tab.iframeEl = iframe;
   }
