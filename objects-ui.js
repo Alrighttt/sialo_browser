@@ -828,9 +828,17 @@ export function initObjectsUI() {
     status.innerHTML = `<span class="pass">✓ Copied ${_esc(shown)}</span>`;
   };
 
-  // Helper function to delete an object
+  // Helper function to delete an object. Manifest objects prompt the
+  // user to choose between deleting just the manifest (leaves all
+  // referenced file objects pinned) or the manifest plus every object
+  // the manifest's share URLs point at.
   window.deleteObjectById = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
+    const match = allObjects.find(o => o.id === objectId);
+    if (match && match.isManifest) {
+      promptDeleteManifest(objectId, shortId);
+      return;
+    }
 
     if (!confirm(`⚠️ Are you sure you want to delete object ${shortId}?\n\nThis action cannot be undone!`)) {
       return;
@@ -862,6 +870,147 @@ export function initObjectsUI() {
       }, 3000);
     }
   };
+
+  // Pick up the 64-hex object ID embedded in a manifest entry's sia://
+  // share URL (`sia://<host>/objects/<hex>/shared?...`). Returns null if
+  // the URL doesn't look like a share URL we can resolve locally.
+  function objectIdFromShareUrl(shareUrl) {
+    if (typeof shareUrl !== 'string') return null;
+    const m = shareUrl.match(/\/objects\/([0-9a-fA-F]{64})(?:\/|$)/);
+    return m ? m[1].toLowerCase() : null;
+  }
+
+  // Modal-based confirmation for manifest delete: either drop just the
+  // manifest JSON (leaving referenced objects pinned and individually
+  // reachable) or drop the manifest plus every object its share URLs
+  // name. Files that belong to other indexers (cross-indexer manifests)
+  // are reported but skipped — deleteObject on the primary indexer
+  // can't touch them.
+  function promptDeleteManifest(objectId, shortId) {
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.8); display: flex; align-items: center;
+      justify-content: center; z-index: 1000;
+    `;
+    modal.innerHTML = `
+      <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:520px; width:90%; border:1px solid #333;">
+        <h3 style="margin:0 0 1rem 0; color:#f87171;">⚠️ Delete Sia site</h3>
+        <p style="color:#888; margin-bottom:1rem;">Manifest: ${shortId}</p>
+        <p style="color:#ccc; font-size:0.9rem; margin-bottom:1.25rem;">
+          This object is a sia-site manifest. Choose how much to delete — both
+          options are permanent.
+        </p>
+        <div style="display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1rem;">
+          <button id="del-manifest-only" style="padding:0.75rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem; text-align:left;">
+            <div style="font-weight:600;">Delete manifest only</div>
+            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site entry. Referenced files stay pinned and reachable via their individual share URLs.</div>
+          </button>
+          <button id="del-manifest-all" style="padding:0.75rem; background:#dc2626; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem; text-align:left;">
+            <div style="font-weight:600;">Delete manifest + all referenced files</div>
+            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site and every file object it names. Any existing share URLs for those files will break.</div>
+          </button>
+        </div>
+        <button id="del-manifest-cancel" style="width:100%; padding:0.6rem; background:#333; color:#ccc; border:none; border-radius:4px; cursor:pointer; font-size:0.9rem;">Cancel</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const close = () => modal.remove();
+    modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+    modal.querySelector('#del-manifest-cancel').addEventListener('click', close);
+    modal.querySelector('#del-manifest-only').addEventListener('click', async () => {
+      close();
+      await deleteObjects([objectId], 'manifest');
+    });
+    modal.querySelector('#del-manifest-all').addEventListener('click', async () => {
+      close();
+      const status = panelStatus();
+      try {
+        status.innerHTML = '<span style="color:#f59e0b;">⏳ Reading manifest…</span>';
+        const sdk = await connectSdk(status);
+        if (!sdk) return;
+        const manifestObj = await sdk.object(objectId);
+        const bytes = await readStreamFully(sdk.download(manifestObj));
+        const parsed = JSON.parse(new TextDecoder().decode(bytes));
+        const files = (parsed && parsed.files && typeof parsed.files === 'object') ? parsed.files : null;
+        if (!files) {
+          status.innerHTML = '<span class="fail">Manifest has no files map — deleting manifest only.</span>';
+          await sdk.deleteObject(objectId);
+          setTimeout(() => document.getElementById('btn-list-objects').click(), 500);
+          return;
+        }
+        const ids = [];
+        const skipped = [];
+        for (const [path, shareUrl] of Object.entries(files)) {
+          const id = objectIdFromShareUrl(shareUrl);
+          if (id) ids.push(id);
+          else skipped.push(path);
+        }
+        if (ids.length === 0) {
+          status.innerHTML = '<span class="fail">No resolvable file object IDs in manifest — deleting manifest only.</span>';
+          await sdk.deleteObject(objectId);
+          setTimeout(() => document.getElementById('btn-list-objects').click(), 500);
+          return;
+        }
+        if (!confirm(
+          `Delete the manifest plus ${ids.length} referenced file${ids.length === 1 ? '' : 's'}?` +
+          (skipped.length ? `\n\n${skipped.length} entr${skipped.length === 1 ? 'y was' : 'ies were'} skipped (unrecognized share URL).` : '')
+        )) return;
+        ids.push(objectId);
+        await deleteObjects(ids, 'manifest + files');
+      } catch (e) {
+        status.innerHTML = `<span class="fail">Delete failed: ${_esc(e.message || String(e))}</span>`;
+      }
+    });
+  }
+
+  // Sequential delete with a status-bar progress counter. Sequential
+  // (rather than parallel) so the indexer doesn't get hit with 50
+  // concurrent DELETEs from one tab, and so a single failing object
+  // doesn't mask the rest of the run behind a rejected Promise.all.
+  async function deleteObjects(ids, label) {
+    const status = panelStatus();
+    try {
+      const sdk = await connectSdk(status);
+      if (!sdk) return;
+      let done = 0;
+      let failed = 0;
+      for (const id of ids) {
+        done++;
+        status.innerHTML = `<span style="color:#f59e0b;">⏳ Deleting ${done} / ${ids.length}…</span>`;
+        try {
+          await sdk.deleteObject(id);
+        } catch (e) {
+          failed++;
+          console.warn('deleteObject failed for', id, e);
+        }
+      }
+      if (failed === 0) {
+        status.innerHTML = `<span class="pass">✓ Deleted ${ids.length} object${ids.length === 1 ? '' : 's'} (${label}).</span>`;
+      } else {
+        status.innerHTML = `<span class="fail">Deleted ${ids.length - failed} / ${ids.length}; ${failed} failed.</span>`;
+      }
+      setTimeout(() => document.getElementById('btn-list-objects').click(), 500);
+    } catch (e) {
+      status.innerHTML = `<span class="fail">Delete failed: ${_esc(e.message || String(e))}</span>`;
+    }
+  }
+
+  async function readStreamFully(stream) {
+    const reader = stream.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.byteLength; }
+    return out;
+  }
 
 
   // Helper function to view an object in the browser. Objects flagged

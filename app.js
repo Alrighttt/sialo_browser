@@ -916,7 +916,7 @@ document.getElementById('tab-new').addEventListener('click', () => {
 });
 
 // Create initial tabs based on whether user has registered
-const homepageUrl = 'sia://app.sia.storage/objects/a7653b7c62bf0653f1c0ec025ee2857f1d8eb52cb29498b23693e434de73692a/shared?sv=2376599154&sc=nmS95u9mPXfFkjj8fkVfCw28mgyVgq9IQOUQYBykQNs%3D&ss=Jd7rlRzhEspDkp7Tn0ADdCs3yoyi5tCo5PBdkOQyBjcuyJ6OrifL7OXSnF5Dob2yUCTW6QGVV_2NFCW3d_yRAA%3D%3D#encryption_key=__jJLf9TDtrcZx7XlS1o32YK2n4RqaXa6xANJXjRkd4=';
+const homepageUrl = 'sia-site://sia.storage/objects/7eeb0eb27e6adbffbba9799b947d11216560f3c2a90ec28a7ea58f62f42d962a/shared?sv=4930571324&sc=KeBWcCefOwQkV92f4wqdQ4xs7U_AF4TIAnDf-TwF1F8%3D&ss=jpWM9xq_j2M_zgP8o0AwL3hKXneTmY7UFcLSt79m9EzJey-8o-Z-QKu3fvF-YaCrDaGgZU5n5hini60UtJ2EDQ%3D%3D#encryption_key=wZREUOS7WLd8llOYJA0jIXUS3jjuv5RKrjKz1XN3D2U=';
 const isFirstRun = !localStorage.getItem('app-key');
 
 const savedState = loadTabState();
