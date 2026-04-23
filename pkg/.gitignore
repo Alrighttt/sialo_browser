@@ -2,6 +2,8 @@
 !.gitignore
 !indexd_wasm.js
 !indexd_wasm_bg.wasm
+!sia_storage_wasm.js
+!sia_storage_wasm_bg.wasm
 !syncer_wasm.js
 !syncer_wasm_bg.wasm
 !snippets/
