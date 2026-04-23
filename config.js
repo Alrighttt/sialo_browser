@@ -102,52 +102,6 @@ export async function connectSdk(statusEl) {
 }
 
 /**
- * Resolve a shared object URL, trying the primary SDK first, then falling
- * back through all other configured indexer profiles. Returns { sdk, obj }
- * on success, or throws if all profiles fail.
- */
-export async function resolveSharedObject(shareUrl, primarySdk) {
-  // Try the primary SDK first
-  try {
-    const obj = await primarySdk.sharedObject(shareUrl);
-    return { sdk: primarySdk, obj };
-  } catch (primaryErr) {
-    _dbg(`Primary indexer failed for shared URL: ${primaryErr.message}`);
-  }
-
-  // Load all profiles and try each one (skip the active profile, already tried)
-  let profiles;
-  try {
-    profiles = JSON.parse(localStorage.getItem(PROFILES_KEY));
-  } catch { /* no profiles */ }
-  if (!profiles?.profiles) throw new Error('Shared object not found on any indexer');
-
-  const activeUrl = getUrl();
-  const errors = [];
-
-  for (const [name, profile] of Object.entries(profiles.profiles)) {
-    if (!profile.url || !profile.key || profile.url === activeUrl) continue;
-    try {
-      _dbg(`Trying profile "${name}" (${profile.url})...`);
-      const key = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(profile.key)));
-      const builder = new Builder(profile.url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
-      const sdk = await builder.connected(key);
-      if (!sdk) continue;
-      const obj = await sdk.sharedObject(shareUrl);
-      _dbg(`Resolved shared object via profile "${name}"`);
-      return { sdk, obj };
-    } catch (e) {
-      errors.push(`${name}: ${e.message}`);
-    }
-  }
-
-  throw new Error(
-    'Shared object not found on any configured indexer.\n' +
-    errors.map(e => '  ' + e).join('\n')
-  );
-}
-
-/**
  * Resolves an object by ID or share URL. Share URLs are indexer-specific
  * and only tried against the primary SDK. Object IDs try the primary SDK
  * first, then fall back through all other configured indexer profiles.

@@ -3,7 +3,7 @@
 
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
-  connectSdk, resolveObject, resolveSharedObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
+  connectSdk, resolveObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
 } from './config.js';
 import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,

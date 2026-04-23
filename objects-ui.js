@@ -62,6 +62,10 @@ export function initObjectsUI() {
 
       const PAGE = 500; // indexer hard-caps each call at 500
       const latest = new Map(); // id → newest event
+      // Shared UTF-8 decoder for object metadata. `fatal: false` means
+      // invalid byte sequences become U+FFFD replacement chars instead
+      // of throwing — metadata is arbitrary bytes, not guaranteed UTF-8.
+      const metaDecoder = new TextDecoder('utf-8', { fatal: false });
       let cursor = null;
       for (;;) {
         const page = await sdk.objectEvents(cursor, PAGE);
@@ -69,11 +73,14 @@ export function initObjectsUI() {
           const prev = latest.get(ev.id);
           const ms = new Date(ev.updatedAt).getTime() || 0;
           if (!prev || ms >= prev.ms) {
+            const metaBytes = ev.object ? ev.object.metadata() : null;
+            const meta = metaBytes && metaBytes.length > 0 ? metaDecoder.decode(metaBytes) : '';
             latest.set(ev.id, {
               id: ev.id,
               updatedAt: ev.updatedAt,
               deleted: ev.deleted,
               size: ev.object ? Number(ev.object.size()) : 0,
+              meta,
               ms,
             });
           }
@@ -113,9 +120,10 @@ export function initObjectsUI() {
     sorted.sort((a, b) => {
       let av, bv;
       switch (sortState.column) {
-        case 'id':      av = a.id;     bv = b.id; break;
-        case 'size':    av = a.size;   bv = b.size; break;
-        case 'updated': av = a.ms;     bv = b.ms; break;
+        case 'id':      av = a.id;            bv = b.id; break;
+        case 'meta':    av = a.meta || '';    bv = b.meta || ''; break;
+        case 'size':    av = a.size;          bv = b.size; break;
+        case 'updated': av = a.ms;            bv = b.ms; break;
         case 'status':  av = a.deleted ? 'deleted' : 'active';
                         bv = b.deleted ? 'deleted' : 'active'; break;
         default:        av = a.ms;     bv = b.ms;
@@ -142,6 +150,7 @@ export function initObjectsUI() {
             <tr style="border-bottom:2px solid #333; text-align:left;">
               <th style="padding:0.5rem; width:2rem;"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
               <th data-sort="id"      style="padding:0.5rem; cursor:pointer; user-select:none;">Object ID<span class="sort-arrow"></span></th>
+              <th data-sort="meta"    style="padding:0.5rem; cursor:pointer; user-select:none;">Metadata<span class="sort-arrow"></span></th>
               <th data-sort="size"    style="padding:0.5rem; cursor:pointer; user-select:none;">Size<span class="sort-arrow"></span></th>
               <th data-sort="updated" style="padding:0.5rem; cursor:pointer; user-select:none;">Updated<span class="sort-arrow"></span></th>
               <th data-sort="status"  style="padding:0.5rem; cursor:pointer; user-select:none;">Status<span class="sort-arrow"></span></th>
@@ -158,10 +167,19 @@ export function initObjectsUI() {
       const date = new Date(obj.updatedAt).toLocaleString();
       const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
       const checked = selectedIds.has(obj.id) ? 'checked' : '';
+      // Metadata cell. Most objects don't have any — show an em-dash
+      // in muted color for those. Non-empty metadata is truncated for
+      // the cell; full value is available via the `title` tooltip.
+      const metaFull = obj.meta || '';
+      const metaShort = metaFull.length > 40 ? metaFull.slice(0, 40) + '…' : metaFull;
+      const metaCell = metaFull
+        ? `<td style="padding:0.5rem; font-size:0.8rem; color:#bbb;" title="${_esc(metaFull)}">${_esc(metaShort)}</td>`
+        : `<td style="padding:0.5rem; color:#555;">—</td>`;
       html += `
           <tr style="border-bottom:1px solid #222;">
             <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" ${checked}/>` : ''}</td>
             <td onclick="copyToClipboard('${obj.id}')" style="padding:0.5rem; font-family:monospace; font-size:0.85rem; cursor:pointer;" title="Click to copy: ${obj.id}">${shortId}</td>
+            ${metaCell}
             <td style="padding:0.5rem;">${size}</td>
             <td style="padding:0.5rem;">${date}</td>
             <td style="padding:0.5rem;">${objStatus}</td>
