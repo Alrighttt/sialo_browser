@@ -498,15 +498,26 @@ export function setNavInProgress(v) { navInProgress = v; }
 export function goBack() {
   const tab = getActiveTab();
   if (!tab || tab.type !== 'browser') return;
-  // Sia-site tabs: ask the iframe to step back in its own history. If
-  // the iframe is already at the first page it loaded, this is a silent
-  // no-op — the user can close the tab or paste a new URL to leave.
-  if (isSiaSiteTab(tab) && tab.iframeEl && tab.iframeEl.contentWindow) {
-    try {
-      let targetOrigin = '*';
-      try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}
-      tab.iframeEl.contentWindow.postMessage({ type: 'sia-nav-back' }, targetOrigin);
-    } catch (_) {}
+  // Sia-site tabs have two layers of history: the tab's navHistory
+  // (inter-site: each sia-site:// navigation pushes an entry) and the
+  // iframe's internal history (intra-site: clicking a relative link
+  // within the current site). Prefer the tab layer first so that
+  // navigating from site A to site B and then pressing Back returns to
+  // A. Only when the tab is at its first entry do we delegate to the
+  // iframe's own history.back() for intra-site navigation.
+  if (isSiaSiteTab(tab)) {
+    if (tab.navIndex > 0) {
+      tab.navIndex--;
+      navigateTabNavEntry(tab);
+      return;
+    }
+    if (tab.iframeEl && tab.iframeEl.contentWindow) {
+      try {
+        let targetOrigin = '*';
+        try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}
+        tab.iframeEl.contentWindow.postMessage({ type: 'sia-nav-back' }, targetOrigin);
+      } catch (_) {}
+    }
     return;
   }
   // Failed-nav recovery: tab.url was updated during a load that errored

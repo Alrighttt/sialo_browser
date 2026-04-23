@@ -27,6 +27,7 @@ import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import { connectSdk, resolveObject, invalidateSdk } from './config.js';
 import { findTabByIframeWindow, tabStatusProxy } from './tabs.js';
+import { encodeMetadata } from './object-metadata.js';
 
 // "not enough shards: 0/N" after a period of idle usually means every
 // cached WebTransport connection got killed by the QUIC idle timeout.
@@ -93,6 +94,21 @@ const iframeManifests = new WeakMap();
 const handshaken = new WeakSet();
 
 let handlerInstalled = false;
+
+/**
+ * Mark every active ext-stream whose source is the given window as
+ * cancelled. Callers should invoke this when an iframe is about to
+ * navigate to a new URL, otherwise any in-flight `sia-ext-chunk`
+ * posts target the previous origin and Chrome floods the console
+ * with "target origin does not match recipient" warnings while the
+ * messages are silently dropped.
+ */
+export function cancelStreamsForSource(sourceWin) {
+  if (!sourceWin) return;
+  for (const entry of activeExtStreams.values()) {
+    if (entry.source === sourceWin) entry.cancelled = true;
+  }
+}
 
 /**
  * Installs the window-level postMessage listener. Call once at app
@@ -238,7 +254,7 @@ async function resolveManifestPath(manifestId, path) {
     // manifest so the user can browse a site that has no index.html.
     const normalized = (path || '').replace(/^\/+/, '');
     if (normalized === '' || normalized.endsWith('/')) {
-      const html = renderAutoIndex(manifest, normalized);
+      const html = await renderAutoIndex(manifest, normalized);
       const injected = injectBridge(html);
       const body = new TextEncoder().encode(injected).buffer;
       return { body, contentType: 'text/html' };
@@ -357,7 +373,7 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
     if (sniffed) contentType = sniffed;
   }
 
-  const entry = { cancelled: false, reader };
+  const entry = { cancelled: false, reader, source };
   activeExtStreams.set(id, entry);
 
   // Report throughput to the tab's status bar for large streams (video,
@@ -494,12 +510,51 @@ function resolveManifestKey(manifest, path) {
   return null;
 }
 
+// Cache of resolved object sizes keyed by the manifest's share URL.
+// Populated as auto-index rendering fetches file metadata; lives for
+// the page session so navigating between directories of the same site
+// doesn't re-request sizes we've already seen.
+const sizeCache = new Map();
+
+// Per-file budget for size lookups during auto-index rendering. If
+// the indexer is slow, we'd rather render the index with missing
+// sizes than hold the whole page response while the sandbox SW's own
+// timeout fires. The real resolve still completes in the background
+// and populates the cache for the next directory visit.
+const SIZE_FETCH_TIMEOUT_MS = 800;
+
+async function resolveSizeOrNull(shareUrl) {
+  try {
+    const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
+    if (!sdk) return null;
+    const { obj } = await resolveObject(shareUrl, sdk);
+    const size = Number(obj.size());
+    sizeCache.set(shareUrl, size);
+    return size;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveShareUrlSize(shareUrl) {
+  if (sizeCache.has(shareUrl)) return sizeCache.get(shareUrl);
+  let timeoutId;
+  const timeout = new Promise((resolve) => {
+    timeoutId = setTimeout(() => resolve(null), SIZE_FETCH_TIMEOUT_MS);
+  });
+  try {
+    return await Promise.race([resolveSizeOrNull(shareUrl), timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 // Render a minimal directory-listing page for a sia-site that has no
 // index.html at `dirPath`. Files directly in the directory appear as
-// links; anything further nested collapses into a subdirectory link
-// the user can click to drill into (the service worker will land back
-// here with the new path and list that subtree).
-function renderAutoIndex(manifest, dirPath) {
+// links with their size; anything further nested collapses into a
+// subdirectory link the user can click to drill into (the service
+// worker will land back here with the new path and list that subtree).
+async function renderAutoIndex(manifest, dirPath) {
   const keys = Object.keys(manifest).sort();
   const files = [];
   const subdirs = new Set();
@@ -512,6 +567,15 @@ function renderAutoIndex(manifest, dirPath) {
     else files.push(rest);
   }
 
+  // Fetch sizes for this directory's files in parallel. Each resolve
+  // is try/caught inside `resolveShareUrlSize`, so a single failure
+  // just shows a blank size cell — the index still renders.
+  const sizePairs = await Promise.all(files.map(async (f) => {
+    const shareUrl = manifest[dirPath + f];
+    return [f, shareUrl ? await resolveShareUrlSize(shareUrl) : null];
+  }));
+  const sizeByFile = new Map(sizePairs);
+
   const rows = [];
   if (dirPath) {
     rows.push(`<li class="up"><a href="../">..</a></li>`);
@@ -520,7 +584,18 @@ function renderAutoIndex(manifest, dirPath) {
     rows.push(`<li class="dir"><a href="${_esc(d)}">${_esc(d)}</a></li>`);
   }
   for (const f of files) {
-    rows.push(`<li class="file"><a href="${_esc(f)}">${_esc(f)}</a></li>`);
+    // File link points at the manifest's share URL (not a relative
+    // path). The injected bridge script catches `sia://` hrefs and
+    // posts SIA_NAVIGATE to the parent, which navigates the Sialo tab
+    // — so the outer URL bar, back/forward, and tab state all update
+    // instead of the iframe navigating internally.
+    const shareUrl = manifest[dirPath + f];
+    const href = shareUrl || f;
+    const size = sizeByFile.get(f);
+    const sizeLabel = typeof size === 'number' ? _esc(formatSize(size)) : '';
+    rows.push(
+      `<li class="file"><a href="${_esc(href)}"><span class="name">${_esc(f)}</span><span class="size">${sizeLabel}</span></a></li>`,
+    );
   }
 
   const title = `Index of /${_esc(dirPath)}`;
@@ -547,6 +622,8 @@ function renderAutoIndex(manifest, dirPath) {
   li.dir a::before { content: '📁'; }
   li.file a::before { content: '📄'; }
   li.up a::before { content: '↩'; }
+  .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .size { color: #6b7280; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
   footer { margin-top: 2rem; color: #4b5563; font-size: 0.75rem; text-align: center; }
 </style>
 </head>
@@ -769,16 +846,26 @@ export function unloadSite(iframeEl) {
 export async function uploadSite(sdk, files) {
   const manifest = {};
   const validUntil = new Date(Date.now() + SITE_SHARE_VALIDITY_MS);
+  // UUID-prefix every object's filename metadata so all artifacts
+  // from a single publish session group together alphabetically in
+  // My Objects. Site Builder strips the prefix when re-using them.
+  const uploadId = crypto.randomUUID();
   for (const { path, data } of files) {
     const raw = data instanceof Uint8Array ? data : new Uint8Array(data);
-    const obj = await sdk.upload(new PinnedObject(), new Blob([raw]).stream());
+    const pinned = new PinnedObject();
+    pinned.updateMetadata(encodeMetadata({ filename: `${uploadId}/${path}` }));
+    const obj = await sdk.upload(pinned, new Blob([raw]).stream());
     await sdk.pinObject(obj);
     manifest[path] = sdk.shareObject(obj, validUntil);
     _dbg('[sia-site] uploaded', path, '→', obj.id());
   }
   const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
   const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
-  const manifestObj = await sdk.upload(new PinnedObject(), manifestBlob.stream());
+  const manifestPinned = new PinnedObject();
+  manifestPinned.updateMetadata(
+    encodeMetadata({ filename: `${uploadId}/manifest.json` }),
+  );
+  const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
   await sdk.pinObject(manifestObj);
   const manifestId = manifestObj.id();
   _dbg('[sia-site] manifest', manifestId);

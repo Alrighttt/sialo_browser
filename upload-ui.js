@@ -3,6 +3,8 @@ import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
 import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
+import { encodeMetadata } from './object-metadata.js';
+import { checkVideoCompat, suggestFfmpegFix } from './video-compat.js';
 
 // Bottom-right status bar proxy for the currently-active tab.
 function panelStatus() {
@@ -97,7 +99,36 @@ export function initUploadUI() {
     document.getElementById('uf-card-shards-done').textContent = '';
     document.getElementById('uf-card-hosts-active').textContent = '';
     document.getElementById('uf-progress').value = 0;
+    // Pre-upload playback check. Non-blocking — runs alongside the
+    // upload; the banner shows up as soon as inspection finishes.
+    // Passing the file by closure so a later setFile() supersedes
+    // any earlier in-flight check when the result arrives.
+    renderVideoCompatWarning(file);
     startUpload();
+  }
+
+  const videoWarn = document.getElementById('uf-video-warning');
+  async function renderVideoCompatWarning(file) {
+    videoWarn.style.display = 'none';
+    videoWarn.innerHTML = '';
+    let result;
+    try {
+      result = await checkVideoCompat(file);
+    } catch (_) {
+      return;
+    }
+    // Ignore if the user has already moved on to a different file.
+    if (selectedFile !== file) return;
+    if (!result || result.ok) return;
+    const problemList = result.problems
+      .map((p) => `<li>${_esc(p)}</li>`)
+      .join('');
+    videoWarn.innerHTML =
+      `<div style="font-weight:600; margin-bottom:0.35rem;">&#9888; This video may not play back in the browser</div>` +
+      `<ul style="margin:0 0 0.5rem 1.2rem; padding:0;">${problemList}</ul>` +
+      `<div style="color:#cbd5e1;">The file will still upload. To make it browser-playable, transcode first:</div>` +
+      `<code style="display:block; margin-top:0.25rem; padding:0.35rem 0.5rem; background:#000; color:#d4d4d4; border-radius:3px; font-size:0.75rem; word-break:break-all;">${_esc(suggestFfmpegFix(file.name))}</code>`;
+    videoWarn.style.display = '';
   }
 
   dropzone.addEventListener('click', () => fileInput.click());
@@ -226,8 +257,13 @@ export function initUploadUI() {
         // but the SDK task keeps pulling bytes until its in-flight
         // shards finish — a deeper stream wrapper that actually errors
         // the SDK's reader was attempted but broke BYOB progress.
+        // Attach the local filename as metadata so downloads and
+        // listing UIs can display a human-readable name. The metadata
+        // is committed as part of the upload; no extra round trip.
+        const pinned = new PinnedObject();
+        pinned.updateMetadata(encodeMetadata({ filename: selectedFile.name }));
         const obj = await Promise.race([
-          sdk.upload(new PinnedObject(), selectedFile.stream(), {
+          sdk.upload(pinned, selectedFile.stream(), {
             maxInflight: getMaxUploads(),
             onShardUploaded: (p) => {
               shardsDone++;

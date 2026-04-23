@@ -43,6 +43,7 @@ import {
 import { initDownloadUI } from './download-ui.js';
 import { initUploadUI } from './upload-ui.js';
 import { initUploadSiteUI } from './upload-site-ui.js';
+import { initUpdateSiteUI } from './update-site-ui.js';
 import { initObjectsUI } from './objects-ui.js';
 import { initAccountUI } from './account-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
@@ -975,6 +976,9 @@ initUploadUI();
 
 // Upload Site UI (directory → packed upload → site manifest) → upload-site-ui.js
 initUploadSiteUI();
+
+// Update Site UI (load existing sia-site:// → edit files → republish) → update-site-ui.js
+initUpdateSiteUI();
 
 // Download UI → download-ui.js
 initDownloadUI();

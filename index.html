@@ -74,7 +74,7 @@
         title="Press Enter or click Go to auto-detect file type">
       <button id="btn-go" title="Auto-detect file type and load content">Go</button>
       <button id="btn-external-tab"
-        title="Opens in new tab with JavaScript enabled - use only for trusted content">&#9888; External</button>
+        title="Download this object to disk regardless of file type">&#11015; Save</button>
     </div>
 
     <!-- Progress bar -->
@@ -385,6 +385,9 @@
                   <span id="uf-card-filename" style="font-weight:600; font-size:1rem;"></span>
                   <span id="uf-card-size" style="color:#888; font-size:0.85rem;"></span>
                 </div>
+                <!-- Populated by video-compat.js when the selected file
+                     has codecs browsers can't play. Hidden otherwise. -->
+                <div id="uf-video-warning" style="display:none; background:#3a2414; border:1px solid #6b3a1e; color:#fbbf24; border-radius:4px; padding:0.5rem 0.75rem; font-size:0.8rem; margin-bottom:0.75rem; line-height:1.45;"></div>
                 <progress id="uf-progress" max="100" value="0"
                   style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
                 <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.25rem;">
@@ -518,6 +521,71 @@
                 <button id="us-copy-btn">Copy URL</button>
               </div>
             </div>
+
+            <!-- Site Builder: assemble a sia-site from existing
+                 objects (e.g. via the "Add to site" button on My
+                 Objects). Uses the same "Share for" validity input
+                 as the folder upload above. -->
+            <div style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #222;">
+              <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:0.5rem;">
+                <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Site Builder</h3>
+                <span id="sb-count" style="font-size:0.8rem; color:#888;">0 objects</span>
+              </div>
+              <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
+                Assemble a <code>sia-site://</code> from objects that already exist.
+                Use the <strong>Add to site</strong> button on <strong>My Objects</strong>
+                rows to collect entries; publish here. Entries persist across reloads.
+              </p>
+
+              <div id="sb-empty" style="color:#555; font-size:0.9rem; font-style:italic; padding:1rem 0.5rem;">
+                No entries yet — go to My Objects and click <strong>Add to site</strong>.
+              </div>
+
+              <div id="sb-list-wrap" style="display:none; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:6px; margin-bottom:0.75rem; max-height:320px; overflow-y:auto;">
+                <table id="sb-list" style="width:100%; border-collapse:collapse; font-size:0.85rem;"></table>
+              </div>
+
+              <div id="sb-actions" style="display:none; gap:0.5rem; flex-wrap:wrap;">
+                <button id="sb-publish" style="background:#10b981; color:white;">Publish Site</button>
+                <button id="sb-clear" style="background:#333; color:#ccc;">Clear Draft</button>
+              </div>
+            </div>
+
+            <!-- Update Site: load an existing sia-site://, edit its files,
+                 and republish. Unchanged files are re-signed at the panel's
+                 validity and their metadata is re-tagged with the new
+                 upload UUID so My Objects keeps them grouped. -->
+            <div style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #222;">
+              <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:0.5rem;">
+                <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Update Site</h3>
+                <span id="upd-count" style="font-size:0.8rem; color:#888;"></span>
+              </div>
+              <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
+                Paste a <code>sia-site://</code> URL or manifest ID to load its files. Rename, replace,
+                remove, or add files; publishing issues a new manifest with fresh share URLs.
+              </p>
+
+              <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
+                <input id="upd-url" type="text" placeholder="sia-site://…"
+                  style="flex:1; padding:0.45rem 0.6rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-family:var(--font-mono); font-size:0.8rem;" />
+                <button id="upd-load" style="background:#3b82f6; color:white;">Load</button>
+              </div>
+
+              <div id="upd-empty" style="color:#555; font-size:0.9rem; font-style:italic; padding:1rem 0.5rem;">
+                Load a site to begin editing its files.
+              </div>
+
+              <div id="upd-list-wrap" style="display:none; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:6px; margin-bottom:0.75rem; max-height:360px; overflow-y:auto;">
+                <table id="upd-list" style="width:100%; border-collapse:collapse; font-size:0.85rem;"></table>
+              </div>
+
+              <div id="upd-actions" style="display:none; gap:0.5rem; flex-wrap:wrap; align-items:center;">
+                <button id="upd-add-btn">+ Add File</button>
+                <input type="file" id="upd-add-input" multiple style="display:none" />
+                <button id="upd-publish" style="background:#10b981; color:white;">Publish Updates</button>
+                <button id="upd-discard" style="background:#333; color:#ccc;">Discard</button>
+              </div>
+            </div>
           </div><!-- /panel-section: Upload Site -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-site -->
@@ -534,9 +602,26 @@
             <div class="row">
               <input id="dl-filename" type="text" placeholder="e.g. photo.jpg" />
               <button id="btn-download">Download</button>
+              <button id="dl-cancel" style="display:none; background:#dc2626; color:white;">Cancel</button>
             </div>
-            <progress id="dl-progress" max="100" value="0" style="display:none"></progress>
-            <div class="output" id="dl-status"></div>
+            <progress id="dl-progress" max="100" value="0" style="display:none; width:100%; height:6px; margin-top:0.5rem;"></progress>
+
+            <!-- Post-download result card. Hidden by default; populated on success. -->
+            <div id="dl-result"
+              style="display:none; margin-top:1rem; background:linear-gradient(135deg,#0f1a12 0%,#0a0a0a 100%); border:1px solid #164229; border-radius:10px; padding:1rem 1.25rem;">
+              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
+                <span style="display:inline-flex; width:1.5rem; height:1.5rem; border-radius:999px; background:#10b981; color:#051a11; align-items:center; justify-content:center; font-size:0.9rem; font-weight:700;">✓</span>
+                <span style="font-weight:600; color:#d1fae5;">Saved</span>
+              </div>
+              <div style="display:flex; justify-content:space-between; gap:0.75rem; flex-wrap:wrap; margin-bottom:0.5rem; font-size:0.9rem;">
+                <div style="min-width:0; flex:1;">
+                  <div id="dl-result-name" style="font-weight:500; color:#e2e8f0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></div>
+                  <div style="color:#888; font-size:0.8rem;">
+                    <span id="dl-result-size"></span> · downloaded in <span id="dl-result-elapsed"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div><!-- /panel-section: Download -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-download -->
@@ -551,6 +636,7 @@
             <div class="row" style="align-items:center; gap:0.75rem;">
               <button id="btn-list-objects">Refresh</button>
               <button id="btn-download-zip" style="padding:0.4rem 0.75rem; font-size:0.85rem; background:#3b82f6; color:white;" disabled>Download Selected as ZIP</button>
+              <button id="btn-add-selected-to-site" style="padding:0.4rem 0.75rem; font-size:0.85rem;" title="Add every selected object to the Site Builder on the Upload Site page" disabled>Add Selected to Site</button>
               <span id="zip-selected-count" style="font-size:0.8rem; color:#888;">0 selected</span>
               <span id="zip-status" style="font-size:0.8rem; color:#888;"></span>
             </div>

@@ -1,6 +1,6 @@
 import { _esc, formatSize } from './utils.js';
 import { getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
-import { getActiveTab, trackAbort } from './tabs.js';
+import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
 
 // -- Download File --
 //
@@ -10,29 +10,21 @@ import { getActiveTab, trackAbort } from './tabs.js';
 // main thread only routes each chunk to the chosen destination (a
 // FileSystemWritableStream from `showSaveFilePicker` when available, or an
 // in-memory blob as a fallback) and updates the progress display.
+//
+// Transient status goes to the bottom-right status bar via `panelStatus()`;
+// the successful-download card (`#dl-result`) is populated at the end. The
+// in-panel `#dl-status` text block is gone — everything lives in the status
+// bar until the result card replaces it.
+
+// Bottom-right status bar proxy for the currently-active tab.
+function panelStatus() {
+  return tabStatusProxy(getActiveTab()).status;
+}
+
 export function initDownloadUI() {
   let _downloadInProgress = false;
+  let _currentAbort = null;
 
-  const HOST_STALE_MS = 15000;
-
-  const countryFlag = (cc) => {
-    if (!cc || cc.length !== 2) return '';
-    return String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1F1E6 - 65 + c.charCodeAt(0)));
-  };
-  const fmtHostAddr = (host) => {
-    if (!host) return '';
-    const addr = host.addresses && host.addresses.length > 0
-      ? host.addresses[0].address : host.publicKey.slice(0, 16) + '…';
-    let h = addr.replace(/^https?:\/\//, '').replace(/\/sia\/rhp\/v4$/, '');
-    if (h.includes('.sia.host')) {
-      const colIdx = h.lastIndexOf(':');
-      const name = colIdx > 0 ? h.slice(0, colIdx) : h;
-      const port = colIdx > 0 ? h.slice(colIdx) : '';
-      const prefix = name.slice(0, name.indexOf('.sia.host'));
-      h = prefix.slice(0, 8) + '…sia.host' + port;
-    }
-    return h;
-  };
   const formatTime = (seconds) => {
     if (seconds < 60) return `${seconds.toFixed(0)}s`;
     const mins = Math.floor(seconds / 60);
@@ -40,21 +32,27 @@ export function initDownloadUI() {
     return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
   };
 
+  document.getElementById('dl-cancel').addEventListener('click', () => {
+    if (_currentAbort) _currentAbort.abort();
+  });
+
   document.getElementById('btn-download').addEventListener('click', async () => {
     if (_downloadInProgress) return;
     _downloadInProgress = true;
     const btn = document.getElementById('btn-download');
+    const cancelBtn = document.getElementById('dl-cancel');
     btn.disabled = true;
-    const status = document.getElementById('dl-status');
     const progress = document.getElementById('dl-progress');
+    const resultCard = document.getElementById('dl-result');
     const input = document.getElementById('dl-url').value.trim();
     const filename = document.getElementById('dl-filename').value.trim() || 'download';
 
     progress.style.display = 'none';
     progress.value = 0;
+    resultCard.style.display = 'none';
 
     if (!input) {
-      status.innerHTML = '<span class="fail">Enter an Object ID or Share URL</span>';
+      panelStatus().innerHTML = '<span class="fail">Enter an Object ID or Share URL</span>';
       _downloadInProgress = false;
       btn.disabled = false;
       return;
@@ -63,7 +61,7 @@ export function initDownloadUI() {
     const url = getUrl();
     const keyHex = getKeyHex();
     if (!url || !keyHex) {
-      status.innerHTML = '<span class="fail">Set Indexer URL and App Key in Settings first</span>';
+      panelStatus().innerHTML = '<span class="fail">Set Indexer URL and App Key in Settings first</span>';
       _downloadInProgress = false;
       btn.disabled = false;
       return;
@@ -83,7 +81,7 @@ export function initDownloadUI() {
           btn.disabled = false;
           return;
         }
-        status.innerHTML = `<span class="fail">Couldn't open file: ${_esc(e.message || String(e))}</span>`;
+        panelStatus().innerHTML = `<span class="fail">Couldn't open file: ${_esc(e.message || String(e))}</span>`;
         _downloadInProgress = false;
         btn.disabled = false;
         return;
@@ -91,11 +89,13 @@ export function initDownloadUI() {
     }
 
     // Cancellation hooks: close-tab aborts via the tab's abort controller,
-    // and we use the same signal to tear the worker down on demand.
+    // the Cancel button aborts via _currentAbort, and we use the same
+    // signal to tear the worker down on demand.
     const abortCtrl = new AbortController();
+    _currentAbort = abortCtrl;
     const untrack = trackAbort(getActiveTab(), abortCtrl);
+    cancelBtn.style.display = '';
 
-    const hostStats = new Map();
     const memBuf = writable ? null : [];
     let bytesDownloaded = 0;
     let size = 0;
@@ -106,7 +106,7 @@ export function initDownloadUI() {
     let writeQueue = Promise.resolve();
 
     try {
-      status.textContent = 'Starting download worker...';
+      panelStatus().textContent = 'Starting download worker…';
       worker = new Worker('./single-download-worker.js', { type: 'module' });
       abortCtrl.signal.addEventListener('abort', () => {
         try { worker.terminate(); } catch (_) {}
@@ -129,6 +129,8 @@ export function initDownloadUI() {
       await workerReady;
 
       // Periodic UI updates while the worker does the heavy lifting.
+      // Condensed to a single status-bar line — the earlier multi-line
+      // block lived in `#dl-status` which no longer exists.
       progressInterval = setInterval(() => {
         if (size === 0) return;
         const now = performance.now();
@@ -142,19 +144,10 @@ export function initDownloadUI() {
         const eta = speed > 0 ? (size - bytesDownloaded) / speed : 0;
 
         const pct = size > 0 ? ((bytesDownloaded / size) * 100).toFixed(1) : '0';
-        const line1 = `Downloading... ${formatSize(bytesDownloaded)} / ${formatSize(size)} (${pct}%)`;
-        const line2 = `${(speed / 1e6).toFixed(2)} MB/s • ${formatTime(elapsed)} elapsed` + (eta > 0 ? ` • ~${formatTime(eta)} remaining` : '');
-
-        const active = Array.from(hostStats.entries())
-          .map(([, s]) => ({ host: s.host, stale: (now - s.lastSeen) > HOST_STALE_MS, sectors: s.sectors }))
-          .filter(h => !h.stale)
-          .sort((a, b) => b.sectors - a.sectors);
-        const hostLines = active.slice(0, 10).map(h => {
-          const cc = h.host.countryCode;
-          const flag = cc && cc.length === 2 ? countryFlag(cc) + ' ' : '';
-          return `  ${flag}${fmtHostAddr(h.host)} — ${h.sectors} sectors`;
-        }).join('\n');
-        status.textContent = hostLines ? `${line1}\n${line2}\n${hostLines}` : `${line1}\n${line2}`;
+        const etaFrag = eta > 0 ? ` · ~${formatTime(eta)} remaining` : '';
+        panelStatus().textContent =
+          `Downloading ${pct}% (${formatSize(bytesDownloaded)} / ${formatSize(size)}) · ` +
+          `${(speed / 1e6).toFixed(2)} MB/s${etaFrag}`;
         progress.value = bytesDownloaded;
         progress.max = size;
       }, 200);
@@ -166,7 +159,7 @@ export function initDownloadUI() {
             progress.style.display = 'block';
             progress.max = size;
             downloadStart = performance.now();
-            status.textContent = `Object found: ${formatSize(size)}. Downloading...`;
+            panelStatus().textContent = `Object found: ${formatSize(size)}. Downloading…`;
           }
           if (e.data.type === 'chunk') {
             bytesDownloaded += e.data.length;
@@ -178,13 +171,6 @@ export function initDownloadUI() {
             } else {
               memBuf.push(new Uint8Array(e.data.data));
             }
-          }
-          if (e.data.type === 'host-active') {
-            const host = e.data.host;
-            const key = host.publicKey;
-            const t = performance.now();
-            if (!hostStats.has(key)) hostStats.set(key, { host, firstSeen: t, lastSeen: t, sectors: 1 });
-            else { const hs = hostStats.get(key); hs.sectors++; hs.lastSeen = t; }
           }
           if (e.data.type === 'done') {
             worker.terminate();
@@ -215,20 +201,28 @@ export function initDownloadUI() {
         URL.revokeObjectURL(a.href);
       }
 
-      status.innerHTML = `File: ${_esc(filename)}\nSize: ${formatSize(bytesDownloaded)}\nDownloaded in ${elapsed}s\n<span class="pass">Saved to disk!</span>`;
+      // Populate the success card; status bar gets a short confirmation.
+      document.getElementById('dl-result-name').textContent = filename;
+      document.getElementById('dl-result-size').textContent = formatSize(bytesDownloaded);
+      document.getElementById('dl-result-elapsed').textContent = `${elapsed}s`;
+      resultCard.style.display = '';
+      panelStatus().innerHTML =
+        `<span class="pass">✓ Saved ${_esc(filename)} (${formatSize(bytesDownloaded)}) in ${elapsed}s</span>`;
     } catch (e) {
       if (progressInterval) clearInterval(progressInterval);
       if (writable) { try { await writable.abort(); } catch (_) {} }
       if (worker) { try { worker.terminate(); } catch (_) {} }
       if (abortCtrl.signal.aborted) {
-        status.innerHTML = '<span class="fail">Download cancelled</span>';
+        panelStatus().innerHTML = '<span class="fail">Download cancelled</span>';
       } else {
-        status.innerHTML = `<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
+        panelStatus().innerHTML = `<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
       }
     } finally {
       untrack();
+      _currentAbort = null;
       _downloadInProgress = false;
       btn.disabled = false;
+      cancelBtn.style.display = 'none';
     }
   });
 }

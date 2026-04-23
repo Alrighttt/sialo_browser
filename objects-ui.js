@@ -9,6 +9,11 @@ import {
   setLastBrowserUrl, renderTabBar, getActiveTab, trackAbort,
   tabStatusProxy,
 } from './tabs.js';
+import {
+  filenameForDisplay, sanitizeFilename, sanitizeDisplayFilename, encodeMetadata,
+  stripUploadUuid, extractUploadUuid,
+} from './object-metadata.js';
+import { addToDraft, removeFromDraft, isInDraft, onDraftChange } from './site-builder.js';
 
 // Status proxy for the currently-active tab. Writes land in the
 // bottom-right status bar while the tab is selected and stay scoped
@@ -17,14 +22,42 @@ function panelStatus() {
   return tabStatusProxy(getActiveTab()).status;
 }
 
+// Filename-based heuristic for "this object is a sia-site manifest".
+// All uploaders in this repo name the manifest either `manifest.json`
+// (bare) or `<uuid>/manifest.json` (UUID-prefixed). Third-party sites
+// that publish under a different filename won't be detected, which is
+// fine — View just falls back to the default object viewer.
+function isManifestFilename(filename) {
+  if (typeof filename !== 'string' || !filename) return false;
+  const s = filename.toLowerCase();
+  return s === 'manifest.json' || s.endsWith('/manifest.json');
+}
+
+// Deterministic hue from an upload UUID. The first 12 hex chars
+// already give plenty of entropy for a nice spread around the wheel,
+// and using the same bytes every render means the same upload
+// session always shows the same color.
+function uuidToColor(uuid) {
+  let h = 0;
+  for (let i = 0; i < 12 && i < uuid.length; i++) {
+    h = ((h << 5) - h + uuid.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(h) % 360;
+  return `hsl(${hue}, 65%, 55%)`;
+}
+
 export function initObjectsUI() {
   // Cached full listing + pager state. `allObjects` is the deduplicated
   // latest event per object ID (objectEvents returns one event per change;
   // we keep the newest for each id). `sortState` and `pageIndex` drive
   // what slice is rendered into the DOM.
-  const allObjects = []; // [{ id, updatedAt, deleted, size }]
+  const allObjects = []; // [{ id, updatedAt, deleted, size, uploadUuid, ... }]
   const selectedIds = new Set(); // checkbox state survives page switches
   const sortState = { column: 'updated', asc: false };
+  // Upload-UUID groups collapsed in the UI. A collapsed group still
+  // contributes its header row to the display list but skips all of
+  // its member object rows. State is kept across renders/pagination.
+  const collapsedUuids = new Set();
   let pageSize = 50;
   let pageIndex = 0;
   let loadInFlight = false;
@@ -62,10 +95,6 @@ export function initObjectsUI() {
 
       const PAGE = 500; // indexer hard-caps each call at 500
       const latest = new Map(); // id → newest event
-      // Shared UTF-8 decoder for object metadata. `fatal: false` means
-      // invalid byte sequences become U+FFFD replacement chars instead
-      // of throwing — metadata is arbitrary bytes, not guaranteed UTF-8.
-      const metaDecoder = new TextDecoder('utf-8', { fatal: false });
       let cursor = null;
       for (;;) {
         const page = await sdk.objectEvents(cursor, PAGE);
@@ -73,14 +102,31 @@ export function initObjectsUI() {
           const prev = latest.get(ev.id);
           const ms = new Date(ev.updatedAt).getTime() || 0;
           if (!prev || ms >= prev.ms) {
-            const metaBytes = ev.object ? ev.object.metadata() : null;
-            const meta = metaBytes && metaBytes.length > 0 ? metaDecoder.decode(metaBytes) : '';
+            // `filenameForDisplay` parses our envelope format, falls
+            // back to raw UTF-8 for legacy bytes, and strips invisibles
+            // (control / zero-width / BiDi). Keeps slashes so full
+            // manifest paths like "assets/app.js" display intact.
+            // Disk-save call sites re-sanitize with `sanitizeFilename`
+            // to flatten into a leaf name. HTML escaping happens at
+            // render time via `_esc`.
+            const filename = ev.object ? filenameForDisplay(ev.object.metadata()) : '';
+            const uploadUuid = extractUploadUuid(filename);
+            const displayName = uploadUuid ? stripUploadUuid(filename) : filename;
+            // Sia-site manifests uploaded by this app land as objects
+            // whose filename is `<uuid>/manifest.json` (folder upload,
+            // site builder, update site) or bare `manifest.json`. That's
+            // a strong-enough signal to mark them so the View action can
+            // open them as a site rather than dumping raw JSON.
+            const isManifest = isManifestFilename(filename);
             latest.set(ev.id, {
               id: ev.id,
               updatedAt: ev.updatedAt,
               deleted: ev.deleted,
               size: ev.object ? Number(ev.object.size()) : 0,
-              meta,
+              filename,
+              displayName,
+              uploadUuid,
+              isManifest,
               ms,
             });
           }
@@ -115,19 +161,52 @@ export function initObjectsUI() {
     }
   }
 
+  function sortValue(obj) {
+    switch (sortState.column) {
+      case 'id':       return obj.id;
+      case 'filename': return obj.filename || '';
+      case 'size':     return obj.size;
+      case 'status':   return obj.deleted ? 'deleted' : 'active';
+      case 'updated':
+      default:         return obj.ms;
+    }
+  }
+
+  // Group-aware sort: keeps rows sharing an upload UUID contiguous no
+  // matter which column is sorted. Each group's position is decided by
+  // its best sort value (min for ascending, max for descending), then
+  // rows within a group sort by the same column.
+  //
+  // Rows without a UUID use their own sortValue for the group key, so
+  // they interleave with groups based on the same column criteria.
   function sortedObjects() {
+    const groupKey = new Map(); // uuid → best sort value across its members
+    for (const o of allObjects) {
+      if (!o.uploadUuid) continue;
+      const v = sortValue(o);
+      if (!groupKey.has(o.uploadUuid)) {
+        groupKey.set(o.uploadUuid, v);
+        continue;
+      }
+      const prev = groupKey.get(o.uploadUuid);
+      if (sortState.asc ? v < prev : v > prev) groupKey.set(o.uploadUuid, v);
+    }
+
     const sorted = allObjects.slice();
     sorted.sort((a, b) => {
-      let av, bv;
-      switch (sortState.column) {
-        case 'id':      av = a.id;            bv = b.id; break;
-        case 'meta':    av = a.meta || '';    bv = b.meta || ''; break;
-        case 'size':    av = a.size;          bv = b.size; break;
-        case 'updated': av = a.ms;            bv = b.ms; break;
-        case 'status':  av = a.deleted ? 'deleted' : 'active';
-                        bv = b.deleted ? 'deleted' : 'active'; break;
-        default:        av = a.ms;     bv = b.ms;
-      }
+      const agv = a.uploadUuid ? groupKey.get(a.uploadUuid) : sortValue(a);
+      const bgv = b.uploadUuid ? groupKey.get(b.uploadUuid) : sortValue(b);
+      if (agv < bgv) return sortState.asc ? -1 : 1;
+      if (agv > bgv) return sortState.asc ? 1 : -1;
+      // Same group sort-value — separate distinct groups by their UUID
+      // (or, for ungrouped rows, by id) so different groups never
+      // interleave.
+      const au = a.uploadUuid || ('z' + a.id);
+      const bu = b.uploadUuid || ('z' + b.id);
+      if (au !== bu) return au < bu ? -1 : 1;
+      // Within a single group, fall back to the column's raw value.
+      const av = sortValue(a);
+      const bv = sortValue(b);
       if (av < bv) return sortState.asc ? -1 : 1;
       if (av > bv) return sortState.asc ? 1 : -1;
       return 0;
@@ -135,13 +214,67 @@ export function initObjectsUI() {
     return sorted;
   }
 
+  // Build a flat display list from the sorted objects:
+  //   [{ kind: 'header', uuid, count, totalSize, collapsed }, ...]
+  //   [{ kind: 'row', obj }, ...]
+  // Rows inside a collapsed group are omitted; only the header remains.
+  // Aggregates (count, totalSize) reflect the full group regardless of
+  // which rows land on the current page, so the header is self-contained.
+  function buildDisplayList(sorted) {
+    const aggregates = new Map(); // uuid → { count, totalSize }
+    for (const o of allObjects) {
+      if (!o.uploadUuid) continue;
+      const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0 };
+      agg.count++;
+      agg.totalSize += (Number(o.size) || 0);
+      aggregates.set(o.uploadUuid, agg);
+    }
+    const out = [];
+    let emittedHeaderFor = null;
+    for (const o of sorted) {
+      if (o.uploadUuid) {
+        if (emittedHeaderFor !== o.uploadUuid) {
+          const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0 };
+          out.push({
+            kind: 'header',
+            uuid: o.uploadUuid,
+            count: agg.count,
+            totalSize: agg.totalSize,
+            collapsed: collapsedUuids.has(o.uploadUuid),
+          });
+          emittedHeaderFor = o.uploadUuid;
+        }
+        if (collapsedUuids.has(o.uploadUuid)) continue;
+      } else {
+        emittedHeaderFor = null;
+      }
+      out.push({ kind: 'row', obj: o });
+    }
+    return out;
+  }
+
   function render() {
     const sorted = sortedObjects();
-    const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const displayList = buildDisplayList(sorted);
+    const pageCount = Math.max(1, Math.ceil(displayList.length / pageSize));
     if (pageIndex >= pageCount) pageIndex = pageCount - 1;
     if (pageIndex < 0) pageIndex = 0;
     const start = pageIndex * pageSize;
-    const pageObjects = sorted.slice(start, start + pageSize);
+    const pageItems = displayList.slice(start, start + pageSize);
+
+    // If the page starts mid-group, walk back to find that group's
+    // header so the continuation is labelled. Without this, page 2 of a
+    // long site would show bare indented rows with no context.
+    if (pageItems.length > 0 && pageItems[0].kind === 'row' && pageItems[0].obj.uploadUuid) {
+      const firstUuid = pageItems[0].obj.uploadUuid;
+      for (let i = start - 1; i >= 0; i--) {
+        const item = displayList[i];
+        if (item.kind === 'header' && item.uuid === firstUuid) {
+          pageItems.unshift({ ...item, continuation: true });
+          break;
+        }
+      }
+    }
 
     const objectsList = document.getElementById('objects-list');
     let html = `
@@ -149,8 +282,8 @@ export function initObjectsUI() {
           <thead>
             <tr style="border-bottom:2px solid #333; text-align:left;">
               <th style="padding:0.5rem; width:2rem;"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
+              <th data-sort="filename" style="padding:0.5rem; cursor:pointer; user-select:none;">Name<span class="sort-arrow"></span></th>
               <th data-sort="id"      style="padding:0.5rem; cursor:pointer; user-select:none;">Object ID<span class="sort-arrow"></span></th>
-              <th data-sort="meta"    style="padding:0.5rem; cursor:pointer; user-select:none;">Metadata<span class="sort-arrow"></span></th>
               <th data-sort="size"    style="padding:0.5rem; cursor:pointer; user-select:none;">Size<span class="sort-arrow"></span></th>
               <th data-sort="updated" style="padding:0.5rem; cursor:pointer; user-select:none;">Updated<span class="sort-arrow"></span></th>
               <th data-sort="status"  style="padding:0.5rem; cursor:pointer; user-select:none;">Status<span class="sort-arrow"></span></th>
@@ -160,33 +293,66 @@ export function initObjectsUI() {
           <tbody>
       `;
 
-    for (const obj of pageObjects) {
-      const shortId = obj.id.substring(0, 8) + '...' + obj.id.substring(obj.id.length - 8);
+    for (const item of pageItems) {
+      if (item.kind === 'header') {
+        const color = uuidToColor(item.uuid);
+        const caret = item.collapsed ? '▶' : '▼';
+        const shortUuid = item.uuid.substring(0, 8);
+        const suffix = item.continuation ? ' (continued)' : '';
+        const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
+        html += `
+          <tr class="obj-group-header" data-uuid="${item.uuid}" style="cursor:pointer; background:#0f0f0f; border-bottom:1px solid #222; border-left:4px solid ${color};">
+            <td colspan="7" style="padding:0.45rem 0.75rem;">
+              <span style="display:inline-block; width:1rem; color:#9ca3af; font-size:0.75rem;">${caret}</span>
+              <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${color}; margin-right:0.5rem; vertical-align:middle;"></span>
+              <span style="font-family:var(--font-mono); color:#cbd5e1; font-size:0.8rem;">${shortUuid}</span>
+              <span style="color:#6b7280; font-size:0.8rem; margin-left:0.75rem;">${item.count} file${item.count === 1 ? '' : 's'}${sizeLabel ? ' · ' + sizeLabel : ''}${suffix}</span>
+            </td>
+          </tr>
+        `;
+        continue;
+      }
+      const obj = item.obj;
+      const shortId = obj.id.substring(0, 4) + '…' + obj.id.substring(obj.id.length - 4);
       const sizeBytes = obj.size;
       const size = sizeBytes ? formatSize(sizeBytes) : 'N/A';
       const date = new Date(obj.updatedAt).toLocaleString();
       const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
       const checked = selectedIds.has(obj.id) ? 'checked' : '';
-      // Metadata cell. Most objects don't have any — show an em-dash
-      // in muted color for those. Non-empty metadata is truncated for
-      // the cell; full value is available via the `title` tooltip.
-      const metaFull = obj.meta || '';
-      const metaShort = metaFull.length > 40 ? metaFull.slice(0, 40) + '…' : metaFull;
-      const metaCell = metaFull
-        ? `<td style="padding:0.5rem; font-size:0.8rem; color:#bbb;" title="${_esc(metaFull)}">${_esc(metaShort)}</td>`
-        : `<td style="padding:0.5rem; color:#555;">—</td>`;
+      // Filename cell. Objects with no metadata show an em-dash;
+      // upload-UUID-prefixed filenames have their prefix stripped for
+      // display (full value stays in the hover title). Members of a
+      // group get an extra left-pad so the visible path indents under
+      // the group header.
+      const fnameFull = obj.filename || '';
+      const fnameDisplay = obj.displayName || fnameFull;
+      const fnameShort = fnameDisplay.length > 40 ? fnameDisplay.slice(0, 40) + '…' : fnameDisplay;
+      const indent = obj.uploadUuid ? 'padding-left:2rem;' : '';
+      const filenameCell = fnameFull
+        ? `<td style="padding:0.5rem; ${indent} font-size:0.85rem; color:#d4d4d4;" title="${_esc(fnameFull)}">${_esc(fnameShort)}</td>`
+        : `<td style="padding:0.5rem; ${indent} color:#555;">—</td>`;
+      // Ungrouped rows keep a transparent left-border so horizontal
+      // alignment stays stable. Grouped rows reuse the group's color
+      // as a thinner accent, echoing the header bar.
+      const rowAccent = obj.uploadUuid
+        ? `border-left:4px solid ${uuidToColor(obj.uploadUuid)};`
+        : 'border-left:4px solid transparent;';
       html += `
-          <tr style="border-bottom:1px solid #222;">
+          <tr data-upload-uuid="${obj.uploadUuid || ''}" style="border-bottom:1px solid #222; ${rowAccent}">
             <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" ${checked}/>` : ''}</td>
+            ${filenameCell}
             <td onclick="copyToClipboard('${obj.id}')" style="padding:0.5rem; font-family:monospace; font-size:0.85rem; cursor:pointer;" title="Click to copy: ${obj.id}">${shortId}</td>
-            ${metaCell}
             <td style="padding:0.5rem;">${size}</td>
             <td style="padding:0.5rem;">${date}</td>
             <td style="padding:0.5rem;">${objStatus}</td>
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
-                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
+                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="${obj.isManifest ? 'Open as sia-site' : 'Open in browser viewer'}">${obj.isManifest ? 'Open Site' : 'View'}</button>
                 <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL">Share</button>
+                <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
+                ${isInDraft(obj.id)
+                  ? `<button onclick="removeFromSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#0d9488; color:white; margin-left:0.25rem;" title="Remove from the site being built on the Upload Site page">✓ In site</button>`
+                  : `<button onclick="addToSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Add to the site being built on the Upload Site page">Add to site</button>`}
                 <button onclick="showObjectInfo('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
                 <button onclick="downloadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
                 <button onclick="deleteObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
@@ -219,13 +385,27 @@ export function initObjectsUI() {
       });
     }
 
-    // Pager controls + info text.
+    // Pager controls + info text. Totals reflect the display list
+    // (groups + visible rows) so the user sees the same numbers whether
+    // or not any groups are collapsed.
     pagerEl.style.display = 'flex';
-    pageInfoEl.textContent = `${start + 1}–${Math.min(start + pageSize, sorted.length)} of ${sorted.length}`;
+    pageInfoEl.textContent = `${start + 1}–${Math.min(start + pageSize, displayList.length)} of ${displayList.length}`;
     document.getElementById('objects-page-first').disabled = pageIndex === 0;
     document.getElementById('objects-page-prev').disabled  = pageIndex === 0;
     document.getElementById('objects-page-next').disabled  = pageIndex >= pageCount - 1;
     document.getElementById('objects-page-last').disabled  = pageIndex >= pageCount - 1;
+
+    // Toggle collapse on group-header clicks. Delegated per-render
+    // since the tbody HTML is rebuilt.
+    objectsList.querySelectorAll('tr.obj-group-header').forEach(tr => {
+      tr.addEventListener('click', () => {
+        const uuid = tr.dataset.uuid;
+        if (!uuid) return;
+        if (collapsedUuids.has(uuid)) collapsedUuids.delete(uuid);
+        else collapsedUuids.add(uuid);
+        render();
+      });
+    });
 
     // Selection survives paging and applies to every non-deleted object
     // across the whole dataset — not just the current page.
@@ -236,6 +416,8 @@ export function initObjectsUI() {
     function updateSelectionCount() {
       document.getElementById('zip-selected-count').textContent = `${selectedIds.size} selected`;
       document.getElementById('btn-download-zip').disabled = selectedIds.size === 0;
+      const addSelBtn = document.getElementById('btn-add-selected-to-site');
+      if (addSelBtn) addSelBtn.disabled = selectedIds.size === 0;
       const selectAll = document.getElementById('obj-select-all');
       if (selectAll) {
         const eligible = eligibleIds();
@@ -272,13 +454,47 @@ export function initObjectsUI() {
   document.getElementById('objects-page-prev').addEventListener('click',  () => { pageIndex--; render(); });
   document.getElementById('objects-page-next').addEventListener('click',  () => { pageIndex++; render(); });
   document.getElementById('objects-page-last').addEventListener('click',  () => {
-    pageIndex = Math.max(0, Math.ceil(sortedObjects().length / pageSize) - 1);
+    pageIndex = Math.max(0, Math.ceil(buildDisplayList(sortedObjects()).length / pageSize) - 1);
     render();
   });
   pageSizeEl.addEventListener('change', () => {
     pageSize = parseInt(pageSizeEl.value, 10) || 50;
     pageIndex = 0;
     render();
+  });
+
+  // Bulk: add every selected object to the Site Builder draft. Objects
+  // that already have filename metadata are added directly; those
+  // without are skipped with a warning so the user can set a filename
+  // via the per-row "Add to site" prompt instead.
+  document.addEventListener('click', (e) => {
+    if (!e.target || e.target.id !== 'btn-add-selected-to-site') return;
+    if (selectedIds.size === 0) return;
+    const byId = new Map(allObjects.map(o => [o.id, o]));
+    let added = 0;
+    let skippedNoName = 0;
+    let skippedMissing = 0;
+    for (const id of selectedIds) {
+      const obj = byId.get(id);
+      if (!obj) { skippedMissing++; continue; }
+      // Preserve the full path but drop the source site's UUID prefix
+      // before it lands in a new manifest.
+      const clean = obj.filename
+        ? sanitizeDisplayFilename(stripUploadUuid(obj.filename)).trim()
+        : '';
+      if (!clean) { skippedNoName++; continue; }
+      addToDraft({ id, filename: clean, size: obj.size || 0 });
+      added++;
+    }
+    const parts = [`✓ Added ${added} to site builder`];
+    if (skippedNoName) {
+      parts.push(
+        `${skippedNoName} skipped (no filename metadata — use the row's "Add to site" button to name them)`,
+      );
+    }
+    if (skippedMissing) parts.push(`${skippedMissing} not found`);
+    const cls = added > 0 ? 'pass' : 'fail';
+    panelStatus().innerHTML = `<span class="${cls}">${parts.join(' · ')}</span>`;
   });
 
   // Open ZIP builder with the currently-selected objects (across all pages).
@@ -299,9 +515,15 @@ export function initObjectsUI() {
         tr.style.borderBottom = '1px solid #222';
         tr.dataset.objectId = id;
         tr.dataset.size = sizeBytes;
+        // Default the editable filename to a disk-safe form of the
+        // object's metadata filename (slashes flattened to `_`) — the
+        // ZIP writes each entry as a flat leaf. Fall back to an id
+        // stub when there's no metadata or it sanitizes to empty.
+        const defaultName =
+          (obj.filename && sanitizeFilename(obj.filename)) || `${id.substring(0, 16)}.sia`;
         tr.innerHTML = `
           <td style="padding:0.5rem;">
-            <input type="text" class="zip-filename" value="${id.substring(0, 16)}.sia"
+            <input type="text" class="zip-filename" value="${_esc(defaultName)}"
               style="width:100%; font-size:0.85rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.3rem 0.5rem;" />
             <div style="font-size:0.7rem; color:#555; margin-top:0.2rem; font-family:monospace;">${id}</div>
             <div class="zip-row-progress" style="margin-top:0.3rem; display:none;">
@@ -493,13 +715,93 @@ export function initObjectsUI() {
     document.getElementById('zip-builder-download').disabled = false;
   });
 
+  // Site Builder — "Add to site" / "Remove from site" buttons route
+  // through these. The draft lives in `site-builder.js` and persists
+  // across reloads via localStorage. Re-rendering is driven by the
+  // `onDraftChange` subscription below so the button label flips
+  // immediately after a mutation from any source.
+  window.addToSiteBuilder = (objectId) => {
+    const match = allObjects.find((o) => o.id === objectId);
+    if (!match) return;
+    // Manifest paths preserve slashes (`assets/app.js`), so sanitize
+    // with the display-level helper which only strips invisibles.
+    // `stripUploadUuid` drops the per-upload UUID prefix our folder-
+    // upload flow embeds — the new site shouldn't inherit the source
+    // site's UUID. Only prompt when there's no metadata to default from.
+    let clean = match.filename
+      ? sanitizeDisplayFilename(stripUploadUuid(match.filename)).trim()
+      : '';
+    if (!clean) {
+      const raw = prompt('This object has no filename. Enter one for the site:', `${objectId.substring(0, 8)}.bin`);
+      if (raw === null) return;
+      clean = sanitizeDisplayFilename(raw).trim();
+      if (!clean) {
+        panelStatus().innerHTML = '<span class="fail">Name is empty or invalid.</span>';
+        return;
+      }
+    }
+    addToDraft({ id: objectId, filename: clean, size: match.size || 0 });
+    panelStatus().innerHTML = `<span class="pass">✓ Added ${_esc(clean)} to site builder</span>`;
+  };
+
+  window.removeFromSiteBuilder = (objectId) => {
+    removeFromDraft(objectId);
+    panelStatus().innerHTML = '<span style="color:#888;">Removed from site builder</span>';
+  };
+
+  // Flip row button labels when the draft changes from anywhere
+  // (e.g. the Upload Site page's remove/clear actions).
+  onDraftChange(() => {
+    if (allObjects.length > 0) render();
+  });
+
+  // Rename (or initially set) an object's filename metadata. The SDK
+  // doesn't expose a rename primitive — we overwrite the metadata
+  // envelope and push it via `updateObjectMetadata`. Input is
+  // sanitized the same way read-path filenames are, so rename can't
+  // introduce values the rest of the UI won't accept.
+  window.renameObjectById = async (objectId) => {
+    const status = panelStatus();
+    const match = allObjects.find(o => o.id === objectId);
+    const current = match && match.filename ? match.filename : '';
+    const raw = prompt('Enter a name for this object:', current);
+    if (raw === null) return; // user cancelled
+    const clean = sanitizeFilename(raw);
+    if (!clean) {
+      status.innerHTML = '<span class="fail">Name is empty or invalid after sanitizing.</span>';
+      return;
+    }
+    if (clean === current) return; // no-op
+
+    try {
+      status.textContent = 'Renaming…';
+      const sdk = await connectSdk(status);
+      if (!sdk) return;
+      const obj = await sdk.object(objectId);
+      obj.updateMetadata(encodeMetadata({ filename: clean }));
+      await sdk.updateObjectMetadata(obj);
+      if (match) match.filename = clean;
+      render();
+      status.innerHTML = `<span class="pass">✓ Renamed to ${_esc(clean)}</span>`;
+    } catch (e) {
+      status.innerHTML = `<span class="fail">Failed to rename: ${_esc(e.message || String(e))}</span>`;
+    }
+  };
+
   // Helper function to download an object by ID
   window.downloadObjectById = async (objectId) => {
     const dlUrl = document.getElementById('dl-url');
     const dlFilename = document.getElementById('dl-filename');
 
+    // Fall back to an object-id stub when there's no metadata. When
+    // metadata is present we flatten any slashes into `_` since the
+    // save-as dialog accepts a single filename, not a path.
+    const match = allObjects.find(o => o.id === objectId);
+    const suggested =
+      (match && match.filename && sanitizeFilename(match.filename)) ||
+      `download_${objectId.substring(0, 8)}`;
     dlUrl.value = objectId;
-    dlFilename.value = 'download_' + objectId.substring(0, 8);
+    dlFilename.value = suggested;
 
     // Switch to download tab and trigger download
     openOrActivateInternalTab('download');
@@ -562,22 +864,32 @@ export function initObjectsUI() {
   };
 
 
-  // Helper function to view an object in the browser
+  // Helper function to view an object in the browser. Objects flagged
+  // as sia-site manifests are opened via `sia-site://<id>` so the
+  // browser routes them through the site loader (service worker bridge,
+  // auto-index rendering, etc.) instead of showing the raw JSON.
   window.viewObjectById = async (objectId) => {
+    const match = allObjects.find(o => o.id === objectId);
+    const url = match && match.isManifest ? `sia-site://${objectId}` : objectId;
     const tab = getOrCreateActiveBrowserTab();
-    tab.url = objectId;
-    tab.label = objectId.length > 30 ? objectId.substring(0, 30) + '...' : objectId;
-    setLastBrowserUrl(objectId);
+    tab.url = url;
+    tab.label = url.length > 30 ? url.substring(0, 30) + '...' : url;
+    setLastBrowserUrl(url);
     renderTabBar();
 
     const addressBar = document.getElementById('chrome-address-bar');
-    addressBar.value = objectId;
+    addressBar.value = url;
     loadContentWithAutoDetect();
   };
 
-  // Helper function to share an object (generate share URL)
+  // Helper function to share an object (generate share URL). For
+  // sia-site manifests the resulting `sia://` URL is rewritten to
+  // `sia-site://` so pasting it into the browser opens the site rather
+  // than downloading the raw manifest bytes.
   window.shareObjectById = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
+    const match = allObjects.find(o => o.id === objectId);
+    const isManifest = !!(match && match.isManifest);
 
     // Show configuration modal first
     const configModal = document.createElement('div');
@@ -587,19 +899,28 @@ export function initObjectsUI() {
       justify-content: center; z-index: 1000;
     `;
 
+    const titleLabel = isManifest ? '🌐 Share Sia site' : '🔗 Generate Share URL';
+    // Sites typically want longer validity than a casual file share —
+    // default to 1 year so the link doesn't expire mid-tour.
+    const defaultNum = isManifest ? '1' : '24';
+    const hoursSel = isManifest ? '' : '';
+    const daysSel = isManifest ? '' : ' selected';
+    const yearsSel = isManifest ? ' selected' : '';
+
     configModal.innerHTML = `
       <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:500px; width:90%; border:1px solid #333;">
-        <h3 style="margin:0 0 1rem 0; color:#10b981;">🔗 Generate Share URL</h3>
+        <h3 style="margin:0 0 1rem 0; color:#10b981;">${titleLabel}</h3>
         <p style="color:#888; margin-bottom:1.5rem;">Object: ${shortId}</p>
 
         <div style="margin-bottom:1.5rem;">
           <div style="color:#e0e0e0; margin-bottom:0.5rem; font-size:0.9rem;">Expires in</div>
           <div style="display:flex; gap:0.5rem; align-items:center;">
-            <input id="share-modal-duration" type="number" value="24" min="1" style="width:5rem; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;" />
+            <input id="share-modal-duration" type="number" value="${defaultNum}" min="1" style="width:5rem; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;" />
             <select id="share-modal-unit" style="flex:1; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;">
-              <option value="3600000">hours</option>
-              <option value="86400000" selected>days</option>
+              <option value="3600000"${hoursSel}>hours</option>
+              <option value="86400000"${daysSel}>days</option>
               <option value="604800000">weeks</option>
+              <option value="31536000000"${yearsSel}>years</option>
             </select>
           </div>
         </div>
@@ -648,9 +969,14 @@ export function initObjectsUI() {
         // Fetch the object
         const obj = await sdk.object(objectId);
 
-        // Generate share URL with configured duration
+        // Generate share URL with configured duration. Manifests get
+        // rewritten to the `sia-site://` scheme so the link opens the
+        // site loader directly.
         const validUntilMs = Date.now() + (duration * unit);
-        const shareUrl = sdk.shareObject(obj, new Date(validUntilMs));
+        const rawShareUrl = sdk.shareObject(obj, new Date(validUntilMs));
+        const shareUrl = isManifest
+          ? 'sia-site://' + rawShareUrl.replace(/^sia:\/\//, '')
+          : rawShareUrl;
 
         // Calculate human-readable duration
         let durationText = `${duration} ${configModal.querySelector('#share-modal-unit').selectedOptions[0].text}`;
@@ -668,8 +994,8 @@ export function initObjectsUI() {
 
         resultModal.innerHTML = `
           <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:600px; width:90%; border:1px solid #333;">
-            <h3 style="margin:0 0 1rem 0; color:#10b981;">🔗 Share URL Generated</h3>
-            <p style="color:#888; margin-bottom:1rem;">Object: ${shortId}</p>
+            <h3 style="margin:0 0 1rem 0; color:#10b981;">${isManifest ? '🌐 Sia Site URL' : '🔗 Share URL Generated'}</h3>
+            <p style="color:#888; margin-bottom:1rem;">${isManifest ? 'Site' : 'Object'}: ${shortId}</p>
             <div style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem; word-break:break-all; font-family:monospace; font-size:0.9rem;">
               ${shareUrl}
             </div>

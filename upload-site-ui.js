@@ -25,6 +25,11 @@ import { _esc, formatSize } from './utils.js';
 import { connectSdk } from './config.js';
 import { withKeepAlive } from './keep-alive.js';
 import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
+import { encodeMetadata, sanitizeFilename } from './object-metadata.js';
+import {
+  getDraft, removeFromDraft, clearDraft, updateFilename as updateDraftFilename,
+  onDraftChange,
+} from './site-builder.js';
 
 // Bottom-right status bar proxy for the currently-active tab.
 function panelStatus() {
@@ -55,6 +60,13 @@ export function initUploadSiteUI() {
   const copyBtn   = document.getElementById('us-copy-btn');
   const validityNum  = document.getElementById('us-validity-num');
   const validityUnit = document.getElementById('us-validity-unit');
+  const sbCount      = document.getElementById('sb-count');
+  const sbEmpty      = document.getElementById('sb-empty');
+  const sbListWrap   = document.getElementById('sb-list-wrap');
+  const sbList       = document.getElementById('sb-list');
+  const sbActions    = document.getElementById('sb-actions');
+  const sbPublishBtn = document.getElementById('sb-publish');
+  const sbClearBtn   = document.getElementById('sb-clear');
 
   /** Currently-selected file list with relative paths. */
   let selected = null; // [{ relPath, file }]
@@ -66,14 +78,32 @@ export function initUploadSiteUI() {
     return `${files.length} file${files.length === 1 ? '' : 's'} · ${formatSize(total)}`;
   }
 
+  // Per-upload status labels shown on the right of each file row.
+  // Rendering uses plain-string class names instead of inline styles
+  // so `setFileStatus` can swap them cheaply.
+  const STATUS_STYLES = {
+    pending:   { color: '#555',    label: 'waiting' },
+    packing:   { color: '#eab308', label: 'packing…' },
+    uploading: { color: '#3b82f6', label: 'uploading…' },
+    pinning:   { color: '#a855f7', label: 'pinning…' },
+    done:      { color: '#10b981', label: '✓ pinned' },
+    failed:    { color: '#dc2626', label: '⚠ failed' },
+  };
+
   function renderFileList(files) {
     filesList.innerHTML = '';
     const sorted = [...files].sort((a, b) => a.relPath.localeCompare(b.relPath));
     const shown = sorted.slice(0, FILE_ROW_LIMIT);
     for (const f of shown) {
       const row = document.createElement('div');
-      row.style.cssText = 'display:flex; justify-content:space-between; gap:1rem; padding:0.15rem 0;';
-      row.innerHTML = `<span style="color:#ccc;">${_esc(f.relPath)}</span><span style="color:#555;">${formatSize(f.file.size)}</span>`;
+      row.dataset.relPath = f.relPath;
+      row.style.cssText =
+        'display:grid; grid-template-columns: 1fr auto auto; gap:1rem; padding:0.15rem 0; align-items:baseline;';
+      const s = STATUS_STYLES.pending;
+      row.innerHTML =
+        `<span style="color:#ccc; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${_esc(f.relPath)}</span>` +
+        `<span style="color:#555;">${formatSize(f.file.size)}</span>` +
+        `<span class="us-file-status" style="color:${s.color}; min-width:6rem; text-align:right;">${s.label}</span>`;
       filesList.appendChild(row);
     }
     if (sorted.length > FILE_ROW_LIMIT) {
@@ -81,6 +111,36 @@ export function initUploadSiteUI() {
       more.style.cssText = 'color:#555; padding:0.25rem 0; font-style:italic;';
       more.textContent = `… and ${sorted.length - FILE_ROW_LIMIT} more`;
       filesList.appendChild(more);
+    }
+    // Auto-expand so the user sees progress without clicking into it.
+    filesPane.open = true;
+  }
+
+  // Update the status pill for a single file row (by relative path).
+  function setFileStatus(relPath, state) {
+    const row = filesList.querySelector(`[data-rel-path="${CSS.escape(relPath)}"]`);
+    if (!row) return;
+    const pill = row.querySelector('.us-file-status');
+    if (!pill) return;
+    const s = STATUS_STYLES[state] || STATUS_STYLES.pending;
+    pill.style.color = s.color;
+    pill.textContent = s.label;
+  }
+
+  // Bulk-flip every currently-non-terminal row to a new state. Used
+  // when the SDK's packed-upload transitions collectively (e.g. all
+  // packed rows flip to "uploading" the moment `finalize()` starts).
+  function bulkSetStatus(fromState, toState) {
+    const rows = filesList.querySelectorAll('[data-rel-path]');
+    for (const row of rows) {
+      const pill = row.querySelector('.us-file-status');
+      if (!pill) continue;
+      const current = pill.textContent.trim();
+      const expected = STATUS_STYLES[fromState]?.label;
+      if (expected && current !== expected) continue;
+      const s = STATUS_STYLES[toState];
+      pill.style.color = s.color;
+      pill.textContent = s.label;
     }
   }
 
@@ -268,6 +328,7 @@ export function initUploadSiteUI() {
           const { relPath, file } = selected[i];
           paths.push(relPath);
           cardCur.textContent = `Packing ${relPath} (${formatSize(file.size)}) — ${i + 1} / ${selected.length}`;
+          setFileStatus(relPath, 'packing');
           await Promise.race([
             packed.add(file.stream()),
             abortPromise(abortCtrl.signal),
@@ -282,6 +343,9 @@ export function initUploadSiteUI() {
         const slabCount = typeof packed.slabs === 'function' ? packed.slabs() : packed.slabs;
         cardCur.textContent = `Uploading ${slabCount} slab${slabCount === 1 ? '' : 's'} to hosts…`;
         progress.removeAttribute('value');
+        // All packed rows transition to "uploading" at once — there's
+        // no per-file signal during finalize (slabs, not files).
+        bulkSetStatus('packing', 'uploading');
         const objects = await Promise.race([
           packed.finalize(),
           abortPromise(abortCtrl.signal),
@@ -311,11 +375,29 @@ export function initUploadSiteUI() {
           throw new Error('Invalid inner share URL validity');
         }
         const validUntil = new Date(Date.now() + durMs);
+        // Prefix every file's filename metadata with a per-upload
+        // UUID. The Name column in My Objects sorts alphabetically,
+        // so entries from the same folder upload group together
+        // automatically. Site Builder strips the prefix when adding
+        // an object to a new site.
+        //
+        // `obj.updateMetadata` is a local-only mutation on the
+        // PinnedObject handle; `sdk.pinObject` then seals the object
+        // (metadata included) and commits both slabs and object in
+        // one go. There's NO separate `updateObjectMetadata` call
+        // here — that endpoint requires the object to already be
+        // pinned and would fail with "object contains unpinned slab"
+        // on first pin.
+        const uploadId = crypto.randomUUID();
         for (let i = 0; i < objects.length; i++) {
           if (abortCtrl.signal.aborted) throw new DOMException('cancelled', 'AbortError');
           cardCur.textContent = `Pinning ${paths[i]}`;
+          setFileStatus(paths[i], 'pinning');
+          const taggedPath = `${uploadId}/${paths[i]}`;
+          objects[i].updateMetadata(encodeMetadata({ filename: taggedPath }));
           await sdk.pinObject(objects[i]);
           manifest[paths[i]] = sdk.shareObject(objects[i], validUntil);
+          setFileStatus(paths[i], 'done');
         }
 
         // Upload the manifest itself. It can't go through the packed
@@ -324,8 +406,12 @@ export function initUploadSiteUI() {
         cardCur.textContent = 'Uploading manifest';
         const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
         const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
+        const manifestPinned = new PinnedObject();
+        manifestPinned.updateMetadata(
+          encodeMetadata({ filename: `${uploadId}/manifest.json` }),
+        );
         const manifestObj = await Promise.race([
-          sdk.upload(new PinnedObject(), manifestBlob.stream()),
+          sdk.upload(manifestPinned, manifestBlob.stream()),
           abortPromise(abortCtrl.signal),
         ]);
         await sdk.pinObject(manifestObj);
@@ -350,6 +436,12 @@ export function initUploadSiteUI() {
           panelStatus().innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
           cardCur.textContent = 'Failed';
         }
+        // Any row still in flight (packing / uploading / pinning) is
+        // now broken — flip them to "failed" so the user can see which
+        // files didn't land. Successful rows stay at "done".
+        bulkSetStatus('packing', 'failed');
+        bulkSetStatus('uploading', 'failed');
+        bulkSetStatus('pinning', 'failed');
         if (packed) {
           try { packed.cancel(); } catch (_) {}
         }
@@ -361,6 +453,145 @@ export function initUploadSiteUI() {
       }
     });
   }
+
+  // --- Site Builder ---
+  //
+  // Lets the user assemble a sia-site from objects they've already
+  // uploaded. Entries are collected from My Objects via the
+  // `site-builder` module and published here, reusing the same
+  // `Share for` validity input and the same result card as the
+  // folder-upload flow above.
+
+  function renderSiteBuilder() {
+    const entries = getDraft();
+    sbCount.textContent = `${entries.length} object${entries.length === 1 ? '' : 's'}`;
+    if (entries.length === 0) {
+      sbEmpty.style.display = '';
+      sbListWrap.style.display = 'none';
+      sbActions.style.display = 'none';
+      return;
+    }
+    sbEmpty.style.display = 'none';
+    sbListWrap.style.display = '';
+    sbActions.style.display = 'flex';
+    let html = '<tbody>';
+    for (const e of entries) {
+      const shortId = e.id.substring(0, 4) + '…' + e.id.substring(e.id.length - 4);
+      const sizeLabel = e.size ? formatSize(e.size) : 'N/A';
+      html += `<tr style="border-bottom:1px solid #1a1a1a;">
+        <td style="padding:0.4rem 0.6rem;" title="${_esc(e.filename)}">${_esc(e.filename)}</td>
+        <td style="padding:0.4rem 0.6rem; font-family:var(--font-mono); font-size:0.75rem; color:#888;" title="${e.id}">${shortId}</td>
+        <td style="padding:0.4rem 0.6rem; color:#888; font-size:0.8rem; white-space:nowrap;">${sizeLabel}</td>
+        <td style="padding:0.4rem 0.6rem; white-space:nowrap;">
+          <button data-id="${e.id}" class="sb-rename" style="padding:0.15rem 0.5rem; font-size:0.75rem;">Rename</button>
+          <button data-id="${e.id}" class="sb-remove" style="padding:0.15rem 0.5rem; font-size:0.75rem; background:#dc2626; color:white; margin-left:0.25rem;">Remove</button>
+        </td>
+      </tr>`;
+    }
+    html += '</tbody>';
+    sbList.innerHTML = html;
+  }
+
+  // Rename (in-draft only — doesn't touch the object's metadata) and
+  // remove buttons are delegated on the table so we don't have to
+  // rebind on every re-render.
+  sbList.addEventListener('click', (ev) => {
+    const t = ev.target;
+    if (!(t instanceof HTMLElement)) return;
+    const id = t.dataset.id;
+    if (!id) return;
+    if (t.classList.contains('sb-rename')) {
+      const entry = getDraft().find((e) => e.id === id);
+      if (!entry) return;
+      const raw = prompt('Rename in this site:', entry.filename);
+      if (raw === null) return;
+      const clean = sanitizeFilename(raw);
+      if (!clean) {
+        panelStatus().innerHTML = '<span class="fail">Name is empty or invalid.</span>';
+        return;
+      }
+      updateDraftFilename(id, clean);
+    } else if (t.classList.contains('sb-remove')) {
+      removeFromDraft(id);
+    }
+  });
+
+  sbClearBtn.addEventListener('click', () => {
+    if (!confirm('Clear all entries from the site builder draft?')) return;
+    clearDraft();
+  });
+
+  sbPublishBtn.addEventListener('click', async () => {
+    const entries = getDraft();
+    if (entries.length === 0) return;
+
+    const durMs = parseFloat(validityNum.value) * parseInt(validityUnit.value, 10);
+    if (!isFinite(durMs) || durMs <= 0) {
+      panelStatus().innerHTML = '<span class="fail">Invalid share validity.</span>';
+      return;
+    }
+    const validUntil = new Date(Date.now() + durMs);
+
+    sbPublishBtn.disabled = true;
+    await withKeepAlive(async () => {
+      try {
+        panelStatus().textContent = 'Connecting…';
+        const sdk = await connectSdk(panelStatus());
+        if (!sdk) return;
+
+        // Build the manifest entry-by-entry. Duplicate filenames get
+        // a `-N` suffix before the extension so the manifest keys stay
+        // unique without silently overwriting.
+        const manifest = {};
+        const seen = new Set();
+        for (let i = 0; i < entries.length; i++) {
+          const e = entries[i];
+          panelStatus().textContent = `Fetching ${e.filename} (${i + 1}/${entries.length})…`;
+          let path = e.filename;
+          let suffix = 1;
+          while (seen.has(path)) {
+            const dot = e.filename.lastIndexOf('.');
+            path = dot > 0
+              ? e.filename.slice(0, dot) + `-${suffix}` + e.filename.slice(dot)
+              : `${e.filename}-${suffix}`;
+            suffix++;
+          }
+          seen.add(path);
+          const obj = await sdk.object(e.id);
+          manifest[path] = sdk.shareObject(obj, validUntil);
+        }
+
+        panelStatus().textContent = 'Uploading manifest…';
+        // Tag the manifest with a UUID-prefixed filename so it groups
+        // alphabetically next to any other artifacts from this publish
+        // session if we add them later (e.g. re-uploaded files).
+        const uploadId = crypto.randomUUID();
+        const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
+        const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
+        const manifestPinned = new PinnedObject();
+        manifestPinned.updateMetadata(
+          encodeMetadata({ filename: `${uploadId}/manifest.json` }),
+        );
+        const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
+        await sdk.pinObject(manifestObj);
+
+        const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
+        const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
+        resultId.textContent = manifestObj.id();
+        resultUrl.textContent = url;
+        result.style.display = '';
+        panelStatus().innerHTML = `<span class="pass">Site published from builder draft.</span>`;
+        clearDraft();
+      } catch (e) {
+        panelStatus().innerHTML = `<span class="fail">Publish failed: ${_esc(e.message || String(e))}</span>`;
+      } finally {
+        sbPublishBtn.disabled = false;
+      }
+    });
+  });
+
+  renderSiteBuilder();
+  onDraftChange(renderSiteBuilder);
 }
 
 // Rejects when the signal aborts — lets us Promise.race against

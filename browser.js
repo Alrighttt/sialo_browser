@@ -21,7 +21,8 @@ import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
-import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN } from './sia-site.js';
+import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource } from './sia-site.js';
+import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 
 // -- Decentralized Browser (HTML Viewer with Navigation) --
 
@@ -106,6 +107,11 @@ window.addEventListener('message', (event) => {
   // 1. Link navigation — navigate within the source tab
   if (d.type === 'SIA_NAVIGATE' && typeof d.url === 'string') {
     _dbg('🔗 Sia link clicked in iframe:', d.url);
+    // Cancel any in-flight `sia-ext-*` streams targeting this iframe
+    // — we're about to replace its src, after which postMessages to
+    // the old (HOSTED_ORIGIN) target will be dropped and flood the
+    // console.
+    cancelStreamsForSource(event.source);
     if (sourceTab) {
       sourceTab.url = d.url;
       sourceTab.label = d.url.length > 30 ? d.url.substring(0, 30) + '...' : d.url;
@@ -762,7 +768,22 @@ async function redownloadHistoryItem(item, index) {
   tab.isStreaming = false;
 
   try {
-    const sdk = await connectSdk(status);
+    // Sia-sites are served via the sandbox SW, never as a cached
+    // blob — re-load them by dropping back into the normal load flow,
+    // which already handles the `sia-site://` branch and will update
+    // history in place via addToHistory's dedup.
+    if (item.fileType === 'sia-site') {
+      const url = item.originalUrl || item.displayUrl;
+      const bar = document.getElementById('chrome-address-bar');
+      if (bar) bar.value = url;
+      await loadContentWithAutoDetect();
+      return;
+    }
+
+    // `let` (not `const`) — the resolver may swap the SDK for a
+    // fallback profile below, and re-assignment to a const throws
+    // "Assignment to constant variable" at runtime.
+    let sdk = await connectSdk(status);
     if (!sdk) return;
 
     // For video items, re-stream via WebCodecs (or MSE fallback)
@@ -1003,6 +1024,7 @@ async function loadContentWithAutoDetect() {
       tab.contentLoaded = true;
       renderTabBar();
       if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'sia-site' });
+      addToHistory(url, null, tab.label, false, url, 'sia-site');
       updateNavButtons();
       status.innerHTML = '<span class="pass">Site loaded</span>';
     } catch (e) {
@@ -1361,93 +1383,70 @@ document.getElementById('btn-go').addEventListener('click', () => {
 // Back/Forward buttons
 document.getElementById('btn-back').addEventListener('click', goBack);
 
-// Open in external tab (with warning)
+// Save-to-disk shortcut. Reads the current address-bar URL, resolves
+// the object for its metadata, fills in the Download File panel's URL
+// + filename inputs (using the metadata filename if present, prompting
+// the user otherwise), switches to that panel, and clicks Download.
+// All of the save-dialog / worker / progress handling lives in
+// download-ui.js — this button is just an entry point that pre-fills
+// it from the current address-bar URL.
 document.getElementById('btn-external-tab').addEventListener('click', async () => {
-  // Show warning first
-  const confirmed = confirm('⚠️ WARNING: This will allow the downloaded page to execute JavaScript!\n\nOpening content in an external tab removes all sandbox protections. Only proceed if you trust the content.\n\nUse the Go button (sandboxed iframe) for untrusted content.');
+  // Status goes to whichever tab the user is looking at. We explicitly
+  // avoid `getOrCreateActiveBrowserTab` here — creating a blank browser
+  // tab just to host an error message is worse than showing the error
+  // on the current internal panel.
+  const active = getActiveTab();
+  const status = active ? tabStatusProxy(active).status : null;
+  const setStatus = (html) => { if (status) status.innerHTML = html; };
 
-  if (!confirmed) return;
-
-  const tab = getOrCreateActiveBrowserTab();
-  const { status, progress } = tabStatusProxy(tab);
-
-  // Check if we have a current history item with blob URL - reuse it!
-  if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
-    const currentItem = browserHistory[currentHistoryIndex];
-    if (currentItem.blobUrl) {
-      _dbg('Reusing already-downloaded blob for external tab');
-      window.open(currentItem.blobUrl, '_blank');
-      status.innerHTML = '<span class="pass">✓ Opened in external tab (reused downloaded file)!</span>';
-      return;
-    }
-  }
-
-  // No current blob URL - need to download from address bar
   const addressBar = document.getElementById('chrome-address-bar');
   const url = addressBar.value.trim();
-
   if (!url) {
-    status.innerHTML = '<span style="color:#f59e0b">⚠️ Enter a URL in the address bar first.</span>';
+    setStatus('<span style="color:#f59e0b">⚠️ Enter an object ID or share URL in the address bar first.</span>');
     return;
   }
 
-  progress.style.display = 'none';
-  progress.value = 0;
-
+  // Resolve the object to read its filename metadata. If this fails
+  // we still let the user download — they can type a name manually.
+  let suggestedName = '';
   try {
-    status.textContent = 'Downloading for external tab...';
-
-    const { blob: downloadedBlob } = await parallelDownload(url, status, progress, 'Downloading');
-
-    // Detect MIME type
-    status.textContent = 'Detecting file type...';
-    const detectedType = await fileTypeFromBlob(downloadedBlob);
-
-    let mimeType = 'application/octet-stream';
-    let fileType = 'external';
-
-    if (detectedType) {
-      mimeType = detectedType.mime;
-      _dbg('External tab - detected MIME type:', mimeType);
-
-      // Categorize for history
-      if (mimeType.startsWith('image/')) fileType = 'image';
-      else if (mimeType.startsWith('video/')) fileType = 'video';
-      else if (mimeType.startsWith('audio/')) fileType = 'audio';
-      else if (mimeType === 'application/pdf') fileType = 'pdf';
-      else if (mimeType === 'text/html') fileType = 'html';
-      else if (mimeType.startsWith('text/')) fileType = 'text';
-    } else {
-      // Fallback: check if it's valid UTF-8 text
-      try {
-        const sample = await downloadedBlob.slice(0, 1024).arrayBuffer();
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(sample);
-        if (text.includes('<html') || text.includes('<!DOCTYPE')) {
-          mimeType = 'text/html';
-          fileType = 'html';
-        } else {
-          mimeType = 'text/plain';
-          fileType = 'text';
-        }
-      } catch {
-        // Binary file, use default
-        _dbg('External tab - could not detect type, using default');
-      }
+    if (status) status.textContent = 'Reading object metadata…';
+    const sdk = await connectSdk(status || { set textContent(_) {}, set innerHTML(_) {} });
+    if (sdk) {
+      const { obj } = await resolveObject(url, sdk);
+      const raw = filenameForSave(obj.metadata());
+      // Metadata may carry a per-upload UUID prefix from folder uploads
+      // (`uuid/path/file.ext`). The prefix is useful for sorting in My
+      // Objects but not as a save-as filename — strip it.
+      if (raw) suggestedName = sanitizeFilename(stripUploadUuid(raw)) || raw;
     }
-
-    // Open in external tab with detected MIME type
-    const blob = new Blob([downloadedBlob], { type: mimeType });
-    const blobUrl = URL.createObjectURL(blob);
-    window.open(blobUrl, '_blank');
-
-    // Add to history with external flag
-    const displayUrl = `External (${fileType}): ${url}`;
-    addToHistory(displayUrl, blobUrl, displayUrl, true, url, fileType);
-
-    status.innerHTML = `<span class="pass">✓ Opened in external tab as ${_esc(mimeType)}!</span>`;
   } catch (e) {
-    status.innerHTML = `<span class="fail">Error: ${_esc(e.message)}</span>`;
+    _dbgWarn('Save: metadata lookup failed, falling back to prompt:', e);
   }
+
+  if (!suggestedName) {
+    const entered = prompt(
+      'This object has no filename metadata. Enter a filename to save as:',
+      'download',
+    );
+    if (entered === null) {
+      if (status) status.textContent = '';
+      return;
+    }
+    const clean = sanitizeFilename(entered);
+    if (!clean) {
+      setStatus('<span class="fail">Filename is empty or invalid.</span>');
+      return;
+    }
+    suggestedName = clean;
+  }
+
+  // Hand off to the Download File panel: fill its inputs, activate
+  // the panel, then click its Download button.
+  document.getElementById('dl-url').value = url;
+  document.getElementById('dl-filename').value = suggestedName;
+  openOrActivateInternalTab('download');
+  setTimeout(() => document.getElementById('btn-download').click(), 100);
 });
 
 // Listen for messages from iframe (e.g., from example.html buttons)
