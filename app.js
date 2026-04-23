@@ -591,6 +591,15 @@ document.getElementById('cfg-profile-delete').addEventListener('click', () => {
 urlInput.addEventListener('input', () => { saveActiveProfile(profileData); });
 keyInput.addEventListener('input', () => { saveActiveProfile(profileData); });
 
+// The registration wizard writes to localStorage and sets the cfg-url /
+// cfg-key input values programmatically, which does NOT fire `input`.
+// Without this listener the profile entry stays at its old (usually
+// empty) values, and on the next page reload activateProfile() writes
+// those empty values back over localStorage — the app-key "disappears"
+// every reload. Sync the profile from the current input values whenever
+// the wizard signals a change.
+window.addEventListener('profile-updated', () => { saveActiveProfile(profileData); });
+
 document.getElementById('cfg-key-toggle').addEventListener('click', () => {
   const btn = document.getElementById('cfg-key-toggle');
   if (keyInput.type === 'password') { keyInput.type = 'text'; btn.textContent = 'hide'; }
