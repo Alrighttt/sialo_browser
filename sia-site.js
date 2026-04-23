@@ -165,6 +165,12 @@ async function onMessage(e) {
       const target = d.url;
       if (typeof target !== 'string') return;
       if (!/^(sia|sia-site):\/\//i.test(target)) return;
+      // Cancel any in-flight ext-streams owned by the navigating
+      // iframe. Without this, their postMessage chunks keep targeting
+      // the old document and Chrome floods the console with
+      // "target origin does not match recipient" warnings — which
+      // can also stall the new page's bootstrap.
+      cancelStreamsForSource(e.source);
       const bar = document.getElementById('chrome-address-bar');
       if (bar) bar.value = target;
       if (typeof window.handleChromeBarNavigation === 'function') {
