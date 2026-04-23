@@ -435,6 +435,23 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
   loadContentWithAutoDetect();
 }
 
+// Safety net for iframe link-click navigation. The sandbox bridge is
+// supposed to preventDefault() on sia:// and sia-site:// link clicks
+// inside hosted sites and postMessage('sia-navigate') to us. When that
+// script fails to load or run (SW not controlling yet, blocked request,
+// Firefox Feature-Policy quirk) the default navigation fires and the
+// parent's CSP frame-src directive blocks it — with "none of the links
+// work" as the user-visible symptom. Catch the CSP violation here and
+// route the blocked URL through our normal navigation flow.
+window.addEventListener('securitypolicyviolation', (e) => {
+  if (!e.violatedDirective || !e.violatedDirective.startsWith('frame-src')) return;
+  const blocked = e.blockedURI || '';
+  if (!/^(sia|sia-site):\/\//i.test(blocked)) return;
+  const bar = document.getElementById('chrome-address-bar');
+  if (bar) bar.value = blocked;
+  window.handleChromeBarNavigation();
+});
+
 // Streaming download helper — avoids holding the entire file in WASM memory.
 // Returns { blob, elapsed } where blob is assembled from streamed chunks.
 // Download helpers → download.js
