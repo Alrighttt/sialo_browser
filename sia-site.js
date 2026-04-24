@@ -226,17 +226,27 @@ async function onMessage(e) {
       }
       try {
         const { body, contentType } = await resolveManifestPath(manifestId, d.path);
-        e.source.postMessage(
-          { type: 'sia-response', id: d.id, body, contentType },
-          HOSTED_ORIGIN,
-          body ? [body] : [],
-        );
+        // The requesting iframe may have navigated away or been
+        // destroyed (tab closed, sandbox 502 retry, site switch) while
+        // the resolve was in flight. Chrome returns null on e.source in
+        // that case; posting to null throws and kills this handler.
+        if (!e.source) return;
+        try {
+          e.source.postMessage(
+            { type: 'sia-response', id: d.id, body, contentType },
+            HOSTED_ORIGIN,
+            body ? [body] : [],
+          );
+        } catch (_) { /* recipient gone */ }
       } catch (err) {
         _dbgWarn('[sia-site] resolve failed:', d.path, err);
-        e.source.postMessage(
-          { type: 'sia-response', id: d.id, error: err.message || String(err) },
-          HOSTED_ORIGIN,
-        );
+        if (!e.source) return;
+        try {
+          e.source.postMessage(
+            { type: 'sia-response', id: d.id, error: err.message || String(err) },
+            HOSTED_ORIGIN,
+          );
+        } catch (_) { /* recipient gone */ }
       }
       return;
   }
