@@ -225,7 +225,21 @@ async function onMessage(e) {
         return;
       }
       try {
-        const { body, contentType } = await resolveManifestPath(manifestId, d.path);
+        // Cap the per-path resolve. Without a timeout the iframe's SW
+        // sits on a pending fetch forever when the SDK can't reach
+        // hosts (e.g. all WebTransport sessions refused with
+        // ERR_METHOD_NOT_SUPPORTED on some browser/network combos) —
+        // users see a blank iframe with "Loading site…" for the
+        // session's lifetime. 30s leaves room for a cold WebTransport
+        // warm-up while still surfacing a visible error when the
+        // network is actually broken.
+        const result = await Promise.race([
+          resolveManifestPath(manifestId, d.path),
+          new Promise((_, reject) => setTimeout(
+            () => reject(new Error("Sia network unreachable (can't fetch shards)")),
+            30000,
+          )),
+        ]);
         // The requesting iframe may have navigated away or been
         // destroyed (tab closed, sandbox 502 retry, site switch) while
         // the resolve was in flight. Chrome returns null on e.source in
@@ -233,9 +247,9 @@ async function onMessage(e) {
         if (!e.source) return;
         try {
           e.source.postMessage(
-            { type: 'sia-response', id: d.id, body, contentType },
+            { type: 'sia-response', id: d.id, body: result.body, contentType: result.contentType },
             HOSTED_ORIGIN,
-            body ? [body] : [],
+            result.body ? [result.body] : [],
           );
         } catch (_) { /* recipient gone */ }
       } catch (err) {

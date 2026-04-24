@@ -87,7 +87,25 @@ export async function connectSdk(statusEl) {
   const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
   statusEl.textContent = `App key created. Public key: ${appKey.publicKey()}\nConnecting to indexer...`;
   const builder = new Builder(url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
-  const sdk = await builder.connected(appKey);
+  // Cap the handshake. builder.connected() makes an HTTP call to the
+  // indexer to verify the key; if the indexer is unreachable or its
+  // CORS preflight hangs (seen on sia.storage's Next.js middleware
+  // returning 404 on OPTIONS), reqwest on WASM waits indefinitely.
+  // Without a timeout every subsequent SDK call stalls behind this
+  // one, which surfaces to the user as "Not connected" forever.
+  let sdk;
+  try {
+    sdk = await Promise.race([
+      builder.connected(appKey),
+      new Promise((_, reject) => setTimeout(
+        () => reject(new Error(`Indexer unreachable at ${url} (timed out after 15s)`)),
+        15000,
+      )),
+    ]);
+  } catch (e) {
+    statusEl.innerHTML = `<span class="fail">${(e && e.message) || 'Could not reach indexer'}</span>`;
+    return null;
+  }
   if (!sdk) {
     statusEl.innerHTML = '<span class="fail">App key not recognized by this indexer. Register first.</span>';
     return null;
