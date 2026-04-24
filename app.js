@@ -658,11 +658,40 @@ debugLoggingCheckbox.addEventListener('change', () => {
 
 // Config helpers, SDK connection → config.js
 
-await init();
+// Surface boot progress in the #loading overlay so users hitting a hung
+// module-init (Firefox-Intel-Mac WASM streaming regressions, SES lockdown
+// corrupting intrinsics, etc.) can see where things stall instead of
+// staring at a blank page.
+function setBootStatus(msg, sub) {
+  const m = document.getElementById('loading-msg');
+  const s = document.getElementById('loading-sub');
+  if (m) m.textContent = msg;
+  if (s) s.textContent = sub || '';
+}
+function bootTimeout(promise, label, ms = 30000) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms / 1000}s`)),
+      ms,
+    )),
+  ]);
+}
+async function bootStep(label, sub, fn, timeoutMs) {
+  setBootStatus(label, sub);
+  try {
+    await bootTimeout(Promise.resolve().then(fn), label, timeoutMs);
+  } catch (e) {
+    setBootStatus(`Boot failed: ${label}`, e.message || String(e));
+    throw e;
+  }
+}
+
+await bootStep('Loading storage WASM…', '~1.6 MB', () => init(), 45000);
 _dbg('[JS] WASM module initialized successfully');
 
 // Initialize syncer WASM, chain service, and explorer panel
-await syncerInit();
+await bootStep('Loading syncer WASM…', null, () => syncerInit(), 45000);
 _dbg('[JS] Syncer WASM module initialized');
 initKdfWorker();
 await chainInit({
