@@ -579,6 +579,38 @@ async function resolveShareUrlSize(shareUrl) {
   }
 }
 
+// Pull the validity timestamp out of a sia:// share URL. The `sv`
+// query param is the Unix-seconds expiry baked into the signature.
+// Returns a Date, or null if the URL doesn't carry one.
+function shareUrlExpiry(shareUrl) {
+  if (typeof shareUrl !== 'string') return null;
+  const m = shareUrl.match(/[?&]sv=(\d+)/);
+  if (!m) return null;
+  const secs = Number(m[1]);
+  if (!Number.isFinite(secs) || secs <= 0) return null;
+  return new Date(secs * 1000);
+}
+
+// Concise relative text for an auto-index listing: "in 5h", "in 12d",
+// "in 8mo", "in 3.4y", "in 100y", or "expired". Always carries units
+// so the value is self-describing in the column.
+function formatExpiry(date) {
+  if (!date) return '';
+  const now = Date.now();
+  const diffMs = date.getTime() - now;
+  if (diffMs <= 0) return 'expired';
+  const days = diffMs / 86400000;
+  if (days < 1) {
+    const hours = Math.max(1, Math.round(diffMs / 3600000));
+    return `in ${hours}h`;
+  }
+  if (days < 30) return `in ${Math.round(days)}d`;
+  if (days < 365) return `in ${Math.round(days / 30)}mo`;
+  const years = days / 365;
+  if (years < 10) return `in ${years.toFixed(1)}y`;
+  return `in ${Math.round(years)}y`;
+}
+
 // Render a minimal directory-listing page for a sia-site that has no
 // index.html at `dirPath`. Files directly in the directory appear as
 // links with their size; anything further nested collapses into a
@@ -607,6 +639,11 @@ async function renderAutoIndex(manifest, dirPath) {
   const sizeByFile = new Map(sizePairs);
 
   const rows = [];
+  // Column header so non-textual columns (Size, Expires) read as
+  // labels rather than mystery numbers next to a filename.
+  rows.push(
+    `<li class="header"><span class="name">Name</span><span class="size">Size</span><span class="expires">Expires</span></li>`,
+  );
   if (dirPath) {
     rows.push(`<li class="up"><a href="../">..</a></li>`);
   }
@@ -623,8 +660,12 @@ async function renderAutoIndex(manifest, dirPath) {
     const href = shareUrl || f;
     const size = sizeByFile.get(f);
     const sizeLabel = typeof size === 'number' ? _esc(formatSize(size)) : '';
+    const expiry = shareUrlExpiry(shareUrl);
+    const expiryLabel = expiry ? _esc(formatExpiry(expiry)) : '';
+    const expiryTitle = expiry ? _esc(`Share URL expires ${expiry.toUTCString()}`) : '';
+    const expiryClass = expiry && expiry.getTime() <= Date.now() ? 'expires expired' : 'expires';
     rows.push(
-      `<li class="file"><a href="${_esc(href)}"><span class="name">${_esc(f)}</span><span class="size">${sizeLabel}</span></a></li>`,
+      `<li class="file"><a href="${_esc(href)}"><span class="name">${_esc(f)}</span><span class="size">${sizeLabel}</span><span class="${expiryClass}" title="${expiryTitle}">${expiryLabel}</span></a></li>`,
     );
   }
 
@@ -653,7 +694,11 @@ async function renderAutoIndex(manifest, dirPath) {
   li.file a::before { content: '📄'; }
   li.up a::before { content: '↩'; }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .size { color: #6b7280; font-size: 0.8rem; font-variant-numeric: tabular-nums; }
+  .size { color: #6b7280; font-size: 0.8rem; font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
+  .expires { color: #6b7280; font-size: 0.75rem; font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
+  .expires.expired { color: #f87171; }
+  li.header { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem 0.4rem 1.65rem; color: #6b7280; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1e1e1e; }
+  li.header .name, li.header .size, li.header .expires { color: #6b7280; font-size: 0.7rem; }
   footer { margin-top: 2rem; color: #4b5563; font-size: 0.75rem; text-align: center; }
 </style>
 </head>
