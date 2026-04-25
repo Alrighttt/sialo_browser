@@ -17,7 +17,7 @@ import {
   build_channel_manifest_transaction, build_group_manifest_transaction,
   open_private_manifest, open_channel_manifest, open_group_manifest,
   broadcast_v2_transaction, build_v2_transaction,
-  compute_utxo_proofs, v2_output_id, v2_transaction_id,
+  compute_utxo_proofs, v2_output_id,
 } from './pkg/syncer_wasm.js';
 import {
   getWalletEntropy, setWalletEntropy, getWalletHasSaved, setWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
@@ -324,7 +324,6 @@ async function mfstResolve() {
               const txn = v2txns[ti];
               if (!txn.attestations || txn.attestations.length === 0) continue;
               let txid = txn.id || txn.ID || null;
-              if (!txid) { try { txid = v2_transaction_id(JSON.stringify(txn)); } catch (_) {} }
               for (const att of txn.attestations) {
                 const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
                 if (attPk.toLowerCase() !== entry.pubkeyHex.toLowerCase()) continue;
@@ -492,7 +491,6 @@ async function mfstResolve() {
         for (const txn of txns) {
           if (!txn.attestations || txn.attestations.length === 0) continue;
           let txid = txn.id || txn.ID || null;
-          if (!txid) { try { txid = v2_transaction_id(JSON.stringify(txn)); } catch (_) {} }
           for (const att of txn.attestations) {
             const attPk = (att.publicKey || att.public_key || '').replace('ed25519:', '');
             if (attPk.toLowerCase() !== pubkeyHex.toLowerCase()) continue;
