@@ -17,9 +17,9 @@ const GENESIS_IDS = {
 };
 
 const DEFAULT_URLS = {
-  mainnet: 'https://localhost:9984/sia/syncer',
-  mainnet_v2: 'https://localhost:9984/sia/syncer',
-  zen: 'https://localhost:9985/sia/syncer',
+  mainnet: 'https://sync.sialo.io:9984/sia/syncer',
+  mainnet_v2: 'https://sync.sialo.io:9984/sia/syncer',
+  zen: 'https://zen.sync.sialo.io:9984/sia/syncer',
 };
 
 const V2_REQUIRE_HEIGHTS = { mainnet: 530000, mainnet_v2: 530000, zen: 50 };
