@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build syncer_wasm + sync to pkg/",
+      "type": "shell",
+      "command": "RUSTFLAGS='--cfg=web_sys_unstable_apis' wasm-pack build --release --target web && cp pkg/syncer_wasm.js pkg/syncer_wasm_bg.wasm pkg/syncer_wasm.d.ts pkg/syncer_wasm_bg.wasm.d.ts \"${workspaceFolder}/pkg/\" && if [ -d pkg/snippets ]; then rsync -a --delete pkg/snippets/ \"${workspaceFolder}/pkg/snippets/\"; fi && echo \"✓ synced syncer_wasm artifacts to ${workspaceFolder}/pkg\"",
+      "options": {
+        "cwd": "${env:HOME}/repos/syncer/syncer_wasm"
+      },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": true
+      },
+      "problemMatcher": ["$rustc"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}

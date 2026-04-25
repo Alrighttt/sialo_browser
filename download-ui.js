@@ -1,6 +1,7 @@
 import { _esc, formatSize } from './utils.js';
 import { getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
 import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
+import { getActiveServiceWorker } from './download.js';
 
 // -- Download File --
 //
@@ -96,7 +97,37 @@ export function initDownloadUI() {
     const untrack = trackAbort(getActiveTab(), abortCtrl);
     cancelBtn.style.display = '';
 
-    const memBuf = writable ? null : [];
+    // Three sinks for downloaded bytes, in priority order:
+    //   1. `writable`     — FSA writable stream (Chrome/Edge with showSaveFilePicker)
+    //   2. `swMode`       — service-worker-streamed download (Firefox / no FSA)
+    //   3. `memBuf`       — last-ditch in-memory blob (very old browsers)
+    // The SW path is what keeps Firefox from OOMing on multi-GB files: chunks
+    // go straight from the worker to the SW with transferable buffers, and
+    // the browser's download manager streams to disk.
+    let swMode = null;
+    if (!writable) {
+      const sw = await getActiveServiceWorker();
+      if (sw) {
+        const uuid = crypto.randomUUID();
+        const onSWMsg = (e) => {
+          if (e.data?.type === 'download-cancelled' && e.data.uuid === uuid) {
+            abortCtrl.abort();
+          }
+        };
+        navigator.serviceWorker.addEventListener('message', onSWMsg);
+        swMode = {
+          uuid,
+          sw,
+          iframe: null,
+          started: false,
+          cleanup: () => {
+            navigator.serviceWorker.removeEventListener('message', onSWMsg);
+            if (swMode.iframe) { try { swMode.iframe.remove(); } catch (_) {} }
+          },
+        };
+      }
+    }
+    const memBuf = (writable || swMode) ? null : [];
     let bytesDownloaded = 0;
     let size = 0;
     let downloadStart = performance.now();
@@ -160,6 +191,21 @@ export function initDownloadUI() {
             progress.max = size;
             downloadStart = performance.now();
             panelStatus().textContent = `Object found: ${formatSize(size)}. Downloading…`;
+            if (swMode && !swMode.started) {
+              // Hand off to the service worker now that we know the file
+              // size — the iframe-triggered fetch turns into the user's
+              // actual browser download.
+              swMode.sw.postMessage({ type: 'start-download', uuid: swMode.uuid, filename, size });
+              swMode.started = true;
+              setTimeout(() => {
+                if (abortCtrl.signal.aborted) return;
+                const iframe = document.createElement('iframe');
+                iframe.hidden = true;
+                iframe.src = `/_download/${swMode.uuid}`;
+                document.body.appendChild(iframe);
+                swMode.iframe = iframe;
+              }, 50);
+            }
           }
           if (e.data.type === 'chunk') {
             bytesDownloaded += e.data.length;
@@ -168,6 +214,10 @@ export function initDownloadUI() {
               // Serialize writes so we don't corrupt the file on disk.
               writeQueue = writeQueue.then(() => writable.write(bytes))
                 .catch((err) => { reject(err); throw err; });
+            } else if (swMode) {
+              // Forward the ArrayBuffer to the SW with a zero-copy transfer.
+              const buf = e.data.data;
+              swMode.sw.postMessage({ type: 'download-chunk', uuid: swMode.uuid, data: buf }, [buf]);
             } else {
               memBuf.push(new Uint8Array(e.data.data));
             }
@@ -175,11 +225,17 @@ export function initDownloadUI() {
           if (e.data.type === 'done') {
             worker.terminate();
             worker = null;
+            if (swMode) {
+              swMode.sw.postMessage({ type: 'download-end', uuid: swMode.uuid });
+            }
             writeQueue.then(resolve, reject);
           }
           if (e.data.type === 'error') {
             worker.terminate();
             worker = null;
+            if (swMode) {
+              swMode.sw.postMessage({ type: 'download-error', uuid: swMode.uuid, error: e.data.message });
+            }
             reject(new Error(e.data.message));
           }
         };
@@ -192,6 +248,9 @@ export function initDownloadUI() {
 
       if (writable) {
         await writable.close();
+      } else if (swMode) {
+        // The SW already streamed the file to the browser's download
+        // manager — nothing left to assemble here.
       } else {
         const blob = new Blob(memBuf);
         const a = document.createElement('a');
@@ -212,12 +271,22 @@ export function initDownloadUI() {
       if (progressInterval) clearInterval(progressInterval);
       if (writable) { try { await writable.abort(); } catch (_) {} }
       if (worker) { try { worker.terminate(); } catch (_) {} }
+      if (swMode && swMode.started) {
+        try {
+          swMode.sw.postMessage({
+            type: 'download-error',
+            uuid: swMode.uuid,
+            error: abortCtrl.signal.aborted ? 'cancelled' : (e.message || String(e)),
+          });
+        } catch (_) {}
+      }
       if (abortCtrl.signal.aborted) {
         panelStatus().innerHTML = '<span class="fail">Download cancelled</span>';
       } else {
         panelStatus().innerHTML = `<span class="fail">Error: ${_esc(e.message || String(e))}</span>`;
       }
     } finally {
+      if (swMode) swMode.cleanup();
       untrack();
       _currentAbort = null;
       _downloadInProgress = false;
