@@ -1329,23 +1329,6 @@ export function syncNow(net, { restart = false } = {}) {
 export async function init(wasmFunctions) {
   _wasm = wasmFunctions;
 
-  // Load cached header IDs from OPFS and inject into main-thread WASM
-  // so explorer queries don't trigger a full header re-sync
-  for (const net of getEnabledNetworks()) {
-    try {
-      const headerBytes = await opfsLoad(net + ':header_ids');
-      if (headerBytes && headerBytes.byteLength > 0 && _wasm.set_cached_header_ids) {
-        const genesisHex = GENESIS_IDS[net] || GENESIS_IDS[net.replace('_v2', '')];
-        if (genesisHex) {
-          _wasm.set_cached_header_ids(genesisHex, headerBytes);
-          console.log(`[chain] Injected ${headerBytes.byteLength / 32} cached header IDs for ${net}`);
-        }
-      }
-    } catch (e) {
-      console.warn(`[chain] Failed to load cached headers for ${net} (non-fatal):`, e);
-    }
-  }
-
   loadFilters();
 
   // Auto-start sync if any networks are enabled

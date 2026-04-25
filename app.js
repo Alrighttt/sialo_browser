@@ -21,7 +21,6 @@ import syncerInit, {
   open_private_manifest, open_channel_manifest, open_group_manifest,
   build_v2_transaction, broadcast_v2_transaction,
   compute_utxo_proofs, v2_output_id, attestation_key_hash,
-  set_cached_header_ids,
 } from './pkg/syncer_wasm.js';
 import { init as chainInit, onChange as chainOnChange, getSyncState, getEnabledNetworks, getNetworkConfig, getGenesisHex, getAttestationIndexUrl, getActiveNetwork, setActiveNetwork, getRelayState, getMempool, getMempoolTransactions, clearMempool, loadAttestationEntries, exploreQuery as chainExploreQuery, isReady } from './chain.js';
 import { initExplorer, explore as explorerQuery } from './explorer.js';
@@ -723,7 +722,6 @@ await chainInit({
   listen_for_relays, sync_headers, explore_query, scan_wallet_utxos,
   generate_mnemonic, mnemonic_to_entropy, entropy_to_mnemonic,
   encrypt_entropy, decrypt_entropy, derive_addresses,
-  set_cached_header_ids,
 });
 initExplorer();
 initAttestationExplorer();
