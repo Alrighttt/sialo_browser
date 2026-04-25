@@ -149,13 +149,41 @@ async function onMessage(e) {
       return;
 
     case 'sia-bridge-alive':
-    case 'sia-bridge-page':
-      // Informational — we don't track in-site history depth from the
-      // parent. The iframe's own history.back() is the source of truth;
-      // the parent's Back button just postMessages 'sia-nav-back' and
-      // the iframe does the right thing (or a silent no-op if nothing
-      // to go back to).
       return;
+
+    case 'sia-bridge-page': {
+      // Record the iframe's current in-site path on the owning tab's
+      // current navHistory entry. When the user later navigates away
+      // (e.g. clicks a sia-site:// link to another site) and presses
+      // Back, the saved path lets us restore the sub-page they were
+      // last viewing instead of dumping them at the site's root.
+      // The path itself is never source-of-truth for the iframe's own
+      // history — that's still managed inside the iframe via the SW.
+      const tab = findTabByIframeWindow(e.source);
+      if (!tab) return;
+      const entry = tab.navHistory && tab.navHistory[tab.navIndex];
+      if (!entry) return;
+      // Only stash for sia-site entries; other URL types don't need it.
+      if (typeof entry.url !== 'string' || !entry.url.startsWith('sia-site://')) return;
+      const path = (typeof d.path === 'string' && d.path) ? d.path : '/';
+      const search = typeof d.search === 'string' ? d.search : '';
+      const hash = typeof d.hash === 'string' ? d.hash : '';
+      entry.subpath = path + search + hash;
+      return;
+    }
+
+    case 'sia-video-error': {
+      // The video viewer iframe couldn't decode the stream (unsupported
+      // codec like VC-1/HEVC, malformed file, etc.). The iframe shows
+      // its own in-frame error; mirror it in the owning tab's status
+      // bar so the chrome reflects the failure too.
+      const tab = findTabByIframeWindow(e.source);
+      if (tab) {
+        const statusBar = tabStatusProxy(tab).status;
+        statusBar.innerHTML = `<span class="fail">${_esc(d.detail || 'Video playback failed')}</span>`;
+      }
+      return;
+    }
 
     case 'sia-navigate': {
       // A link inside the hosted page pointed at an external scheme
@@ -388,25 +416,34 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
   // (QUIC idle-timeout), every shard fetch errors out on the first
   // reader.read(). We invalidate the SDK and redial. Once we've sent
   // `sia-ext-meta` we're committed, so the retry window closes there.
-  const setup = await withSdkRetry(async () => {
-    const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-    if (!sdk) throw new Error('SDK not connected');
-    const { obj } = await resolveObject(siaUrl, sdk);
-    const totalSize = Number(obj.size());
-    const stream = sdk.download(obj, opts);
-    const reader = stream.getReader();
-    let firstChunk = null;
-    let done = false;
-    if (!opts.offset) {
-      const first = await reader.read();
-      if (!first.done && first.value) {
-        firstChunk = first.value;
-      } else if (first.done) {
-        done = true;
+  // Cap setup at 30s so a broken WebTransport pool (no hosts reachable)
+  // surfaces the error to the SW quickly instead of letting the video
+  // element wait minutes for shards that will never arrive.
+  const setup = await Promise.race([
+    withSdkRetry(async () => {
+      const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
+      if (!sdk) throw new Error('SDK not connected');
+      const { obj } = await resolveObject(siaUrl, sdk);
+      const totalSize = Number(obj.size());
+      const stream = sdk.download(obj, opts);
+      const reader = stream.getReader();
+      let firstChunk = null;
+      let done = false;
+      if (!opts.offset) {
+        const first = await reader.read();
+        if (!first.done && first.value) {
+          firstChunk = first.value;
+        } else if (first.done) {
+          done = true;
+        }
       }
-    }
-    return { reader, totalSize, firstChunk, done };
-  });
+      return { reader, totalSize, firstChunk, done };
+    }),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error("Sia network unreachable (can't fetch first shard)")),
+      30000,
+    )),
+  ]);
 
   const { reader, totalSize, firstChunk, done } = setup;
   let contentType = guessMimeFromSiaUrl(siaUrl);
@@ -874,7 +911,7 @@ const SITE_LOADING_HTML =
   'align-items:center;justify-content:center;height:100%;font-size:0.9rem;}' +
   '</style><body>Loading site…';
 
-export function loadSite(iframeEl, manifestId) {
+export function loadSite(iframeEl, manifestId, subpath) {
   if (!iframeEl) throw new Error('iframe required');
   if (!manifestId) throw new Error('manifestId required');
   if (!handlerInstalled) initSiaSiteHandler();
@@ -888,6 +925,14 @@ export function loadSite(iframeEl, manifestId) {
     'sandbox',
     'allow-scripts allow-same-origin allow-forms allow-popups allow-modals',
   );
+  // Optional: an in-site path to land on instead of the default `/`.
+  // Used when the user navigates back to a site they had drilled into,
+  // so they return to the sub-page rather than the root. Encoded in
+  // the bootstrap URL hash; the bootstrap reads and location.replace's
+  // into it.
+  const hashFragment = (subpath && subpath !== '/' && subpath.startsWith('/'))
+    ? '#' + encodeURIComponent(subpath)
+    : '';
   // Render the placeholder synchronously, then swap to the real
   // bootstrap on the next frame. srcdoc takes precedence over src per
   // spec, so we have to remove it before the bootstrap navigation
@@ -898,7 +943,7 @@ export function loadSite(iframeEl, manifestId) {
   iframeEl.srcdoc = SITE_LOADING_HTML;
   requestAnimationFrame(() => {
     iframeEl.removeAttribute('srcdoc');
-    iframeEl.src = HOSTED_ORIGIN + '/_sia-bootstrap.html?t=' + Date.now();
+    iframeEl.src = HOSTED_ORIGIN + '/_sia-bootstrap.html?t=' + Date.now() + hashFragment;
   });
 }
 

@@ -416,6 +416,21 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
     return;
   }
 
+  // sialo://homepage — quick alias for the configured Homepage site,
+  // so users who lose track of it can always type their way back. The
+  // chrome bar gets the resolved sia-site:// URL so subsequent reloads
+  // behave like any other sia-site navigation.
+  if (url === 'sialo://homepage' || url === 'sialo://home') {
+    bar.value = homepageUrl;
+    const browserTab = getOrCreateActiveBrowserTab();
+    browserTab.url = homepageUrl;
+    browserTab.label = 'Homepage';
+    setLastBrowserUrl(homepageUrl);
+    renderTabBar();
+    loadContentWithAutoDetect();
+    return;
+  }
+
   // Detect Sia addresses: 76 hex chars (with checksum) — explorer lookup
   // Note: 64 hex chars are treated as object IDs, not addresses
   if (/^[0-9a-fA-F]{76}$/.test(url)) {

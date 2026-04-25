@@ -521,6 +521,16 @@ export function initUploadSiteUI() {
     clearDraft();
   });
 
+  // Inline progress line shown directly under the publish button while
+  // the multi-step site-builder publish flow runs. Without this the
+  // only feedback was the bottom-right tab status bar — far from the
+  // button, so users saw the disabled button and thought publishing
+  // had stalled.
+  const sbProgress = document.createElement('div');
+  sbProgress.id = 'sb-progress';
+  sbProgress.style.cssText = 'display:none;margin-top:0.5rem;font-size:0.85rem;color:#888;font-family:var(--font-mono);';
+  sbActions.parentNode.insertBefore(sbProgress, sbActions.nextSibling);
+
   sbPublishBtn.addEventListener('click', async () => {
     const entries = getDraft();
     if (entries.length === 0) return;
@@ -532,12 +542,30 @@ export function initUploadSiteUI() {
     }
     const validUntil = new Date(Date.now() + durMs);
 
+    const startTime = performance.now();
+    const elapsedTimer = setInterval(() => {
+      const secs = Math.round((performance.now() - startTime) / 1000);
+      const note = sbProgress.dataset.note || '';
+      sbProgress.textContent = note ? `${note} · ${secs}s elapsed` : `${secs}s elapsed`;
+    }, 500);
+    function setStep(label, btnLabel) {
+      sbProgress.dataset.note = label;
+      const secs = Math.round((performance.now() - startTime) / 1000);
+      sbProgress.textContent = `${label} · ${secs}s elapsed`;
+      if (btnLabel) sbPublishBtn.textContent = btnLabel;
+    }
+
     sbPublishBtn.disabled = true;
+    sbProgress.style.display = '';
+    setStep('Connecting to indexer…', 'Connecting…');
     await withKeepAlive(async () => {
       try {
         panelStatus().textContent = 'Connecting…';
         const sdk = await connectSdk(panelStatus());
-        if (!sdk) return;
+        if (!sdk) {
+          setStep('Could not connect to indexer.', 'Publish Site');
+          return;
+        }
 
         // Build the manifest entry-by-entry. Duplicate filenames get
         // a `-N` suffix before the extension so the manifest keys stay
@@ -546,7 +574,9 @@ export function initUploadSiteUI() {
         const seen = new Set();
         for (let i = 0; i < entries.length; i++) {
           const e = entries[i];
-          panelStatus().textContent = `Fetching ${e.filename} (${i + 1}/${entries.length})…`;
+          const stepLabel = `Resolving ${e.filename} (${i + 1}/${entries.length})…`;
+          panelStatus().textContent = stepLabel;
+          setStep(stepLabel, `Resolving ${i + 1}/${entries.length}…`);
           let path = e.filename;
           let suffix = 1;
           while (seen.has(path)) {
@@ -562,6 +592,7 @@ export function initUploadSiteUI() {
         }
 
         panelStatus().textContent = 'Uploading manifest…';
+        setStep('Uploading manifest to Sia…', 'Uploading manifest…');
         // Tag the manifest with a UUID-prefixed filename so it groups
         // alphabetically next to any other artifacts from this publish
         // session if we add them later (e.g. re-uploaded files).
@@ -573,6 +604,7 @@ export function initUploadSiteUI() {
           encodeMetadata({ filename: `${uploadId}/manifest.json` }),
         );
         const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
+        setStep('Pinning manifest…', 'Pinning manifest…');
         await sdk.pinObject(manifestObj);
 
         const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
@@ -580,12 +612,18 @@ export function initUploadSiteUI() {
         resultId.textContent = manifestObj.id();
         resultUrl.textContent = url;
         result.style.display = '';
-        panelStatus().innerHTML = `<span class="pass">Site published from builder draft.</span>`;
+        const totalSecs = Math.round((performance.now() - startTime) / 1000);
+        panelStatus().innerHTML = `<span class="pass">Site published from builder draft in ${totalSecs}s.</span>`;
+        sbProgress.innerHTML = `<span style="color:#10b981;">✓ Published in ${totalSecs}s</span>`;
         clearDraft();
       } catch (e) {
-        panelStatus().innerHTML = `<span class="fail">Publish failed: ${_esc(e.message || String(e))}</span>`;
+        const msg = e.message || String(e);
+        panelStatus().innerHTML = `<span class="fail">Publish failed: ${_esc(msg)}</span>`;
+        sbProgress.innerHTML = `<span style="color:#dc2626;">✗ Publish failed: ${_esc(msg)}</span>`;
       } finally {
+        clearInterval(elapsedTimer);
         sbPublishBtn.disabled = false;
+        sbPublishBtn.textContent = 'Publish Site';
       }
     });
   });

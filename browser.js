@@ -1019,7 +1019,14 @@ async function loadContentWithAutoDetect() {
       setBrowserView(false);
       tab.isStreaming = false;
       status.textContent = 'Loading Sia site…';
-      loadSiaSiteIntoIframe(iframe, parsed.resolvable);
+      // When this load is part of a back/forward navigation
+      // (isNavInProgress is set by navigateTabNavEntry), pass the
+      // recorded sub-page path so the user lands on the inner HTML
+      // they were viewing rather than the site's root. For fresh
+      // forward navigations there's nothing to restore.
+      const restoreEntry = isNavInProgress() ? tab.navHistory[tab.navIndex] : null;
+      const subpath = (restoreEntry && typeof restoreEntry.subpath === 'string') ? restoreEntry.subpath : null;
+      loadSiaSiteIntoIframe(iframe, parsed.resolvable, subpath);
       const shortId = (parsed.objectId || parsed.resolvable).slice(0, 12);
       tab.label = 'Sia site: ' + shortId + '…';
       tab.contentLoaded = true;
@@ -1113,7 +1120,11 @@ async function loadContentWithAutoDetect() {
     const canStream = size > 40000000;
     if (canStream) {
       try {
-        const viewerUrl = SIA_HOSTED_ORIGIN + '/_sia-video-viewer.html#' + encodeURIComponent(url);
+        // Cache-bust the viewer document with a timestamp query so a
+        // stale cached HTML doesn't keep older error/watchdog code
+        // running. Hash fragment carries the actual sia:// URL.
+        const viewerUrl = SIA_HOSTED_ORIGIN + '/_sia-video-viewer.html?t=' + Date.now()
+          + '#' + encodeURIComponent(url);
         iframe.setAttribute(
           'sandbox',
           'allow-scripts allow-same-origin allow-forms allow-popups allow-modals',
@@ -1418,11 +1429,15 @@ document.getElementById('btn-back').addEventListener('click', goBack);
 // All of the save-dialog / worker / progress handling lives in
 // download-ui.js — this button is just an entry point that pre-fills
 // it from the current address-bar URL.
-document.getElementById('btn-external-tab').addEventListener('click', async () => {
-  // Status goes to whichever tab the user is looking at. We explicitly
-  // avoid `getOrCreateActiveBrowserTab` here — creating a blank browser
-  // tab just to host an error message is worse than showing the error
-  // on the current internal panel.
+document.getElementById('btn-external-tab').addEventListener('click', () => {
+  // The handler MUST stay synchronous up to and including the
+  // download-button click so the user activation propagates into
+  // showSaveFilePicker. Awaiting an SDK connect + metadata lookup here
+  // (to pre-fill a nicer filename) consumed the activation, then
+  // setTimeout pushed the click outside the gesture window entirely —
+  // Chrome refused the picker with "Must be handling a user gesture".
+  // Metadata is now picked up later in the download worker; the
+  // suggested filename here is just an object-id stub.
   const active = getActiveTab();
   const status = active ? tabStatusProxy(active).status : null;
   const setStatus = (html) => { if (status) status.innerHTML = html; };
@@ -1434,47 +1449,13 @@ document.getElementById('btn-external-tab').addEventListener('click', async () =
     return;
   }
 
-  // Resolve the object to read its filename metadata. If this fails
-  // we still let the user download — they can type a name manually.
-  let suggestedName = '';
-  try {
-    if (status) status.textContent = 'Reading object metadata…';
-    const sdk = await connectSdk(status || { set textContent(_) {}, set innerHTML(_) {} });
-    if (sdk) {
-      const { obj } = await resolveObject(url, sdk);
-      const raw = filenameForSave(obj.metadata());
-      // Metadata may carry a per-upload UUID prefix from folder uploads
-      // (`uuid/path/file.ext`). The prefix is useful for sorting in My
-      // Objects but not as a save-as filename — strip it.
-      if (raw) suggestedName = sanitizeFilename(stripUploadUuid(raw)) || raw;
-    }
-  } catch (e) {
-    _dbgWarn('Save: metadata lookup failed, falling back to prompt:', e);
-  }
+  const idMatch = url.match(/([0-9a-fA-F]{64})/);
+  const suggestedName = idMatch ? `sia_${idMatch[1].slice(0, 8)}` : 'sia_download';
 
-  if (!suggestedName) {
-    const entered = prompt(
-      'This object has no filename metadata. Enter a filename to save as:',
-      'download',
-    );
-    if (entered === null) {
-      if (status) status.textContent = '';
-      return;
-    }
-    const clean = sanitizeFilename(entered);
-    if (!clean) {
-      setStatus('<span class="fail">Filename is empty or invalid.</span>');
-      return;
-    }
-    suggestedName = clean;
-  }
-
-  // Hand off to the Download File panel: fill its inputs, activate
-  // the panel, then click its Download button.
   document.getElementById('dl-url').value = url;
   document.getElementById('dl-filename').value = suggestedName;
   openOrActivateInternalTab('download');
-  setTimeout(() => document.getElementById('btn-download').click(), 100);
+  document.getElementById('btn-download').click();
 });
 
 // Listen for messages from iframe (e.g., from example.html buttons)
