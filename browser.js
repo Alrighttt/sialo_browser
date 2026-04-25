@@ -4,6 +4,7 @@
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
   connectSdk, resolveObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
+  getUrl, getKeyHex, getLogLevel,
 } from './config.js';
 import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,
@@ -1027,6 +1028,30 @@ async function loadContentWithAutoDetect() {
       addToHistory(url, null, tab.label, false, url, 'sia-site');
       updateNavButtons();
       status.innerHTML = '<span class="pass">Site loaded</span>';
+      // If the bootstrap iframe never reaches the parent (sandbox 502/504,
+      // SW registration fails, etc.), the user is stuck on the bootstrap's
+      // own "Loading site…" message forever and our parent-side timeouts
+      // (manifest fetch, SDK handshake) never get the chance to run because
+      // they're downstream of `sia-request` arriving here.
+      // Watch for that: if no `sia-request` lands within 20s of pointing the
+      // iframe at the new bootstrap URL, surface an explicit error.
+      const watchedSrc = iframe.src;
+      let sawRequest = false;
+      const requestProbe = (e) => {
+        if (e.source === iframe.contentWindow && e.data && e.data.type === 'sia-request') {
+          sawRequest = true;
+          window.removeEventListener('message', requestProbe);
+        }
+      };
+      window.addEventListener('message', requestProbe);
+      setTimeout(() => {
+        window.removeEventListener('message', requestProbe);
+        if (sawRequest) return;
+        if (iframe.src !== watchedSrc) return; // user navigated away
+        status.innerHTML =
+          '<span class="fail">Sandbox unreachable — iframe never reported in. ' +
+          'Likely a 502/504 from sandbox.sialo.io on this network.</span>';
+      }, 20000);
     } catch (e) {
       status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
     } finally {

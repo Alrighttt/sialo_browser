@@ -447,6 +447,14 @@ window.addEventListener('securitypolicyviolation', (e) => {
   if (!e.violatedDirective || !e.violatedDirective.startsWith('frame-src')) return;
   const blocked = e.blockedURI || '';
   if (!/^(sia|sia-site):\/\//i.test(blocked)) return;
+  // Firefox can truncate cross-origin blockedURI to origin only.
+  // If the path is missing (no `/objects/<id>/shared`), redirecting
+  // would land on an unresolvable bare-host URL; warn instead.
+  if (!/\/objects\/[0-9a-fA-F]{64}/.test(blocked)) {
+    _dbgWarn('[csp-fallback] blockedURI truncated by browser, cannot redirect:', blocked);
+    return;
+  }
+  _dbg('[csp-fallback] redirecting blocked frame-src navigation:', blocked);
   const bar = document.getElementById('chrome-address-bar');
   if (bar) bar.value = blocked;
   window.handleChromeBarNavigation();
