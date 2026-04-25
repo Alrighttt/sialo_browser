@@ -254,6 +254,18 @@ async function onMessage(e) {
         } catch (_) { /* recipient gone */ }
       } catch (err) {
         _dbgWarn('[sia-site] resolve failed:', d.path, err);
+        // Surface the failure in the parent tab's status bar too. The
+        // iframe's SW will render the error in the iframe body, but the
+        // parent's status was set to "Site loaded" synchronously when
+        // we pointed the iframe at the bootstrap URL — that's a lie if
+        // the SDK can't construct (bad app key) or the manifest can't
+        // be fetched. Find the tab via the iframe's contentWindow and
+        // overwrite it with the real error.
+        const tab = findTabByIframeWindow(e.source);
+        if (tab) {
+          const statusBar = tabStatusProxy(tab).status;
+          statusBar.innerHTML = `<span class="fail">Error: ${_esc(err.message || String(err))}</span>`;
+        }
         if (!e.source) return;
         try {
           e.source.postMessage(
@@ -850,6 +862,18 @@ function guessMime(path) {
  * origin difference between the main app and the sandbox origin, not
  * from the sandbox attribute.
  */
+// Inline placeholder shown while the bootstrap fetch is in flight.
+// Replaces whatever the iframe was previously displaying so a stalled
+// or 502-ing bootstrap doesn't leave the user staring at the previous
+// site's content (which made navigation look like it had silently
+// rolled back to the homepage).
+const SITE_LOADING_HTML =
+  '<!doctype html><meta charset="utf-8">' +
+  '<style>html,body{margin:0;background:#0a0a0a;color:#888;' +
+  'font-family:system-ui,-apple-system,sans-serif;display:flex;' +
+  'align-items:center;justify-content:center;height:100%;font-size:0.9rem;}' +
+  '</style><body>Loading site…';
+
 export function loadSite(iframeEl, manifestId) {
   if (!iframeEl) throw new Error('iframe required');
   if (!manifestId) throw new Error('manifestId required');
@@ -864,7 +888,18 @@ export function loadSite(iframeEl, manifestId) {
     'sandbox',
     'allow-scripts allow-same-origin allow-forms allow-popups allow-modals',
   );
-  iframeEl.src = HOSTED_ORIGIN + '/_sia-bootstrap.html?t=' + Date.now();
+  // Render the placeholder synchronously, then swap to the real
+  // bootstrap on the next frame. srcdoc takes precedence over src per
+  // spec, so we have to remove it before the bootstrap navigation
+  // commits. The animation-frame gap is short enough to be invisible
+  // when the bootstrap fetch is healthy, and meaningful when it
+  // stalls — the user keeps seeing the loader instead of the previous
+  // site's HTML.
+  iframeEl.srcdoc = SITE_LOADING_HTML;
+  requestAnimationFrame(() => {
+    iframeEl.removeAttribute('srcdoc');
+    iframeEl.src = HOSTED_ORIGIN + '/_sia-bootstrap.html?t=' + Date.now();
+  });
 }
 
 /**
