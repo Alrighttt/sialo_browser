@@ -221,12 +221,20 @@ export function initObjectsUI() {
   // Aggregates (count, totalSize) reflect the full group regardless of
   // which rows land on the current page, so the header is self-contained.
   function buildDisplayList(sorted) {
-    const aggregates = new Map(); // uuid → { count, totalSize }
+    // Per-uuid aggregates: file count, total bytes, and the manifest
+    // object id (if any) so the group header can carry "Open Site /
+    // Share / Delete" actions for sia-site uploads. A non-deleted
+    // manifest takes priority over a deleted one if there are stale
+    // entries lying around.
+    const aggregates = new Map();
     for (const o of allObjects) {
       if (!o.uploadUuid) continue;
-      const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0 };
+      const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0, manifestId: null };
       agg.count++;
       agg.totalSize += (Number(o.size) || 0);
+      if (o.isManifest && !o.deleted && !agg.manifestId) {
+        agg.manifestId = o.id;
+      }
       aggregates.set(o.uploadUuid, agg);
     }
     const out = [];
@@ -234,12 +242,13 @@ export function initObjectsUI() {
     for (const o of sorted) {
       if (o.uploadUuid) {
         if (emittedHeaderFor !== o.uploadUuid) {
-          const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0 };
+          const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0, manifestId: null };
           out.push({
             kind: 'header',
             uuid: o.uploadUuid,
             count: agg.count,
             totalSize: agg.totalSize,
+            manifestId: agg.manifestId,
             collapsed: collapsedUuids.has(o.uploadUuid),
           });
           emittedHeaderFor = o.uploadUuid;
@@ -300,6 +309,16 @@ export function initObjectsUI() {
         const shortUuid = item.uuid.substring(0, 8);
         const suffix = item.continuation ? ' (continued)' : '';
         const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
+        // Site-level action buttons. Only render when the group has a
+        // manifest (i.e. it was uploaded as a sia-site). The data-action
+        // attribute pairs with a delegated handler that stops propagation
+        // so clicking a button doesn't toggle collapse on the row.
+        const siteActions = item.manifestId ? `
+          <span style="float:right;">
+            <button data-action="open-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open as sia-site">Open Site</button>
+            <button data-action="share-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL for this site">Share</button>
+            <button data-action="delete-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#dc2626; color:white; margin-left:0.25rem;" title="Delete this site (or site + all referenced files)">Delete</button>
+          </span>` : '';
         html += `
           <tr class="obj-group-header" data-uuid="${item.uuid}" style="cursor:pointer; background:#0f0f0f; border-bottom:1px solid #222; border-left:4px solid ${color};">
             <td colspan="7" style="padding:0.45rem 0.75rem;">
@@ -307,6 +326,7 @@ export function initObjectsUI() {
               <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${color}; margin-right:0.5rem; vertical-align:middle;"></span>
               <span style="font-family:var(--font-mono); color:#cbd5e1; font-size:0.8rem;">${shortUuid}</span>
               <span style="color:#6b7280; font-size:0.8rem; margin-left:0.75rem;">${item.count} file${item.count === 1 ? '' : 's'}${sizeLabel ? ' · ' + sizeLabel : ''}${suffix}</span>
+              ${siteActions}
             </td>
           </tr>
         `;
@@ -347,7 +367,7 @@ export function initObjectsUI() {
             <td style="padding:0.5rem;">${objStatus}</td>
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
-                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="${obj.isManifest ? 'Open as sia-site' : 'Open in browser viewer'}">${obj.isManifest ? 'Open Site' : 'View'}</button>
+                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
                 <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL">Share</button>
                 <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
                 ${isInDraft(obj.id)
@@ -396,9 +416,25 @@ export function initObjectsUI() {
     document.getElementById('objects-page-last').disabled  = pageIndex >= pageCount - 1;
 
     // Toggle collapse on group-header clicks. Delegated per-render
-    // since the tbody HTML is rebuilt.
+    // since the tbody HTML is rebuilt. Buttons inside the header
+    // (Open Site / Share / Delete) intercept the click first and
+    // dispatch through to the existing per-row handlers — they pass
+    // the manifest id so all the site-aware logic in
+    // viewObjectById / shareObjectById / deleteObjectById applies.
     objectsList.querySelectorAll('tr.obj-group-header').forEach(tr => {
-      tr.addEventListener('click', () => {
+      tr.addEventListener('click', (ev) => {
+        const t = ev.target;
+        if (t instanceof HTMLElement && t.dataset && t.dataset.action) {
+          ev.stopPropagation();
+          const id = t.dataset.id;
+          if (!id) return;
+          switch (t.dataset.action) {
+            case 'open-site':   window.viewObjectById(id);   return;
+            case 'share-site':  window.shareObjectById(id);  return;
+            case 'delete-site': window.deleteObjectById(id); return;
+          }
+          return;
+        }
         const uuid = tr.dataset.uuid;
         if (!uuid) return;
         if (collapsedUuids.has(uuid)) collapsedUuids.delete(uuid);
@@ -1013,21 +1049,21 @@ export function initObjectsUI() {
   }
 
 
-  // Helper function to view an object in the browser. Objects flagged
-  // as sia-site manifests are opened via `sia-site://<id>` so the
-  // browser routes them through the site loader (service worker bridge,
-  // auto-index rendering, etc.) instead of showing the raw JSON.
+  // Helper function to view an object in the browser. Loads the
+  // bare object id so the browser auto-detects type and renders
+  // accordingly (JSON for a manifest, video for a video, etc.).
+  // Site-level rendering (`sia-site://`) is now handled by the
+  // group-header "Open Site" button instead of routing manifest
+  // rows through here.
   window.viewObjectById = async (objectId) => {
-    const match = allObjects.find(o => o.id === objectId);
-    const url = match && match.isManifest ? `sia-site://${objectId}` : objectId;
     const tab = getOrCreateActiveBrowserTab();
-    tab.url = url;
-    tab.label = url.length > 30 ? url.substring(0, 30) + '...' : url;
-    setLastBrowserUrl(url);
+    tab.url = objectId;
+    tab.label = objectId.length > 30 ? objectId.substring(0, 30) + '...' : objectId;
+    setLastBrowserUrl(objectId);
     renderTabBar();
 
     const addressBar = document.getElementById('chrome-address-bar');
-    addressBar.value = url;
+    addressBar.value = objectId;
     loadContentWithAutoDetect();
   };
 

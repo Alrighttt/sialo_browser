@@ -68,11 +68,19 @@ export function invalidateSdk() {
   cachedConfig = null;
 }
 
+// Last user-facing reason `connectSdk` returned null. Callers that
+// passed a no-op status proxy (e.g. resolve paths inside sia-site.js
+// that have no UI of their own) can read this to surface the actual
+// failure instead of the generic "SDK not connected" placeholder.
+let lastConnectError = null;
+export function getLastConnectError() { return lastConnectError; }
+
 export async function connectSdk(statusEl) {
   const url = getUrl();
   const keyHex = getKeyHex();
   if (!url || !keyHex) {
-    statusEl.innerHTML = '<span class="fail">Set Indexer URL and App Key in Configuration first</span>';
+    lastConnectError = 'Set Indexer URL and App Key in Configuration first';
+    statusEl.innerHTML = `<span class="fail">${lastConnectError}</span>`;
     return null;
   }
 
@@ -103,14 +111,17 @@ export async function connectSdk(statusEl) {
       )),
     ]);
   } catch (e) {
-    statusEl.innerHTML = `<span class="fail">${(e && e.message) || 'Could not reach indexer'}</span>`;
+    lastConnectError = (e && e.message) || 'Could not reach indexer';
+    statusEl.innerHTML = `<span class="fail">${lastConnectError}</span>`;
     return null;
   }
   if (!sdk) {
-    statusEl.innerHTML = '<span class="fail">App key not recognized by this indexer. Register first.</span>';
+    lastConnectError = 'App key not recognized by this indexer. Register first.';
+    statusEl.innerHTML = `<span class="fail">${lastConnectError}</span>`;
     return null;
   }
 
+  lastConnectError = null;
   // Cache the SDK
   cachedSdk = sdk;
   cachedConfig = currentConfig;

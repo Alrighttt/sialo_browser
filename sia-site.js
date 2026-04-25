@@ -25,7 +25,7 @@
 
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
-import { connectSdk, resolveObject, invalidateSdk } from './config.js';
+import { connectSdk, resolveObject, invalidateSdk, getLastConnectError } from './config.js';
 import { findTabByIframeWindow, tabStatusProxy } from './tabs.js';
 import { encodeMetadata } from './object-metadata.js';
 
@@ -422,7 +422,7 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
   const setup = await Promise.race([
     withSdkRetry(async () => {
       const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-      if (!sdk) throw new Error('SDK not connected');
+      if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
       const { obj } = await resolveObject(siaUrl, sdk);
       const totalSize = Number(obj.size());
       const stream = sdk.download(obj, opts);
@@ -771,7 +771,7 @@ async function fetchObject(objectId) {
   if (cached) return cached;
   const data = await withSdkRetry(async () => {
     const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-    if (!sdk) throw new Error('SDK not connected');
+    if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
     const { obj } = await resolveObject(objectId, sdk);
     return await readStreamFully(sdk.download(obj));
   });
@@ -831,7 +831,7 @@ async function getManifest(manifestId) {
   if (cached) return cached;
   const data = await withSdkRetry(async () => {
     const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-    if (!sdk) throw new Error('SDK not connected');
+    if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
     const { obj } = await resolveObject(manifestId, sdk);
     return await readStreamFully(sdk.download(obj));
   });

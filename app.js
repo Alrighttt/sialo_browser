@@ -994,7 +994,7 @@ document.getElementById('tab-new').addEventListener('click', () => {
 });
 
 // Create initial tabs based on whether user has registered
-const homepageUrl = 'sia-site://sia.storage/objects/896d1849a455d7609b9096f7df881e8e9566e2637fb306b7122cf0686d5d0b17/shared?sv=4930690907&sc=KeBWcCefOwQkV92f4wqdQ4xs7U_AF4TIAnDf-TwF1F8%3D&ss=98rgvUS4PHd5Hykj-kXLAWRBn_skA82sK2cgzOZ8tVkjG3PvX1PLvETHTP6yrbuNwoAeu3CurK0I-Vn-FjddAw%3D%3D#encryption_key=Ex-xAQuI1Czh714c5aXCIkibQynRWgW6jE1KbOJpNe0=';
+const homepageUrl = 'sia-site://sia.storage/objects/4dbab0fa1d4006278a53f1af306a1b557a5ea886ab403b991fb3d019b0af2bb0/shared?sv=4930590625&sc=KeBWcCefOwQkV92f4wqdQ4xs7U_AF4TIAnDf-TwF1F8%3D&ss=-tJVC2QotHF_R96NhFrGhoFzGb3OO_1-3tslx_fmIo8arwGTsqbvX6-bW6_bvzuc_tUhyEV5thv_HJUlGYOBCQ%3D%3D#encryption_key=LjXvSjdn7bbOFhgXWQLOJiJCNEGiqdLvBOpdve8HPTE=';
 const isFirstRun = !localStorage.getItem('app-key');
 
 const savedState = loadTabState();
