@@ -168,7 +168,21 @@ async function onMessage(e) {
       const path = (typeof d.path === 'string' && d.path) ? d.path : '/';
       const search = typeof d.search === 'string' ? d.search : '';
       const hash = typeof d.hash === 'string' ? d.hash : '';
-      entry.subpath = path + search + hash;
+      const subpath = path + search + hash;
+      entry.subpath = subpath;
+      // Track intra-site nav depth so the in-app back button knows
+      // whether it's safe to delegate to iframe.history.back() — the
+      // iframe shares joint session history with the parent, so calling
+      // back() at the bottom of the iframe's stack escapes to the
+      // parent's previous URL and exits sialo.io. We push on new
+      // forward navigations and pop when we recognise a back-style
+      // announce (current path equals the one beneath top of stack).
+      if (!Array.isArray(tab.iframePathStack)) tab.iframePathStack = [];
+      const stack = tab.iframePathStack;
+      const top = stack[stack.length - 1];
+      const prev = stack[stack.length - 2];
+      if (subpath === prev) stack.pop();           // backward nav
+      else if (subpath !== top) stack.push(subpath); // new forward nav
       return;
     }
 

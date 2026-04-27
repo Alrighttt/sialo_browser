@@ -511,7 +511,18 @@ export function goBack() {
       navigateTabNavEntry(tab);
       return;
     }
-    if (tab.iframeEl && tab.iframeEl.contentWindow) {
+    // At the bottom of inter-site history. Delegating to the iframe's
+    // own history.back() lets the user walk through intra-site
+    // navigations — but only if the iframe still has somewhere to go.
+    // The iframe shares joint session history with the parent, so
+    // history.back() at the bottom of its own stack pops the parent's
+    // www.sialo.io entry and exits sialo.io entirely. We track
+    // intra-site path depth in tab.iframePathStack (populated from the
+    // sia-bridge-page announces in sia-site.js); only delegate while
+    // there's at least one frame above the initial entry. Otherwise
+    // no-op so the user stays on sialo.io.
+    if (Array.isArray(tab.iframePathStack) && tab.iframePathStack.length > 1
+        && tab.iframeEl && tab.iframeEl.contentWindow) {
       try {
         let targetOrigin = '*';
         try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}

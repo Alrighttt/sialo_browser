@@ -519,6 +519,45 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     await Promise.all(deletes);
   }
 
+  // In-memory accumulator AND IndexedDB persistence. Filter generation
+  // on mainnet takes hours; without per-chunk persistence the user must
+  // hold the page open for the entire run because completed chunks
+  // would be lost on reload — meta would say "done" but the actual
+  // filter bytes were memory-only. Persisting raw chunk bytes lets a
+  // refresh skip already-finished chunks and pick up where we stopped.
+  const inMemoryChunks = new Map(); // chunkStart → parsed result
+
+  // Restore parsed chunks for any prior `completedSet` entries from
+  // IndexedDB. If a chunk's bytes are missing/corrupt, drop it from
+  // completedSet so it'll be regenerated. Must happen BEFORE
+  // `remainingChunks` is computed so re-processed chunks are queued.
+  if (completedSet.size > 0) {
+    let restored = 0;
+    let dropped = 0;
+    for (const cs of Array.from(completedSet)) {
+      try {
+        const stored = await syncerDbLoad(wipChunkKey(cs));
+        if (!stored) {
+          completedSet.delete(cs);
+          dropped++;
+          continue;
+        }
+        const arr = stored instanceof Uint8Array ? stored : new Uint8Array(stored);
+        inMemoryChunks.set(cs, parseChunkResult(arr));
+        restored++;
+      } catch (e) {
+        completedSet.delete(cs);
+        dropped++;
+      }
+    }
+    if (dropped > 0) {
+      logFn(`Restored ${restored} chunks from disk (${dropped} missing — will regenerate)`, 'info');
+      resumedBlocks = completedSet.size * CHUNK_SIZE;
+    } else if (restored > 0) {
+      logFn(`Restored ${restored} chunks from disk`, 'data');
+    }
+  }
+
   // Remaining chunks to process
   const remainingChunks = allChunkDefs.filter(c => !completedSet.has(c.start));
   const effectiveWorkers = Math.min(numWorkers, remainingChunks.length);
@@ -590,17 +629,25 @@ async function syncFullChain(net, peerUrl, genesisHex, certHash, filterKey, txin
     }, [headerSliceCopy.buffer]);
   }
 
-  // In-memory accumulator — avoids IndexedDB read failures in workers
-  const inMemoryChunks = new Map(); // chunkStart → parsed result
-
   async function saveChunkCheckpoint(chunkStart, resultBytes) {
     completedSet.add(chunkStart);
-    // Parse and keep in memory instead of saving to IndexedDB
     const arr = new Uint8Array(
       resultBytes instanceof ArrayBuffer ? resultBytes : resultBytes.buffer ? resultBytes : new Uint8Array(resultBytes)
     );
     inMemoryChunks.set(chunkStart, parseChunkResult(arr));
-    // Still save meta for resume tracking (small data, won't fail)
+    // Persist raw bytes per chunk so we can restore on a fresh page
+    // load. Filter chunks are typically <2 MB; syncerDbSave handles
+    // these directly without the chunked path.
+    try {
+      await syncerDbSave(wipChunkKey(chunkStart), arr);
+    } catch (e) {
+      // If the per-chunk save fails (storage full, quota), don't fail
+      // the whole pipeline — meta won't claim it's done either, so
+      // we'll regenerate. Best-effort persistence.
+      logFn(`Warning: failed to persist chunk ${chunkStart}: ${e.message || e}`, 'info');
+    }
+    // Save meta last so the chunk file is present before meta marks it
+    // complete (avoids a "done per meta but missing on disk" window).
     await syncerDbSave(wipMetaKey, JSON.stringify({
       totalBlocks, chunkSize: CHUNK_SIZE, startFrom, completed: Array.from(completedSet),
     }));

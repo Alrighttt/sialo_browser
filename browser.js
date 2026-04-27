@@ -1026,6 +1026,10 @@ async function loadContentWithAutoDetect() {
       // forward navigations there's nothing to restore.
       const restoreEntry = isNavInProgress() ? tab.navHistory[tab.navIndex] : null;
       const subpath = (restoreEntry && typeof restoreEntry.subpath === 'string') ? restoreEntry.subpath : null;
+      // Fresh sia-site load — clear the intra-site path stack used by
+      // the in-app back button to decide if delegating to the iframe's
+      // history.back() is safe.
+      tab.iframePathStack = [];
       loadSiaSiteIntoIframe(iframe, parsed.resolvable, subpath);
       const shortId = (parsed.objectId || parsed.resolvable).slice(0, 12);
       tab.label = 'Sia site: ' + shortId + '…';
