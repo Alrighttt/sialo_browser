@@ -1,7 +1,7 @@
 // Wallet module — manages seed generation, encryption, scanning, UTXO tracking,
 // transaction building, and mempool integration.
 
-import { _esc } from './utils.js';
+import { _esc, _dbg } from './utils.js';
 import { kdfEncrypt, kdfDecrypt } from './kdf.js';
 import { openOrActivateInternalTab } from './tabs.js';
 import {
@@ -955,7 +955,7 @@ async function txbComputeProofs() {
       config.peerUrl,
       genesisHex,
       (msg, cls) => {
-        console.log('[compute-proofs]', cls, msg);
+        _dbg('[compute-proofs]', cls, msg);
         statusEl.textContent = msg;
         statusEl.style.color = cls === 'err' ? '#f87171' : cls === 'ok' ? '#4ade80' : '#f59e0b';
       },
@@ -1364,7 +1364,7 @@ async function txbBroadcastTransaction() {
     }
     txnSet.push(builtTxn);
 
-    console.log('[broadcast] Transaction set:', JSON.stringify(txnSet, null, 2));
+    _dbg('[broadcast] Transaction set:', JSON.stringify(txnSet, null, 2));
     const txid = await broadcast_v2_transaction(
       config.peerUrl,
       genesisHex,
@@ -1609,10 +1609,10 @@ async function walletScanUtxos() {
         else if (u.direction === 'sent') dedupSent += amt;
       }
       if (a.utxos && a.utxos.length > 0) {
-        console.log(`[wallet-dedup] Address #${a.index}: ${a.utxos.length} UTXOs, directions:`, a.utxos.map(u => `${u.direction}:${u.amountHastings}`));
+        _dbg(`[wallet-dedup] Address #${a.index}: ${a.utxos.length} UTXOs, directions:`, a.utxos.map(u => `${u.direction}:${u.amountHastings}`));
       }
     }
-    console.log(`[wallet-dedup] received=${dedupReceived} sent=${dedupSent} balance=${dedupReceived - dedupSent}`);
+    _dbg(`[wallet-dedup] received=${dedupReceived} sent=${dedupSent} balance=${dedupReceived - dedupSent}`);
     const dedupBalance = dedupReceived - dedupSent;
     result.totalBalanceSC = fmtSC(dedupBalance) + ' SC';
     result.totalReceivedSC = fmtSC(dedupReceived) + ' SC';

@@ -9,6 +9,7 @@ import {
   syncerDbSaveChunked, syncerDbLoadChunked, syncerDbDeleteChunked,
   opfsSave, opfsLoad, opfsDelete,
 } from './db-helpers.js';
+import { _dbg } from './utils.js';
 
 const GENESIS_IDS = {
   mainnet: '25f6e3b9295a61f69fcb956aca9f0076234ecf2e02d399db5448b6e22f26e81c',
@@ -636,7 +637,7 @@ async function _loadFiltersInner() {
     if (filterData.byteLength >= 24) {
       const dv = new DataView(filterData.buffer || filterData);
       const tipH = Number(dv.getBigUint64(16, true));
-      console.log(`[loadFilters] Loaded ${filterData.byteLength} bytes, filter tip height: ${tipH}, key: ${keys.filter}`);
+      _dbg(`[loadFilters] Loaded ${filterData.byteLength} bytes, filter tip height: ${tipH}, key: ${keys.filter}`);
     }
   }
 
@@ -1139,9 +1140,9 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
           break;
         }
         case 'done':
-          console.log(`[done] Waiting for ${pendingSaves.length} pending saves...`);
+          _dbg(`[done] Waiting for ${pendingSaves.length} pending saves...`);
           await Promise.all(pendingSaves);
-          console.log(`[done] All saves complete, resolving`);
+          _dbg(`[done] All saves complete, resolving`);
           delete _syncWorkers[net];
           worker.terminate();
           resolve();
