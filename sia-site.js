@@ -594,16 +594,40 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
     statusBar.innerHTML = `<span class="pass">Streaming ${kind}: ${mbs.toFixed(1)} MB/s</span>`;
   }
 
+  // Wrapper so stream-in-flight postMessages don't throw and spam the
+  // console when the iframe navigates mid-stream. When the iframe.src
+  // changes (e.g. sub-page navigation, the placeholder srcdoc kicks
+  // in, or a tab is closed), the source window's current origin no
+  // longer matches HOSTED_ORIGIN. Browser raises:
+  //
+  //   Failed to execute 'postMessage' on 'DOMWindow': The target
+  //   origin provided ('https://sandbox.sialo.io') does not match the
+  //   recipient window's origin ('https://www.sialo.io').
+  //
+  // That's not a real failure — the consumer is gone. Cancel the
+  // stream so we stop reading more bytes for nothing.
+  const post = (msg, transfer) => {
+    if (entry.cancelled) return false;
+    try {
+      if (transfer) source.postMessage(msg, HOSTED_ORIGIN, transfer);
+      else source.postMessage(msg, HOSTED_ORIGIN);
+      return true;
+    } catch (_e) {
+      entry.cancelled = true;
+      return false;
+    }
+  };
+
   try {
-    source.postMessage({ type: 'sia-ext-meta', id, size: totalSize, contentType }, HOSTED_ORIGIN);
+    if (!post({ type: 'sia-ext-meta', id, size: totalSize, contentType })) return;
     if (done) {
-      source.postMessage({ type: 'sia-ext-end', id }, HOSTED_ORIGIN);
+      post({ type: 'sia-ext-end', id });
       return;
     }
     if (firstChunk) {
       bytesSent += firstChunk.byteLength;
       const buf = firstChunk.buffer.slice(firstChunk.byteOffset, firstChunk.byteOffset + firstChunk.byteLength);
-      source.postMessage({ type: 'sia-ext-chunk', id, chunk: buf }, HOSTED_ORIGIN, [buf]);
+      if (!post({ type: 'sia-ext-chunk', id, chunk: buf }, [buf])) return;
       updateProgress();
     }
 
@@ -613,11 +637,11 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
       if (entry.cancelled) break;
       bytesSent += value.byteLength;
       const buf = value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
-      source.postMessage({ type: 'sia-ext-chunk', id, chunk: buf }, HOSTED_ORIGIN, [buf]);
+      if (!post({ type: 'sia-ext-chunk', id, chunk: buf }, [buf])) return;
       updateProgress();
     }
     if (!entry.cancelled) {
-      source.postMessage({ type: 'sia-ext-end', id }, HOSTED_ORIGIN);
+      post({ type: 'sia-ext-end', id });
       if (statusBar) {
         const current = statusBar.innerHTML || '';
         if (!current || OVERWRITABLE_RX.test(current)) {

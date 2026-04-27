@@ -2,11 +2,14 @@
 // on the Sia blockchain.
 
 import { _esc } from './utils.js';
+import { connectSdk } from './config.js';
 import { explore as explorerQuery } from './explorer.js';
 import { kdfDecrypt } from './kdf.js';
 import { createTab, activateTab, openOrActivateInternalTab } from './tabs.js';
+import { parallelUpload } from './upload.js';
 import {
   getActiveNetwork, getNetworkConfig, getGenesisHex,
+  getSyncState,
   loadAttestationEntries, exploreQuery as chainExploreQuery,
   getAttestationIndexUrl, exportNetworkData, importNetworkData,
   onChange as chainOnChange, onMempoolChange, getMempoolTransactions,
@@ -22,6 +25,7 @@ import {
 import {
   getWalletEntropy, setWalletEntropy, getWalletHasSaved, setWalletHasSaved, getWalletLockSuspended, setWalletLockSuspended,
   walletDbLoad, walletUpdateUI, walletResetLockTimer, walletScanUtxos, scToHastings,
+  walletApplyMempool, txbRefreshFromMempool, txbComputeProofs,
 } from './wallet.js';
 
 // Late-binding: loadContentWithAutoDetect is defined in the main script

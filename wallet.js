@@ -595,7 +595,7 @@ function _buildWalletAddrMap() {
   return walletAddrs;
 }
 
-function walletApplyMempool() {
+export function walletApplyMempool() {
   if (!_lastWalletScanResult) return;
 
   // Remove any previous mempool rows before re-applying
@@ -804,7 +804,7 @@ function txbPopulateUtxos(allUtxos) {
 
 // Refresh the transaction builder's UTXO list to account for mempool state.
 // Removes UTXOs spent by mempool txns, adds pending outputs to wallet addresses.
-function txbRefreshFromMempool() {
+export function txbRefreshFromMempool() {
   if (!_lastWalletScanResult) return;
 
   const net = getActiveNetwork();
@@ -915,7 +915,7 @@ function txbRenderUtxoList(utxos) {
   txbUpdateSummary();
 }
 
-async function txbComputeProofs() {
+export async function txbComputeProofs() {
   const statusEl = document.getElementById('txb-proof-status');
   const btn = document.getElementById('txb-btn-compute-proofs');
 

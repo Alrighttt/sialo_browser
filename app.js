@@ -874,6 +874,16 @@ syncHeightEl.addEventListener('click', (e) => {
     const height = heightEl.dataset.blockHeight;
     const net = heightEl.dataset.net;
     if (net) setActiveNetwork(net);
+    // While filters/txindex are still generating for this network the
+    // displayed height is the in-flight progress tip — jumping to the
+    // explorer for it doesn't help; the user wants to see the sync log.
+    // Once the network is fully synced, the height is a real block the
+    // explorer can show, so we keep that behavior post-sync.
+    const stillSyncing = net && getSyncState(net).status === 'syncing';
+    if (stillSyncing) {
+      openOrActivateInternalTab('syncer-config');
+      return;
+    }
     openOrActivateInternalTab('explorer');
     setTimeout(() => {
       document.getElementById('exp-query').value = height;
@@ -926,7 +936,10 @@ chainOnChange(() => {
     }
     const height = s.networkHeight || s.currentHeight;
     if (height != null && (s.status === 'synced' || s.status === 'syncing')) {
-      spans.push('<span style="color:' + color + '">' + prefix + '<span data-block-height="' + height + '" data-net="' + net + '" style="cursor:pointer;" title="View block ' + height + ' in Explorer">' + height.toLocaleString() + '</span></span>');
+      const tip = s.status === 'syncing'
+        ? 'Sync in progress — click to view sync log'
+        : 'View block ' + height + ' in Explorer';
+      spans.push('<span style="color:' + color + '">' + prefix + '<span data-block-height="' + height + '" data-net="' + net + '" style="cursor:pointer;" title="' + tip + '">' + height.toLocaleString() + '</span></span>');
     } else {
       spans.push('<span style="color:' + color + '; cursor:pointer;" title="Open Syncer">' + text + '</span>');
     }
