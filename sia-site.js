@@ -336,19 +336,25 @@ async function resolveManifestPath(manifestId, path) {
   const contentType = guessMime(lookup.key);
   let body;
   if (contentType === 'text/html') {
-    // Inject the bridge script and rewrite any sia:// / sia-site://
-    // subresource references to /_sia-ext/<encoded url>. The iframe's
-    // SW then intercepts those paths, streams bytes from the Sia
-    // network (with Range support), and synthesises a same-origin
-    // Response — so <video src="sia://..."> etc. can seek like normal.
+    // Inject the bridge script and rewrite subresource references.
+    // Two passes:
+    //   1. Explicit sia:// / sia-site:// URLs → /_sia-ext/<encoded>
+    //      (the iframe SW streams bytes through a same-origin Response
+    //      with Range support, so <video src="sia://..."> seeks).
+    //   2. Absolute paths (/foo.js, /_next/...) that resolve against
+    //      the manifest → same /_sia-ext/ route. Without this, framework
+    //      builds with absolute asset paths blank-screen because the
+    //      sandbox origin doesn't have those files.
     const html = new TextDecoder().decode(data);
-    const rewritten = rewriteSiaUrlsInHtml(html);
+    let rewritten = rewriteSiaUrlsInHtml(html);
+    rewritten = rewriteAbsolutePathsInHtml(rewritten, manifest);
     const injected = injectBridge(rewritten);
     body = new TextEncoder().encode(injected).buffer;
   } else if (contentType === 'text/css') {
-    // CSS also needs url(sia://...) → url(/_sia-ext/...) rewriting.
     const css = new TextDecoder().decode(data);
-    body = new TextEncoder().encode(rewriteSiaUrlsInCss(css)).buffer;
+    let rewritten = rewriteSiaUrlsInCss(css);
+    rewritten = rewriteAbsolutePathsInCss(rewritten, manifest);
+    body = new TextEncoder().encode(rewritten).buffer;
   } else {
     // Return a fresh ArrayBuffer so we can transfer ownership.
     body = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
@@ -395,6 +401,85 @@ function rewriteSiaUrlsInCss(css) {
   return css.replace(
     /url\(\s*(["']?)(sia(?:-site)?:\/\/[^"'\s)]+)\1\s*\)/gi,
     (_, q, url) => 'url(' + q + '/_sia-ext/' + encodeURIComponent(url) + q + ')',
+  );
+}
+
+// Rewrite absolute path references (`src="/foo"`, `href="/foo"`,
+// `url(/foo)`, srcset, inline styles) to `/_sia-ext/<sia-url>` lookups
+// against the current site's manifest. Without this, frameworks that
+// emit absolute paths (Next.js's `/_next/...`, most static-site
+// generators) try to fetch from sandbox.sialo.io and 504 because that
+// origin is itself a Vercel-hosted Next.js app — those paths collide.
+//
+// This handles the common static-build case (everything preloaded in
+// the initial HTML/CSS). Webpack runtime-loaded chunks and dynamic
+// `import()` paths are still strings inside the JS bundles and won't
+// be rewritten — apps that rely on those need a real
+// `assetPrefix: './'` rebuild.
+function rewriteAbsolutePathsInHtml(html, manifest) {
+  const lookup = (rawPath) => {
+    const path = rawPath.replace(/^\/+/, '').replace(/[?#].*$/, '');
+    const url = manifest[path];
+    return url ? '/_sia-ext/' + encodeURIComponent(url) : null;
+  };
+
+  // src / poster / data / formaction with absolute paths.
+  // Skip already-rewritten /_sia-ext paths and protocol-relative //host.
+  html = html.replace(
+    /\b(src|poster|data|formaction)\s*=\s*(["'])(\/[^/"'<>\s][^"'<>\s]*)\2/gi,
+    (full, attr, q, path) => {
+      if (path.startsWith('/_sia-ext/')) return full;
+      const rewritten = lookup(path);
+      return rewritten ? attr + '=' + q + rewritten + q : full;
+    },
+  );
+
+  // <link ... href="/foo"> — stylesheets, preloads, icons. Restricted
+  // to <link> so <a href> stays untouched (parent's nav intercept
+  // handles full-page link clicks).
+  html = html.replace(
+    /<link\b([^>]*?)\bhref\s*=\s*(["'])(\/[^/"'<>\s][^"'<>\s]*)\2/gi,
+    (full, rest, q, path) => {
+      if (path.startsWith('/_sia-ext/')) return full;
+      const rewritten = lookup(path);
+      return rewritten ? '<link' + rest + 'href=' + q + rewritten + q : full;
+    },
+  );
+
+  // <source>/<img> srcset — comma-separated list of (url descriptor) pairs.
+  html = html.replace(
+    /\bsrcset\s*=\s*(["'])([^"']*)\1/gi,
+    (_full, q, set) => {
+      const rewritten = set.replace(
+        /(\/[^/\s,?#][^\s,]*)/g,
+        (path) => {
+          if (path.startsWith('/_sia-ext/')) return path;
+          return lookup(path) || path;
+        },
+      );
+      return 'srcset=' + q + rewritten + q;
+    },
+  );
+
+  // Inline style="...: url(/foo)" — defer to the CSS rewriter.
+  html = html.replace(
+    /style\s*=\s*(["'])([^"']*)\1/gi,
+    (_full, q, css) => 'style=' + q + rewriteAbsolutePathsInCss(css, manifest) + q,
+  );
+
+  return html;
+}
+
+function rewriteAbsolutePathsInCss(css, manifest) {
+  return css.replace(
+    /url\(\s*(["']?)(\/[^/"'\s)][^"'\s)]*)\1\s*\)/gi,
+    (full, q, path) => {
+      if (path.startsWith('/_sia-ext/')) return full;
+      const clean = path.replace(/^\/+/, '').replace(/[?#].*$/, '');
+      const url = manifest[clean];
+      if (!url) return full;
+      return 'url(' + q + '/_sia-ext/' + encodeURIComponent(url) + q + ')';
+    },
   );
 }
 
