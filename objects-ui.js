@@ -429,7 +429,7 @@ export function initObjectsUI() {
           const id = t.dataset.id;
           if (!id) return;
           switch (t.dataset.action) {
-            case 'open-site':   window.viewObjectById(id);   return;
+            case 'open-site':   window.viewObjectById('sia-site://' + id);   return;
             case 'share-site':  window.shareObjectById(id);  return;
             case 'delete-site': window.deleteObjectById(id); return;
           }
