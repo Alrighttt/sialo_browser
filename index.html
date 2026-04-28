@@ -1360,14 +1360,6 @@
               </p>
 
               <div style="display:flex; flex-wrap:wrap; gap:0.75rem;">
-                <div>
-                  <div class="label">Network</div>
-                  <select id="sc-network">
-                    <option value="mainnet">Mainnet</option>
-                    <option value="mainnet_v2">V2-only</option>
-                    <option value="zen">Zen Testnet</option>
-                  </select>
-                </div>
                 <div style="flex:1; min-width:250px;">
                   <div class="label">Peer URL</div>
                   <input id="sc-peer-url" type="text" placeholder="https://host:9984/sia/syncer" style="width:100%;">
@@ -1400,32 +1392,6 @@
                   <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
                     <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
                     <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">Mainnet</span>
-                    <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
-                  </div>
-                  <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;">
-                  </div>
-                  <div class="sc-net-relay" style="color:#666; font-size:0.75rem; margin-bottom:0.3rem;">Relay: off
-                  </div>
-                  <div style="display:flex; gap:1rem; font-size:0.75rem; color:#666;">
-                    <span class="nb-idx"><span class="sc-net-filters">&#10060; SCBF</span><span
-                        class="info-tip">&#9432;<span class="info-tip-text">Sia Compact Block Filters — address activity
-                          index built from block headers</span></span></span>
-                    <span class="nb-idx"><span class="sc-net-txindex">&#10060; STXI</span><span
-                        class="info-tip">&#9432;<span class="info-tip-text">Sia Transaction Index — maps transaction IDs
-                          to block heights for fast lookup</span></span></span>
-                    <span class="nb-idx"><span class="sc-net-utxoindex">&#10060; SUXI</span><span
-                        class="info-tip">&#9432;<span class="info-tip-text">Sia UTXO Index — tracks unspent transaction
-                          outputs by address prefix</span></span></span>
-                    <span class="nb-idx"><span class="sc-net-attestationindex">&#10060; SAPI</span><span
-                        class="info-tip">&#9432;<span class="info-tip-text">Sia Attestation Pubkey Index — maps public
-                          keys to attestation entries</span></span></span>
-                  </div>
-                  <div class="sc-net-storage" style="font-size:0.7rem; color:#555; margin-top:0.3rem;"></div>
-                </div>
-                <div id="sc-net-status-mainnet_v2" class="sc-net-status-card">
-                  <div style="display:flex; align-items:center; gap:0.4rem; margin-bottom:0.3rem;">
-                    <span class="sc-net-dot" style="font-size:12px; color:#555;">&#9679;</span>
-                    <span class="sc-net-name" style="font-weight:600; font-size:0.85rem; color:#ccc;">V2-only</span>
                     <span class="sc-net-state" style="font-size:0.8rem; color:#888; margin-left:auto;">Disabled</span>
                   </div>
                   <div class="sc-net-phase" style="display:none; color:#888; font-size:0.78rem; margin-bottom:0.3rem;">

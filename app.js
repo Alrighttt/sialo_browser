@@ -729,10 +729,14 @@ initMempoolActions();
 initSyncerConfig();
 
 // --- Network status bars (embedded in each blockchain panel) ---
-const NET_LABELS = { mainnet: 'Mainnet', mainnet_v2: 'V2-only', zen: 'Zen' };
+const NET_LABELS = { mainnet: 'Mainnet', zen: 'Zen' };
 const netBarSelectors = [];
 
 document.querySelectorAll('.net-bar').forEach(bar => {
+  // The syncer panel always shows every network (even disabled) — that's
+  // the page where users enable them. Other panels hide disabled
+  // networks so the chrome bar stays focused on what's live.
+  const isSyncerBar = !!bar.closest('#panel-syncer-config');
   bar.innerHTML = `
     <span class="nb-dot">&#9679;</span>
     <span class="nb-name" style="cursor:pointer;" title="Open Syncer">Mainnet</span>
@@ -755,7 +759,7 @@ document.querySelectorAll('.net-bar').forEach(bar => {
     },
   });
   bar.querySelector('.nb-sel-mount').appendChild(sel.el);
-  netBarSelectors.push(sel);
+  netBarSelectors.push({ sel, isSyncerBar });
 
   // Position fixed tooltips on hover so they escape overflow containers
   bar.addEventListener('mouseenter', (e) => {
@@ -772,18 +776,20 @@ document.querySelectorAll('.net-bar').forEach(bar => {
 function updateNetBars() {
   const enabled = getEnabledNetworks();
   const enabledSet = new Set(enabled);
-  const allNets = ['mainnet', 'mainnet_v2', 'zen'];
+  const allNets = ['mainnet', 'zen'];
   const disabledSet = new Set(allNets.filter(n => !enabledSet.has(n)));
 
-  // If active network is disabled, switch to first enabled one
-  let net = getActiveNetwork();
-  if (!enabledSet.has(net) && enabled.length > 0) {
-    net = enabled[0];
-    setActiveNetwork(net);
-  }
+  // Don't auto-revert when active network is disabled. The user can
+  // legitimately want to view a disabled network's panel — most often
+  // on the syncer page, where the whole point of selecting it is to
+  // configure / enable it. Auto-reverting fights that intent: clicking
+  // Zen would silently snap back to Mainnet on the next onChange tick.
+  const net = getActiveNetwork();
 
-  for (const sel of netBarSelectors) {
-    sel.setDisabled(disabledSet);
+  for (const { sel, isSyncerBar } of netBarSelectors) {
+    // Syncer bar shows every network unconditionally — disabling buttons
+    // there would defeat its purpose (it's the place to enable them).
+    sel.setDisabled(isSyncerBar ? new Set() : disabledSet);
     sel.setSelected(net);
   }
 
@@ -910,7 +916,7 @@ chainOnChange(() => {
   for (const net of enabled) {
     const s = getSyncState(net);
     const showLabel = enabled.length > 1;
-    const label = net === 'mainnet' ? 'M' : net === 'mainnet_v2' ? 'V2' : net === 'zen' ? 'Z' : net.slice(0, 2).toUpperCase();
+    const label = net === 'mainnet' ? 'M' : net === 'zen' ? 'Z' : net.slice(0, 2).toUpperCase();
     const prefix = showLabel ? label + ':' : '';
     let text, color;
     if (s.status === 'syncing') {

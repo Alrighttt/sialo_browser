@@ -11,14 +11,13 @@
 
 const DEFAULT_LABELS = {
   mainnet: 'Mainnet',
-  mainnet_v2: 'V2',
   zen: 'Zen',
 };
 
 export function createNetSelector(opts = {}) {
   const {
     mode = 'single',
-    networks = ['mainnet', 'mainnet_v2', 'zen'],
+    networks = ['mainnet', 'zen'],
     labels = {},
     initial,
     onChange,

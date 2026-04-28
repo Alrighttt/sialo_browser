@@ -31,12 +31,20 @@ function log(msg, cls) {
 
 // --- UI update ---
 
+const NET_LABELS = { mainnet: 'Mainnet', zen: 'Zen' };
+
 let _lastRenderedNet = null;
 
+function updateResetLabel() {
+  const net = chain.getActiveNetwork();
+  const label = NET_LABELS[net] || net;
+  const btn = document.getElementById('sc-btn-clear-all');
+  if (btn) btn.textContent = 'Reset ' + label;
+}
+
 function updateStatus() {
-  const net = document.getElementById('sc-network').value;
+  const net = chain.getActiveNetwork();
   const config = chain.getNetworkConfig(net);
-  const syncState = chain.getSyncState(net);
 
   // Only update config inputs when network changes (avoid overwriting user edits during sync)
   if (net !== _lastRenderedNet) {
@@ -44,6 +52,7 @@ function updateStatus() {
     document.getElementById('sc-cert-hash').value = config.certHash || '';
     document.getElementById('sc-auto-sync').checked = config.enabled;
     _lastRenderedNet = net;
+    updateResetLabel();
   }
 
   // Sync now button
@@ -51,7 +60,6 @@ function updateStatus() {
 
   // Update all network status cards
   updateNetCard('mainnet');
-  updateNetCard('mainnet_v2');
   updateNetCard('zen');
 }
 
@@ -70,7 +78,7 @@ function isValidPeerUrl(url) {
 }
 
 function saveConfig() {
-  const net = document.getElementById('sc-network').value;
+  const net = chain.getActiveNetwork();
   const peerUrl = document.getElementById('sc-peer-url').value.trim();
   if (peerUrl && !isValidPeerUrl(peerUrl)) {
     log('Invalid peer URL: must use https:// or wss:// protocol.', 'err');
@@ -85,7 +93,6 @@ function saveConfig() {
 // --- Initialization ---
 
 export function initSyncerConfig() {
-  const networkSelect = document.getElementById('sc-network');
   const peerUrlInput = document.getElementById('sc-peer-url');
   const certHashInput = document.getElementById('sc-cert-hash');
   const autoSyncCheckbox = document.getElementById('sc-auto-sync');
@@ -103,22 +110,13 @@ export function initSyncerConfig() {
     });
   }
 
-  // Set initial network to active network
-  networkSelect.value = chain.getActiveNetwork();
-
-  // Network switch — show that network's config (does NOT change active network)
-  networkSelect.addEventListener('change', () => {
-    updateStatus();
-    updateResetLabel();
-  });
-
   // Save config on input change
   peerUrlInput.addEventListener('change', saveConfig);
   certHashInput.addEventListener('change', saveConfig);
 
   // Auto-sync toggle
   autoSyncCheckbox.addEventListener('change', () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     const enabled = autoSyncCheckbox.checked;
     chain.setNetworkConfig(net, { enabled });
     if (enabled) {
@@ -135,7 +133,7 @@ export function initSyncerConfig() {
 
   // Sync now button
   syncNowBtn.addEventListener('click', () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     const config = chain.getNetworkConfig(net);
     if (!config.peerUrl) {
       log('Please enter a peer URL first.', 'err');
@@ -318,6 +316,18 @@ export function initSyncerConfig() {
         log('Sync data restored for ' + net + '.', 'ok');
         setBackupStatus('Restore complete for ' + net + '.', '#4ade80');
         backupProgressEl.style.display = 'none';
+
+        // Restore always kicks an immediate sync regardless of the
+        // user's prior auto-sync setting. The whole point of restore
+        // is to seed local data and extend past the restored tip; if
+        // we left the network idle the user would think the page was
+        // hung. Enable + sync explicitly so this isn't dependent on
+        // the resume-callback in pauseSyncForNet (which only fires
+        // for previously-enabled networks).
+        chain.setNetworkConfig(net, { enabled: true });
+        chain.startSync();
+        chain.syncNow(net, { restart: true });
+        log('[' + net + '] catching up past restored tip...', 'info');
       } catch (e) {
         log('Restore failed: ' + e, 'err');
         setBackupStatus('Restore failed: ' + e, '#f87171');
@@ -340,13 +350,6 @@ export function initSyncerConfig() {
 
   // Data management buttons
   const clearStatus = document.getElementById('sc-clear-status');
-  const clearAllBtn = document.getElementById('sc-btn-clear-all');
-
-  const NET_LABELS = { mainnet: 'Mainnet', mainnet_v2: 'V2-only', zen: 'Zen' };
-  function updateResetLabel() {
-    const label = NET_LABELS[networkSelect.value] || networkSelect.value;
-    clearAllBtn.textContent = 'Reset ' + label;
-  }
   updateResetLabel();
 
   // Shared wrapper for data management actions: status updates, try/catch, log
@@ -375,21 +378,21 @@ export function initSyncerConfig() {
   }
 
   document.getElementById('sc-btn-clear-filters').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!confirm('Clear all filter data for ' + net + '? You will need to re-sync.')) return;
     await runDataAction('Clearing filters...', () => chain.clearFilters(net),
       'Filters cleared for ' + net, '[' + net + '] Filters cleared');
   });
 
   document.getElementById('sc-btn-clear-txindex').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!confirm('Clear transaction index for ' + net + '? You will need to re-sync.')) return;
     await runDataAction('Clearing transaction index...', () => chain.clearTxindex(net),
       'Transaction index cleared for ' + net, '[' + net + '] Transaction index cleared');
   });
 
   document.getElementById('sc-btn-clear-all').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!confirm('Clear ALL sync data for ' + net + '? This will stop syncing, disconnect the relay, and clear all filters, transaction index, and checkpoints.')) return;
     await runDataAction('Stopping operations...', async () => {
       chain.stopNetwork(net);
@@ -401,7 +404,7 @@ export function initSyncerConfig() {
   });
 
   document.getElementById('sc-btn-rebuild-filters').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild all filters for ' + net + '? This will clear existing filters and transaction index, then re-sync from scratch.')) return;
     log('[' + net + '] Rebuilding filters from scratch', 'info');
@@ -410,14 +413,14 @@ export function initSyncerConfig() {
   });
 
   document.getElementById('sc-btn-clear-utxoindex').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!confirm('Clear UTXO index for ' + net + '? You will need to re-sync.')) return;
     await runDataAction('Clearing UTXO index...', () => chain.clearUtxoIndex(net),
       'UTXO index cleared for ' + net, '[' + net + '] UTXO index cleared');
   });
 
   document.getElementById('sc-btn-rebuild-txindex').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild transaction index for ' + net + '? This will clear the existing txindex then re-sync.')) return;
     log('[' + net + '] Rebuilding txindex from scratch', 'info');
@@ -426,7 +429,7 @@ export function initSyncerConfig() {
   });
 
   document.getElementById('sc-btn-rebuild-utxoindex').addEventListener('click', async () => {
-    const net = networkSelect.value;
+    const net = chain.getActiveNetwork();
     if (!requirePeerUrl(net)) return;
     if (!confirm('Rebuild UTXO index for ' + net + '? This will clear the existing UTXO index then re-sync.')) return;
     log('[' + net + '] Rebuilding UTXO index from scratch', 'info');

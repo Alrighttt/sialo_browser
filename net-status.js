@@ -3,7 +3,7 @@
 
 import * as chain from './chain.js';
 
-const NET_LABELS = { mainnet: 'Mainnet', mainnet_v2: 'V2-only', zen: 'Zen' };
+const NET_LABELS = { mainnet: 'Mainnet', zen: 'Zen' };
 
 function fmtSize(bytes) {
   if (!bytes) return '0';

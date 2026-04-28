@@ -579,15 +579,22 @@ export async function importNetworkData(net, packed, onProgress) {
 
     report({ stage: 'writing', name, dataLen, index: i, total: entryCount });
 
-    // Headers live in OPFS (sync_headers reads `${net}:header_ids`
-    // from there). Writing them to IndexedDB only would leave the
-    // sync worker blind to the cached IDs and trigger a full
-    // re-sync from genesis after every restore. Mirror to IDB too
-    // so chain.js's various IDB-first lookups also see the data.
-    if (name === 'headers') {
-      await opfsSave(net + ':header_ids', data);
-    }
-    await syncerDbSaveChunked(dbKey, data);
+    // Write to OPFS, never IndexedDB. Every blob runtime reads is
+    // OPFS-first (filter at chain.js:631, txindex:663, utxoindex:675,
+    // attestation:707, headers:1082); the IDB copies were only there
+    // as fallback for legacy data. Restoring a full mainnet backup
+    // (~650 MB) to IDB blew Chrome's per-origin quota; OPFS has a
+    // much larger separate quota and is the right home anyway.
+    const opfsKey = name === 'headers' ? net + ':header_ids' : dbKey;
+    await opfsSave(opfsKey, data);
+
+    // Delete any stale IDB chunked entry under the same key so a
+    // prior partial restore (or pre-fix import that wrote to IDB)
+    // doesn't shadow the fresh OPFS data on the next read.
+    try {
+      await syncerDbDeleteChunked(dbKey);
+    } catch (_) { /* nothing to clean up — fine */ }
+
     report({ stage: 'wrote', name, dataLen, index: i, total: entryCount });
   }
 
