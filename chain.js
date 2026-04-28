@@ -550,9 +550,10 @@ export async function exportNetworkData(net) {
   return buf;
 }
 
-export async function importNetworkData(net, packed) {
+export async function importNetworkData(net, packed, onProgress) {
   const arr = packed instanceof Uint8Array ? packed : new Uint8Array(packed);
   const view = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
+  const report = typeof onProgress === 'function' ? onProgress : () => {};
 
   // Validate magic
   if (arr[0] !== 0x53 || arr[1] !== 0x42 || arr[2] !== 0x4B || arr[3] !== 0x50) {
@@ -576,6 +577,8 @@ export async function importNetworkData(net, packed) {
     const dbKey = keys[name];
     if (!dbKey) continue;
 
+    report({ stage: 'writing', name, dataLen, index: i, total: entryCount });
+
     // Headers live in OPFS (sync_headers reads `${net}:header_ids`
     // from there). Writing them to IndexedDB only would leave the
     // sync worker blind to the cached IDs and trigger a full
@@ -585,10 +588,17 @@ export async function importNetworkData(net, packed) {
       await opfsSave(net + ':header_ids', data);
     }
     await syncerDbSaveChunked(dbKey, data);
+    report({ stage: 'wrote', name, dataLen, index: i, total: entryCount });
   }
 
-  // Reload filters if this is the active network
-  if (net === _activeNetwork) await loadFilters();
+  // Reload filters if this is the active network. Big blobs parse
+  // slowly on mainnet, so callers can use the progress hook to keep
+  // their UI honest about what's still happening.
+  if (net === _activeNetwork) {
+    report({ stage: 'loading-filters' });
+    await loadFilters();
+    report({ stage: 'filters-loaded' });
+  }
 }
 
 // --- Public API: Load filters from IndexedDB (for active network) ---

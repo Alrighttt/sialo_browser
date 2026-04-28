@@ -301,7 +301,20 @@ export function initSyncerConfig() {
         log('Downloaded ' + (totalLen / 1024 / 1024).toFixed(1) + ' MB.', 'ok');
 
         setBackupStatus('Restoring data for ' + net + '...');
-        await chain.importNetworkData(net, packed);
+        // Per-entry visibility — without this the user sees the
+        // status freeze for tens of seconds on mainnet's filter blob.
+        await chain.importNetworkData(net, packed, ({ stage, name, dataLen }) => {
+          const fmt = (n) => (n / 1024 / 1024).toFixed(1) + ' MB';
+          if (stage === 'writing') {
+            setBackupStatus('Restoring ' + name + ' (' + fmt(dataLen) + ')...');
+          } else if (stage === 'wrote') {
+            log('Wrote ' + name + ' (' + fmt(dataLen) + ').', 'data');
+          } else if (stage === 'loading-filters') {
+            setBackupStatus('Loading filter index for ' + net + '...');
+          } else if (stage === 'filters-loaded') {
+            log('Filter index loaded.', 'ok');
+          }
+        });
         log('Sync data restored for ' + net + '.', 'ok');
         setBackupStatus('Restore complete for ' + net + '.', '#4ade80');
         backupProgressEl.style.display = 'none';
