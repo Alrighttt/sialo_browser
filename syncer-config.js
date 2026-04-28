@@ -190,8 +190,15 @@ export function initSyncerConfig() {
     }
     return () => {
       if (wasEnabled) {
+        // Re-enable + kick an immediate sync. `startSync()` alone only
+        // schedules the interval (default 5 min), so the user would
+        // see `idle` for minutes after a restore even though the
+        // restored data is ready and a verification sync is wanted.
+        // `syncNow({ restart: true })` triggers right away and the
+        // interval picks up subsequent rounds.
         chain.setNetworkConfig(net, { enabled: true });
         chain.startSync();
+        chain.syncNow(net, { restart: true });
         log('[' + net + '] sync resumed', 'info');
       }
     };
