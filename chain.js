@@ -579,21 +579,30 @@ export async function importNetworkData(net, packed, onProgress) {
 
     report({ stage: 'writing', name, dataLen, index: i, total: entryCount });
 
-    // Write to OPFS, never IndexedDB. Every blob runtime reads is
-    // OPFS-first (filter at chain.js:631, txindex:663, utxoindex:675,
-    // attestation:707, headers:1082); the IDB copies were only there
-    // as fallback for legacy data. Restoring a full mainnet backup
-    // (~650 MB) to IDB blew Chrome's per-origin quota; OPFS has a
-    // much larger separate quota and is the right home anyway.
-    const opfsKey = name === 'headers' ? net + ':header_ids' : dbKey;
-    await opfsSave(opfsKey, data);
-
-    // Delete any stale IDB chunked entry under the same key so a
-    // prior partial restore (or pre-fix import that wrote to IDB)
-    // doesn't shadow the fresh OPFS data on the next read.
-    try {
-      await syncerDbDeleteChunked(dbKey);
-    } catch (_) { /* nothing to clean up — fine */ }
+    // Filter / txindex / utxo / attestation go to OPFS only — the
+    // runtime reads them from there (filter at chain.js:631,
+    // txindex:663, utxoindex:675, attestation:707) and writing the
+    // full ~650 MB mainnet bundle to IDB blew Chrome's per-origin
+    // quota.
+    //
+    // Headers are different: syncer_wasm reads `<net>:header_ids`
+    // from IndexedDB directly (block-by-height in the explorer,
+    // header offset on subsequent syncs), so OPFS-only would force
+    // a full re-sync from a peer on every page load. We therefore
+    // write headers to BOTH OPFS (for chain.js's sync_headers path)
+    // and IDB (chunked, for syncer_wasm). The 18 MB single-record
+    // form trips Chrome's "Failed to read large IndexedDB value"
+    // bug after a browser restart; chunking via syncerDbSaveChunked
+    // is the established workaround and the inline0.js shim
+    // assembles chunks transparently for the WASM consumer.
+    if (name === 'headers') {
+      await opfsSave(net + ':header_ids', data);
+      await syncerDbDeleteChunked(dbKey).catch(() => {});
+      await syncerDbSaveChunked(dbKey, data);
+    } else {
+      await opfsSave(dbKey, data);
+      await syncerDbDeleteChunked(dbKey).catch(() => {});
+    }
 
     report({ stage: 'wrote', name, dataLen, index: i, total: entryCount });
   }
@@ -1354,6 +1363,33 @@ export function syncNow(net, { restart = false } = {}) {
 
 export async function init(wasmFunctions) {
   _wasm = wasmFunctions;
+
+  // Heal IDB header cache when only OPFS has data. syncer_wasm reads
+  // `<net>:header_ids` directly from IDB (block-by-height in the
+  // explorer, header offset on subsequent syncs); a prior restore
+  // that wrote to OPFS only would force a full re-sync from a peer
+  // on every page load. Mirror OPFS into IDB chunked (the inline0.js
+  // shim assembles chunks transparently for the WASM consumer; the
+  // single 18 MB record form trips Chrome's "Failed to read large
+  // IndexedDB value" bug after a restart). Idempotent — only runs
+  // when IDB is missing or unreadable, which means a fresh sync
+  // overwriting OPFS later won't be clobbered by stale data.
+  for (const net of ['mainnet', 'zen']) {
+    try {
+      const idbKey = wasmNetKey(net, 'header_ids');
+      let hasIdb = false;
+      try { hasIdb = !!(await syncerDbLoad(idbKey)); } catch (_) { hasIdb = false; }
+      if (hasIdb) continue;
+      const opfsBytes = await opfsLoad(net + ':header_ids');
+      if (!opfsBytes || opfsBytes.byteLength < 32) continue;
+      await syncerDbDeleteChunked(idbKey).catch(() => {});
+      await syncerDbSaveChunked(idbKey, opfsBytes);
+      _dbg('chain.js: mirrored ' + net + ' header_ids OPFS → IDB (' +
+        opfsBytes.byteLength + ' bytes)');
+    } catch (e) {
+      console.warn('chain.js: header_ids IDB heal failed for ' + net, e);
+    }
+  }
 
   loadFilters();
 
