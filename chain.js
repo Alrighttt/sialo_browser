@@ -574,9 +574,17 @@ export async function importNetworkData(net, packed) {
     const data = arr.slice(pos, pos + dataLen); pos += dataLen;
 
     const dbKey = keys[name];
-    if (dbKey) {
-      await syncerDbSaveChunked(dbKey, data);
+    if (!dbKey) continue;
+
+    // Headers live in OPFS (sync_headers reads `${net}:header_ids`
+    // from there). Writing them to IndexedDB only would leave the
+    // sync worker blind to the cached IDs and trigger a full
+    // re-sync from genesis after every restore. Mirror to IDB too
+    // so chain.js's various IDB-first lookups also see the data.
+    if (name === 'headers') {
+      await opfsSave(net + ':header_ids', data);
     }
+    await syncerDbSaveChunked(dbKey, data);
   }
 
   // Reload filters if this is the active network
