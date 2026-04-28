@@ -2,6 +2,8 @@
 // Consumes chain.js for all state and WASM calls.
 
 import * as chain from './chain.js';
+import { connectSdk } from './config.js';
+import { parallelUpload } from './upload.js';
 import { updateCard } from './net-status.js';
 
 // --- Logging ---
@@ -152,6 +154,169 @@ export function initSyncerConfig() {
     document.getElementById('sc-log').innerHTML = '';
     logCount = 0;
   });
+
+  // --- Backup & Restore ---
+  //
+  // Backup: pack the active network's blobs (filter, txindex, utxo,
+  // attestation, headers) into the SBKP envelope, upload as a single
+  // Sia object, return a share URL. Restore: download an SBKP from a
+  // share URL and replace local data. Same logic the manifest panel
+  // uses, scoped to its own status / progress / URL elements.
+  const backupBtn = document.getElementById('sc-btn-backup');
+  const restoreBtn = document.getElementById('sc-btn-restore');
+  const backupStatusEl = document.getElementById('sc-backup-status');
+  const backupProgressEl = document.getElementById('sc-backup-progress');
+  const backupResultEl = document.getElementById('sc-backup-result');
+  const backupUrlEl = document.getElementById('sc-backup-share-url');
+  const restoreUrlInput = document.getElementById('sc-restore-url');
+  const copyUrlBtn = document.getElementById('sc-btn-copy-url');
+
+  function setBackupStatus(text, color) {
+    backupStatusEl.textContent = text;
+    backupStatusEl.style.color = color || '#888';
+  }
+
+  // Pause auto-sync for one network so backup/restore don't race
+  // against an in-flight sync worker writing fresh blobs into
+  // IndexedDB. `stopNetwork` terminates the worker and disables
+  // auto-sync; we capture the prior enabled state so we can flip it
+  // back on after the operation. Returns a function that restores
+  // the prior state when called — drives a try/finally.
+  async function pauseSyncForNet(net) {
+    const wasEnabled = chain.getNetworkConfig(net).enabled;
+    if (wasEnabled || chain.getSyncState(net).status === 'syncing') {
+      log('[' + net + '] pausing sync for backup/restore', 'info');
+      chain.stopNetwork(net);
+    }
+    return () => {
+      if (wasEnabled) {
+        chain.setNetworkConfig(net, { enabled: true });
+        chain.startSync();
+        log('[' + net + '] sync resumed', 'info');
+      }
+    };
+  }
+
+  if (backupBtn) {
+    backupBtn.addEventListener('click', async () => {
+      const net = chain.getActiveNetwork();
+      // Gate on full sync — backing up partial data writes a torn
+      // SBKP that wouldn't restore cleanly.
+      const syncState = chain.getSyncState(net);
+      if (syncState.status !== 'synced') {
+        log('Cannot backup: ' + net + ' is not fully synced (status: ' + syncState.status + ').', 'err');
+        return;
+      }
+
+      backupBtn.disabled = true;
+      backupResultEl.style.display = 'none';
+      const resumeSync = await pauseSyncForNet(net);
+      try {
+        setBackupStatus('Packing ' + net + ' sync data...');
+        const packed = await chain.exportNetworkData(net);
+        if (!packed || packed.length < 10) {
+          log('No sync data to backup for ' + net + '.', 'err');
+          setBackupStatus('');
+          return;
+        }
+        log('Packed ' + (packed.length / 1024 / 1024).toFixed(1) + ' MB for ' + net + '.', 'info');
+
+        backupProgressEl.style.display = 'block';
+        const backupFile = new File([packed], `backup-${net}.dat`, { type: 'application/octet-stream' });
+        const { obj, elapsed, size } = await parallelUpload(backupFile, backupStatusEl, backupProgressEl);
+        log('Uploaded ' + size + ' bytes in ' + elapsed + 's.', 'ok');
+
+        const sdk = await connectSdk(backupStatusEl);
+        if (!sdk) { log('Failed to connect to indexer.', 'err'); return; }
+
+        // 1-year share URL — same default the manifest backup uses.
+        const validUntilMs = Date.now() + (365 * 24 * 60 * 60 * 1000);
+        const shareUrl = sdk.shareObject(obj, validUntilMs);
+        log('Share URL: ' + shareUrl, 'data');
+
+        try { await sdk.pinObject(obj); log('Object pinned.', 'ok'); }
+        catch (pinErr) { log('Pin failed: ' + pinErr, 'info'); }
+
+        backupUrlEl.textContent = shareUrl;
+        backupUrlEl.onclick = () => {
+          navigator.clipboard.writeText(shareUrl).then(() => log('Share URL copied.', 'ok'));
+        };
+        backupResultEl.style.display = '';
+        setBackupStatus('Backup complete for ' + net + '.', '#4ade80');
+        backupProgressEl.style.display = 'none';
+      } catch (e) {
+        log('Backup error: ' + e, 'err');
+        setBackupStatus('Backup failed: ' + e, '#f87171');
+        backupProgressEl.style.display = 'none';
+      } finally {
+        backupBtn.disabled = false;
+        resumeSync();
+      }
+    });
+  }
+
+  if (restoreBtn) {
+    restoreBtn.addEventListener('click', async () => {
+      const url = restoreUrlInput.value.trim();
+      if (!url) { log('Enter a share URL.', 'err'); return; }
+      if (!url.startsWith('sia://')) { log('URL must start with sia://', 'err'); return; }
+
+      const net = chain.getActiveNetwork();
+      restoreBtn.disabled = true;
+      const resumeSync = await pauseSyncForNet(net);
+      try {
+        setBackupStatus('Connecting to indexer...');
+        const sdk = await connectSdk(backupStatusEl);
+        if (!sdk) { log('Failed to connect to indexer.', 'err'); return; }
+
+        setBackupStatus('Downloading backup...');
+        backupProgressEl.style.display = 'block';
+        const obj = await sdk.sharedObject(url);
+        const totalSize = obj.size();
+        const stream = sdk.download(obj);
+        const reader = stream.getReader();
+        const parts = [];
+        let off = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          parts.push(value);
+          off += value.byteLength;
+          backupProgressEl.max = totalSize;
+          backupProgressEl.value = off;
+          setBackupStatus('Downloading... ' + (off / 1024 / 1024).toFixed(1) +
+            ' / ' + (totalSize / 1024 / 1024).toFixed(1) + ' MB');
+        }
+        const totalLen = parts.reduce((s, p) => s + p.length, 0);
+        const packed = new Uint8Array(totalLen);
+        let p = 0;
+        for (const part of parts) { packed.set(part, p); p += part.length; }
+        log('Downloaded ' + (totalLen / 1024 / 1024).toFixed(1) + ' MB.', 'ok');
+
+        setBackupStatus('Restoring data for ' + net + '...');
+        await chain.importNetworkData(net, packed);
+        log('Sync data restored for ' + net + '.', 'ok');
+        setBackupStatus('Restore complete for ' + net + '.', '#4ade80');
+        backupProgressEl.style.display = 'none';
+      } catch (e) {
+        log('Restore failed: ' + e, 'err');
+        setBackupStatus('Restore failed: ' + e, '#f87171');
+        backupProgressEl.style.display = 'none';
+      } finally {
+        restoreBtn.disabled = false;
+        resumeSync();
+      }
+    });
+  }
+
+  if (copyUrlBtn) {
+    copyUrlBtn.addEventListener('click', () => {
+      const url = backupUrlEl.textContent;
+      if (url) {
+        navigator.clipboard.writeText(url).then(() => log('Share URL copied.', 'ok'));
+      }
+    });
+  }
 
   // Data management buttons
   const clearStatus = document.getElementById('sc-clear-status');

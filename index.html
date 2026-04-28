@@ -1498,6 +1498,53 @@
               <div id="sc-clear-status" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
             </div>
 
+            <!-- Backup & Restore -->
+            <div class="panel-section">
+              <h2>Backup & Restore</h2>
+              <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
+                Upload the active network's sync data to Sia, or restore from a share URL produced
+                by another device or by <code>sialo-filters</code>.
+              </p>
+
+              <div style="margin-bottom:1rem;">
+                <div class="label">Backup</div>
+                <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">
+                  Packs the current network's filter / txindex / utxo / attestation / headers blobs
+                  into a single Sia object. Returns a share URL you can paste into Restore on any
+                  other device.
+                </p>
+                <button id="sc-btn-backup" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Backup to Sia</button>
+              </div>
+
+              <div id="sc-backup-result"
+                style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
+                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your backup):</div>
+                <div id="sc-backup-share-url"
+                  style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;"
+                  title="Click to copy"></div>
+                <div style="margin-top:0.5rem;">
+                  <button id="sc-btn-copy-url" style="font-size:0.75rem; padding:0.25rem 0.5rem;">Copy URL</button>
+                </div>
+              </div>
+
+              <div style="margin-bottom:0.75rem;">
+                <div class="label">Restore</div>
+                <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">
+                  Replaces the active network's sync data with the blobs in the share URL.
+                  Use this to skip multi-hour browser-side filter generation.
+                </p>
+                <div style="display:flex; gap:0.5rem; align-items:flex-start;">
+                  <input id="sc-restore-url" type="text"
+                    placeholder="sia://sia.storage/objects/.../shared?..."
+                    style="flex:1; font-size:0.85rem;">
+                  <button id="sc-btn-restore" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Restore</button>
+                </div>
+              </div>
+
+              <div id="sc-backup-status" style="font-size:0.8rem; color:#888;"></div>
+              <progress id="sc-backup-progress" style="width:100%; display:none; margin-top:0.5rem;"></progress>
+            </div>
+
             <!-- Sync Log -->
             <div class="panel-section">
               <div style="display:flex; justify-content:space-between; align-items:center;">
