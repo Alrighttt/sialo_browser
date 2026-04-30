@@ -7,7 +7,7 @@ import {
   filterDbLoad, filterDbDelete,
   syncerDbLoad, syncerDbSave, syncerDbDelete,
   syncerDbSaveChunked, syncerDbLoadChunked, syncerDbDeleteChunked,
-  opfsSave, opfsLoad, opfsDelete,
+  opfsSave, opfsLoad, opfsLoadFile, opfsDelete,
 } from './db-helpers.js';
 import { _dbg } from './utils.js';
 
@@ -44,12 +44,25 @@ let _networks = loadNetworkConfigs();
 
 // Filter/txindex/utxoindex/attestationindex blob URLs for the active network
 let _filterBlobUrl = null;
+let _filterFile = null;     // OPFS File backing _filterBlobUrl. Held so
+                            // the underlying handle stays alive while the
+                            // blob URL is in use (GC of the File can
+                            // invalidate fetches, especially across
+                            // worker boundaries).
 let _filterType = null; // 'v2' | 'all' | null
 let _txindexBlobUrl = null;
+let _txindexFile = null;    // Same lifetime/cross-worker reasoning as
+                            // _filterFile; also used by mempool prune
+                            // for sliced binary search reads.
 let _utxoindexBlobUrl = null;
 let _attestationindexBlobUrl = null;
 let _utxoPrefixes = null;   // Sorted Uint8Array of unique 8-byte address prefixes from SUXI
 let _utxoPrefixCount = 0;
+
+// Serialize mempool prune cycles so they can't pile concurrent
+// 370 MB blob fetches on top of each other — that path triggers
+// ERR_BLOB_OUT_OF_MEMORY in Chrome under sustained activity.
+let _findConfirmedInflight = null;
 
 // Per-network sync state: { status, error, lastSync, lastMsg }
 let _syncState = {};
@@ -265,6 +278,21 @@ export function getDefaultUrl(net) {
 // --- Public API: Filter/TxIndex state (for active network) ---
 
 export function getFilterUrl() { return _filterBlobUrl; }
+export function getFilterOpfsKey(net) { return networkDataKeys(net || _activeNetwork).filter; }
+export function getUtxoIndexOpfsKey(net) { return networkDataKeys(net || _activeNetwork).utxoindex; }
+
+// Read the tip height from the active network's filter file without
+// pulling all 242 MB into memory — slices off the 24-byte header.
+// Returns 0 if the filter isn't loaded or the file is too small.
+// Wallet scan caching uses this to detect "filters unchanged since
+// last scan" and skip the 50 s background rescan on page reload.
+export async function getFilterTipHeight() {
+  if (!_filterFile || _filterFile.size < 24) return 0;
+  try {
+    const buf = await _filterFile.slice(16, 24).arrayBuffer();
+    return Number(new DataView(buf).getBigUint64(0, true));
+  } catch (_) { return 0; }
+}
 export function getFilterType() { return _filterType; }
 export function getTxindexUrl() { return _txindexBlobUrl; }
 export function getUtxoIndexUrl() { return _utxoindexBlobUrl; }
@@ -633,58 +661,52 @@ async function _loadFiltersInner() {
   if (_txindexBlobUrl) { URL.revokeObjectURL(_txindexBlobUrl); _txindexBlobUrl = null; }
   if (_utxoindexBlobUrl) { URL.revokeObjectURL(_utxoindexBlobUrl); _utxoindexBlobUrl = null; }
   if (_attestationindexBlobUrl) { URL.revokeObjectURL(_attestationindexBlobUrl); _attestationindexBlobUrl = null; }
+  _filterFile = null;
+  _txindexFile = null;
   _utxoPrefixes = null; _utxoPrefixCount = 0;
   _filterType = null;
 
   const net = _activeNetwork;
   const keys = networkDataKeys(net);
 
-  // Load filter data: try OPFS first (full-chain worker saves here),
-  // then IndexedDB (V2 generate_filters saves here directly from WASM),
-  // then legacy. Use whichever has the highest tip_height.
-  let filterData = null;
-  let filterTip = 0;
-  const opfsFilter = await opfsLoad(keys.filter);
-  if (opfsFilter && opfsFilter.byteLength >= 24) {
-    const dv = new DataView(opfsFilter.buffer || opfsFilter);
-    const tip = Number(dv.getBigUint64(16, true));
-    if (tip > filterTip) { filterData = opfsFilter; filterTip = tip; }
-  }
-  const idbFilter = await syncerDbLoadChunked(keys.filter);
-  if (idbFilter && idbFilter.byteLength >= 24) {
-    const arr = idbFilter instanceof Uint8Array ? idbFilter : new Uint8Array(idbFilter);
-    const dv = new DataView(arr.buffer, arr.byteOffset, arr.byteLength);
-    const tip = Number(dv.getBigUint64(16, true));
-    if (tip > filterTip) { filterData = arr; filterTip = tip; }
-  }
-  if ((!filterData || !filterData.byteLength) && keys.filterLegacy) {
+  // Load filter and txindex via the OPFS `File` directly so the
+  // resulting blob URL is disk-backed, not memory-backed. Building
+  // an in-memory `Blob([uint8array])` for these (242 MB filter,
+  // 370 MB txindex) was eating Chrome's per-tab blob memory budget
+  // and triggering ERR_BLOB_OUT_OF_MEMORY on subsequent fetches.
+  // OPFS stays the source of truth — the sync worker's 'save'
+  // message persists fresh data there at the end of every cycle.
+  // IDB intermediate writes (from WASM generate_filters) are no
+  // longer consulted; reading 242 MB out of IDB would defeat the
+  // disk-backing we just added.
+  const filterFile = await opfsLoadFile(keys.filter);
+  if (filterFile && filterFile.size >= 24) {
+    _filterType = isV2Network(net) ? 'v2' : 'all';
+    _filterFile = filterFile;
+    _filterBlobUrl = URL.createObjectURL(filterFile);
+    try {
+      const headBuf = await filterFile.slice(0, 24).arrayBuffer();
+      const dv = new DataView(headBuf);
+      const tipH = Number(dv.getBigUint64(16, true));
+      _dbg(`[loadFilters] Filter loaded ${filterFile.size} bytes, tip height: ${tipH}, key: ${keys.filter}`);
+    } catch (_) {}
+  } else if (keys.filterLegacy) {
     const legacyFilter = await filterDbLoad(keys.filterLegacy);
     if (legacyFilter && legacyFilter.byteLength > 0) {
-      filterData = legacyFilter;
+      _filterType = isV2Network(net) ? 'v2' : 'all';
+      _filterBlobUrl = URL.createObjectURL(new Blob([legacyFilter], { type: 'application/octet-stream' }));
     }
   }
 
-  if (filterData) {
-    _filterType = isV2Network(net) ? 'v2' : 'all';
-    _filterBlobUrl = URL.createObjectURL(new Blob([filterData], { type: 'application/octet-stream' }));
-    // Log filter tip height for debugging
-    if (filterData.byteLength >= 24) {
-      const dv = new DataView(filterData.buffer || filterData);
-      const tipH = Number(dv.getBigUint64(16, true));
-      _dbg(`[loadFilters] Loaded ${filterData.byteLength} bytes, filter tip height: ${tipH}, key: ${keys.filter}`);
+  const txindexFile = await opfsLoadFile(keys.txindex);
+  if (txindexFile && txindexFile.size > 0) {
+    _txindexFile = txindexFile;
+    _txindexBlobUrl = URL.createObjectURL(txindexFile);
+  } else if (keys.txindexLegacy) {
+    const legacyTx = await filterDbLoad(keys.txindexLegacy);
+    if (legacyTx && legacyTx.byteLength > 0) {
+      _txindexBlobUrl = URL.createObjectURL(new Blob([legacyTx], { type: 'application/octet-stream' }));
     }
-  }
-
-  // Load txindex data: try OPFS first, then IndexedDB
-  let txdata = await opfsLoad(keys.txindex);
-  if (!txdata || !txdata.byteLength) {
-    txdata = await syncerDbLoadChunked(keys.txindex);
-  }
-  if ((!txdata || !txdata.byteLength) && keys.txindexLegacy) {
-    txdata = await filterDbLoad(keys.txindexLegacy);
-  }
-  if (txdata && txdata.byteLength > 0) {
-    _txindexBlobUrl = URL.createObjectURL(new Blob([txdata], { type: 'application/octet-stream' }));
   }
 
   // Load utxoindex data: try OPFS first, then IndexedDB
@@ -891,43 +913,74 @@ export function clearMempool(net) {
 // Check mempool txids against the txindex to find confirmed transactions.
 // The txindex is a sorted array of 12-byte entries: txid_prefix[8] + height[4].
 async function _findConfirmedTxids(net) {
+  // Single-flight: if a prune is already running, await its result.
+  // Without this, every sync cycle queued its own fetch on the 370 MB
+  // txindex blob URL, and Chrome eventually returned
+  // ERR_BLOB_OUT_OF_MEMORY when several were in flight concurrently.
+  // Holding the bytes in a cached Uint8Array would also work, but at
+  // the cost of permanently doubling memory (Blob + typed array) which
+  // ate into the budget for the filter/utxo blobs.
+  if (_findConfirmedInflight) return _findConfirmedInflight;
+  _findConfirmedInflight = (async () => {
+    return await _findConfirmedTxidsInner(net);
+  })().finally(() => { _findConfirmedInflight = null; });
+  return _findConfirmedInflight;
+}
+
+async function _findConfirmedTxidsInner(net) {
   const pool = _mempool[net];
-  if (!pool || !_txindexBlobUrl) return [];
+  // Use the disk-backed OPFS File. Slicing a few bytes at a time keeps
+  // the working set tiny (~tens of KB per prune) instead of forcing a
+  // 370 MB allocation that blows Chrome's blob memory budget.
+  if (!pool || !_txindexFile) return [];
+  const file = _txindexFile;
 
-  const resp = await fetch(_txindexBlobUrl);
-  const buf = await resp.arrayBuffer();
-  const data = new Uint8Array(buf);
-
-  // Validate header: "STXI" + version(4) + count(4) + tip_height(4)
-  if (data.length < 16) return [];
-  const magic = String.fromCharCode(data[0], data[1], data[2], data[3]);
-  if (magic !== 'STXI') return [];
-  const count = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24); // LE u32 at offset 4.. wait
-
-  // Re-check: magic(4) + version(4) + count(4) + tip_height(4)
-  const dv = new DataView(buf);
-  const version = dv.getUint32(4, true);
+  // Read header: "STXI" + version(4) + count(4) + tip_height(4) = 16 bytes
+  if (file.size < 16) return [];
+  const headBuf = await file.slice(0, 16).arrayBuffer();
+  const head = new Uint8Array(headBuf);
+  if (head[0] !== 0x53 || head[1] !== 0x54 || head[2] !== 0x58 || head[3] !== 0x49) return [];
+  const dvHead = new DataView(headBuf);
+  const version = dvHead.getUint32(4, true);
   if (version !== 1) return [];
-  const entryCount = dv.getUint32(8, true);
+  const entryCount = dvHead.getUint32(8, true);
   const headerSize = 16;
-  const entrySize = 12; // 8-byte prefix + 4-byte height
+  const entrySize = 12;
+
+  // Page-cache: each binary search step reads one 12-byte entry from
+  // disk. Most txids in the mempool tend to cluster near the tip, so
+  // we keep a small LRU of recently-touched entries to dodge repeat
+  // disk reads inside the same prune cycle.
+  const cache = new Map();
+  const cacheMax = 4096;
+  const readEntry = async (idx) => {
+    const cached = cache.get(idx);
+    if (cached) return cached;
+    const off = headerSize + idx * entrySize;
+    const buf = await file.slice(off, off + entrySize).arrayBuffer();
+    const arr = new Uint8Array(buf);
+    if (cache.size >= cacheMax) {
+      // Drop the oldest entry — Map iterates insertion order.
+      cache.delete(cache.keys().next().value);
+    }
+    cache.set(idx, arr);
+    return arr;
+  };
 
   const confirmed = [];
   for (const txid of Object.keys(pool)) {
-    // Convert first 8 bytes of txid hex to a prefix
-    const prefixHex = txid.slice(0, 16); // 8 bytes = 16 hex chars
+    const prefixHex = txid.slice(0, 16);
     if (prefixHex.length < 16) continue;
     const prefix = new Uint8Array(8);
     for (let i = 0; i < 8; i++) prefix[i] = parseInt(prefixHex.slice(i * 2, i * 2 + 2), 16);
 
-    // Binary search
     let lo = 0, hi = entryCount;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
-      const off = headerSize + mid * entrySize;
+      const entry = await readEntry(mid);
       let cmp = 0;
       for (let i = 0; i < 8; i++) {
-        cmp = data[off + i] - prefix[i];
+        cmp = entry[i] - prefix[i];
         if (cmp !== 0) break;
       }
       if (cmp < 0) lo = mid + 1;
@@ -935,10 +988,10 @@ async function _findConfirmedTxids(net) {
     }
 
     if (lo < entryCount) {
-      const off = headerSize + lo * entrySize;
+      const entry = await readEntry(lo);
       let match = true;
       for (let i = 0; i < 8; i++) {
-        if (data[off + i] !== prefix[i]) { match = false; break; }
+        if (entry[i] !== prefix[i]) { match = false; break; }
       }
       if (match) confirmed.push(txid);
     }
@@ -1161,12 +1214,18 @@ function syncNetworkInWorker(net, config, genesisHex, v2, startHeight) {
           const savePromise = opfsSave(saveKey, saveData);
           pendingSaves.push(
             savePromise
-              .then(() => {
+              .then(async () => {
                 _emitSyncLog(e.data.net, `Saved ${saveKey} (${(dataSize / 1024 / 1024).toFixed(1)} MB)`, 'ok');
-                // Refresh filter blob URL so wallet scans use the latest filters
+                // Refresh filter blob URL so wallet scans use the latest
+                // filters — re-read from OPFS as a disk-backed File so
+                // we don't wedge `saveData` (242 MB) in JS memory.
                 if (saveKey === netKey(e.data.net, 'filter_entries') && e.data.net === getActiveNetwork()) {
-                  if (_filterBlobUrl) URL.revokeObjectURL(_filterBlobUrl);
-                  _filterBlobUrl = URL.createObjectURL(new Blob([saveData], { type: 'application/octet-stream' }));
+                  const file = await opfsLoadFile(saveKey);
+                  if (file && file.size > 0) {
+                    if (_filterBlobUrl) URL.revokeObjectURL(_filterBlobUrl);
+                    _filterFile = file;
+                    _filterBlobUrl = URL.createObjectURL(file);
+                  }
                 }
               })
               .catch(err => _emitSyncLog(e.data.net, `Failed to save ${saveKey}: ${err}`, 'err'))
@@ -1364,28 +1423,29 @@ export function syncNow(net, { restart = false } = {}) {
 export async function init(wasmFunctions) {
   _wasm = wasmFunctions;
 
-  // Heal IDB header cache when only OPFS has data. syncer_wasm reads
-  // `<net>:header_ids` directly from IDB (block-by-height in the
-  // explorer, header offset on subsequent syncs); a prior restore
-  // that wrote to OPFS only would force a full re-sync from a peer
-  // on every page load. Mirror OPFS into IDB chunked (the inline0.js
-  // shim assembles chunks transparently for the WASM consumer; the
-  // single 18 MB record form trips Chrome's "Failed to read large
-  // IndexedDB value" bug after a restart). Idempotent — only runs
-  // when IDB is missing or unreadable, which means a fresh sync
-  // overwriting OPFS later won't be clobbered by stale data.
+  // Drop any orphaned chunked-meta record at the WASM header_ids key.
+  // Older restore code wrote `{chunked:true, numChunks:N}` at the
+  // parent key without successfully writing the N chunks (IDB quota
+  // pressure on big restores). Each subsequent syncer_wasm idb_load
+  // would then walk the chunked path, find chunks missing, log a
+  // warning, and fall back to OPFS — which is fine for correctness
+  // but spams the console.
+  //
+  // We deliberately do NOT mirror OPFS → IDB here. The idb_load shim
+  // already falls back to OPFS automatically, and re-attempting the
+  // 18 MB chunked save on every page load just churns IDB and
+  // recreates the orphan-meta scenario when the chunk transaction
+  // hits a quota or other failure mid-write.
   for (const net of ['mainnet', 'zen']) {
     try {
       const idbKey = wasmNetKey(net, 'header_ids');
-      let hasIdb = false;
-      try { hasIdb = !!(await syncerDbLoad(idbKey)); } catch (_) { hasIdb = false; }
-      if (hasIdb) continue;
-      const opfsBytes = await opfsLoad(net + ':header_ids');
-      if (!opfsBytes || opfsBytes.byteLength < 32) continue;
-      await syncerDbDeleteChunked(idbKey).catch(() => {});
-      await syncerDbSaveChunked(idbKey, opfsBytes);
-      _dbg('chain.js: mirrored ' + net + ' header_ids OPFS → IDB (' +
-        opfsBytes.byteLength + ' bytes)');
+      let meta = null;
+      try { meta = await syncerDbLoad(idbKey); } catch (_) { meta = null; }
+      if (meta && !(meta instanceof Uint8Array) && !(meta instanceof ArrayBuffer)
+          && meta.chunked && Number.isFinite(meta.numChunks)) {
+        await syncerDbDeleteChunked(idbKey).catch(() => {});
+        _dbg('chain.js: cleared orphan chunked-meta at ' + idbKey);
+      }
     } catch (e) {
       console.warn('chain.js: header_ids IDB heal failed for ' + net, e);
     }

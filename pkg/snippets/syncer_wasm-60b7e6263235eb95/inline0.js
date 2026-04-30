@@ -1,5 +1,18 @@
 
 const CHUNK_MAX = 2 * 1024 * 1024;
+const servedFromOpfs = new Set();
+
+async function opfsLoadFallback(key) {
+    try {
+        const root = await navigator.storage.getDirectory();
+        const fileHandle = await root.getFileHandle(key);
+        const file = await fileHandle.getFile();
+        const buffer = await file.arrayBuffer();
+        return new Uint8Array(buffer);
+    } catch (_) {
+        return null;
+    }
+}
 
 function openSyncerDb() {
     return new Promise((resolve, reject) => {
@@ -79,13 +92,26 @@ export function idb_save(key, data) {
 
 export function idb_load(key) {
     return new Promise(async (resolve) => {
-        // Treat any read failure as cache miss. Chrome's blob-backed
-        // record bug ("Failed to read large IndexedDB value") would
-        // otherwise propagate up and break callers like the explorer's
-        // block-by-height lookup. Returning null lets the WASM re-sync
-        // from a peer instead of crashing.
+        // Try IDB first; fall back to OPFS for any miss / failure.
+        // Chrome's blob-backed record bug ("Failed to read large
+        // IndexedDB value") and torn chunked layouts (parent meta
+        // without all chunks) both manifest as IDB unable to return
+        // the data. OPFS holds the same blob under the same key
+        // (the JS host writes there as the source of truth) so the
+        // WASM can read it without forcing a full peer re-sync.
+        const fallback = async () => {
+            const opfs = await opfsLoadFallback(key);
+            // First-hit log only — subsequent reads of the same key
+            // are quiet so the console isn't flooded during sync.
+            if (opfs && !servedFromOpfs.has(key)) {
+                servedFromOpfs.add(key);
+                console.info('idb_load: serving', key, 'from OPFS (', opfs.byteLength, 'bytes)');
+            }
+            resolve(opfs);
+        };
+
         let db;
-        try { db = await openSyncerDb(); } catch (_) { resolve(null); return; }
+        try { db = await openSyncerDb(); } catch (_) { return fallback(); }
         try {
             const meta = await new Promise((res) => {
                 const tx = db.transaction('cache', 'readonly');
@@ -94,14 +120,15 @@ export function idb_load(key) {
                 get.onerror = () => res(undefined);
             });
 
-            if (meta == null) { resolve(null); return; }
+            if (meta == null) { db.close(); return fallback(); }
 
             // Plain bytes path — what older saves and small saves use.
-            if (meta instanceof Uint8Array) { resolve(meta); return; }
-            if (meta instanceof ArrayBuffer) { resolve(new Uint8Array(meta)); return; }
+            if (meta instanceof Uint8Array) { db.close(); resolve(meta); return; }
+            if (meta instanceof ArrayBuffer) { db.close(); resolve(new Uint8Array(meta)); return; }
 
             // Chunked layout — assemble. If any chunk is missing we
-            // fall back to null so the caller can re-fetch cleanly.
+            // fall back to OPFS rather than null so the caller still
+            // gets the cached data instead of doing a peer re-sync.
             if (meta && meta.chunked && Number.isFinite(meta.numChunks)) {
                 const parts = new Array(meta.numChunks);
                 let ok = true;
@@ -116,9 +143,24 @@ export function idb_load(key) {
                     parts[i] = part instanceof Uint8Array ? part : new Uint8Array(part);
                 }
                 if (!ok) {
-                    console.warn('idb_load: missing chunk for', key, '— treating as miss');
-                    resolve(null); return;
+                    // Orphaned parent meta with missing chunks — usually
+                    // a half-written save from a prior interrupted run.
+                    // Delete the meta so the next read goes straight to
+                    // OPFS without re-warning, and so the next idb_save
+                    // gets a clean slate.
+                    console.warn('idb_load: missing chunk for', key, '— purging orphan meta, trying OPFS');
+                    try {
+                        await new Promise((res) => {
+                            const tx = db.transaction('cache', 'readwrite');
+                            const del = tx.objectStore('cache').delete(key);
+                            del.onsuccess = () => res();
+                            del.onerror = () => res();
+                        });
+                    } catch (_) {}
+                    db.close();
+                    return fallback();
                 }
+                db.close();
                 const total = parts.reduce((s, p) => s + p.byteLength, 0);
                 const out = new Uint8Array(total);
                 let off = 0;
@@ -126,13 +168,13 @@ export function idb_load(key) {
                 resolve(out); return;
             }
 
-            console.warn('idb_load: unexpected value shape at', key, meta);
-            resolve(null);
-        } catch (e) {
-            console.warn('idb_load: failed for', key, e);
-            resolve(null);
-        } finally {
+            console.warn('idb_load: unexpected value shape at', key, meta, '— trying OPFS');
             db.close();
+            return fallback();
+        } catch (e) {
+            console.warn('idb_load: failed for', key, e, '— trying OPFS');
+            try { db.close(); } catch (_) {}
+            return fallback();
         }
     });
 }

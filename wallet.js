@@ -6,7 +6,8 @@ import { kdfEncrypt, kdfDecrypt } from './kdf.js';
 import { openOrActivateInternalTab } from './tabs.js';
 import {
   getActiveNetwork, getNetworkConfig, getGenesisHex,
-  getFilterUrl, getUtxoIndexUrl,
+  getFilterUrl, getUtxoIndexUrl, getFilterOpfsKey, getUtxoIndexOpfsKey,
+  getFilterTipHeight,
   getMempool, getMempoolTransactions, onMempoolChange, addToMempool,
   onChange as chainOnChange, getSyncState, loadFilters, syncNow,
 } from './chain.js';
@@ -791,13 +792,8 @@ function txbPopulateUtxos(allUtxos) {
     _txbBaseUtxos = allUtxos.filter(u => u.direction === 'received' && u.outputId && !spentIds.has(u.outputId));
   }
 
-  // Reset proofs
+  // Reset proofs — they get recomputed inside txbBuildTransaction.
   _utxoProofs = {};
-  const proofSection = document.getElementById('txb-proof-section');
-  if (proofSection) {
-    document.getElementById('txb-proof-status').textContent = 'Merkle proofs not computed.';
-    document.getElementById('txb-proof-status').style.color = '#888';
-  }
 
   txbRenderUtxoList(_txbBaseUtxos);
 }
@@ -860,11 +856,6 @@ function txbRenderUtxoList(utxos) {
   list.innerHTML = '';
   _txbUtxos = utxos;
 
-  const proofSection = document.getElementById('txb-proof-section');
-  if (proofSection) {
-    proofSection.style.display = _txbUtxos.length > 0 ? '' : 'none';
-  }
-
   if (_txbUtxos.length === 0) {
     list.innerHTML = '<div style="padding:0.75rem; color:#666; font-size:0.8rem; text-align:center;">No unspent outputs found.</div>';
     txbUpdateSummary();
@@ -915,21 +906,24 @@ function txbRenderUtxoList(utxos) {
   txbUpdateSummary();
 }
 
-export async function txbComputeProofs() {
-  const statusEl = document.getElementById('txb-proof-status');
-  const btn = document.getElementById('txb-btn-compute-proofs');
+// Compute merkle proofs for the current `_txbUtxos`. Was a dedicated
+// "Compute Proofs" button; now inlined into the Build & Sign flow,
+// but kept exported because manifest.js still calls it during the
+// private-manifest fee construction. UI-free — the optional
+// `onStatus(msg, cls)` callback lets callers route progress text to
+// whatever status element makes sense for their flow.
+export async function txbComputeProofs(onStatus) {
+  const status = typeof onStatus === 'function' ? onStatus : () => {};
 
   if (_txbUtxos.length === 0) {
-    statusEl.textContent = 'No UTXOs to compute proofs for.';
-    statusEl.style.color = '#f87171';
+    status('No UTXOs to compute proofs for.', 'err');
     return;
   }
 
   const net = getActiveNetwork();
   const config = getNetworkConfig(net);
   if (!config.peerUrl) {
-    statusEl.textContent = 'No peer URL configured.';
-    statusEl.style.color = '#f87171';
+    status('No peer URL configured.', 'err');
     return;
   }
 
@@ -945,9 +939,7 @@ export async function txbComputeProofs() {
     height: u.height || 0,
   }));
 
-  btn.disabled = true;
-  statusEl.textContent = 'Computing merkle proofs...';
-  statusEl.style.color = '#f59e0b';
+  status('Computing merkle proofs...', 'info');
 
   try {
     const resultJson = await compute_utxo_proofs(
@@ -956,8 +948,7 @@ export async function txbComputeProofs() {
       genesisHex,
       (msg, cls) => {
         _dbg('[compute-proofs]', cls, msg);
-        statusEl.textContent = msg;
-        statusEl.style.color = cls === 'err' ? '#f87171' : cls === 'ok' ? '#4ade80' : '#f59e0b';
+        status(msg, cls);
       },
       certHash
     );
@@ -982,14 +973,12 @@ export async function txbComputeProofs() {
 
     const found = Object.keys(_utxoProofs).length;
     const total = _txbUtxos.length;
-    statusEl.textContent = `Proofs computed: ${found}/${total} UTXOs proven.`;
-    statusEl.style.color = found >= total ? '#4ade80' : (found > 0 ? '#f59e0b' : '#f87171');
+    status(`Proofs computed: ${found}/${total} UTXOs proven.`,
+      found >= total ? 'ok' : (found > 0 ? 'info' : 'err'));
   } catch (e) {
     console.error('[compute-proofs]', e);
-    statusEl.textContent = 'Error: ' + (e.message || e);
-    statusEl.style.color = '#f87171';
-  } finally {
-    btn.disabled = false;
+    status('Error: ' + (e.message || e), 'err');
+    throw e;
   }
 }
 
@@ -1185,10 +1174,29 @@ async function txbBuildTransaction() {
     return;
   }
 
+  // Compute merkle proofs on demand for any selected UTXO that's
+  // missing one. Used to be a separate button; inlining keeps the
+  // flow to a single click and avoids the user staring at a "missing
+  // proofs" error before figuring out the two-step ritual.
+  const selectedUtxos = Array.from(selected).map(el =>
+    _txbUtxos[parseInt(el.dataset.index, 10)]);
+  const needsProofs = selectedUtxos.some(u => u && !_utxoProofs[u.outputId]);
+  if (needsProofs) {
+    try {
+      await txbComputeProofs((msg, cls) => {
+        statusEl.textContent = msg;
+        statusEl.style.color = cls === 'err' ? '#f87171' : cls === 'ok' ? '#4ade80' : '#f59e0b';
+      });
+    } catch (_) {
+      // txbComputeProofs already wrote the failure into statusEl.
+      return;
+    }
+  }
+
   const inputs = [];
   let missingProofs = 0;
-  for (const el of selected) {
-    const u = _txbUtxos[parseInt(el.dataset.index, 10)];
+  for (const u of selectedUtxos) {
+    if (!u) continue;
     const proof = _utxoProofs[u.outputId];
     if (!proof) missingProofs++;
     inputs.push({
@@ -1202,7 +1210,7 @@ async function txbBuildTransaction() {
   }
   if (missingProofs > 0) {
     statusEl.style.color = '#f87171';
-    statusEl.textContent = `${missingProofs} selected UTXO(s) missing merkle proofs. Click "Compute Proofs" first.`;
+    statusEl.textContent = `${missingProofs} selected UTXO(s) could not be proven against the chain.`;
     return;
   }
 
@@ -1449,13 +1457,23 @@ async function walletScanUtxos() {
   const net = getActiveNetwork();
   const account = parseInt(document.getElementById('wallet-account', 10).value) || 0;
 
-  // Restore cached scan results for instant display. The full scan still
-  // runs in the background and will overwrite these if anything changed.
+  // Restore cached scan results for instant display. The full scan
+  // still runs in the background unless the filter tip hasn't moved
+  // since the cache was written — in that case the cache is exact
+  // and the 50 s rescan would just produce the same numbers, so we
+  // skip it.
+  let skipRescan = false;
   try {
     const cached = JSON.parse(localStorage.getItem('wallet-scan-cache') || 'null');
     if (cached && cached.net === net && cached.account === account && cached.result) {
       const age = Math.round((Date.now() - cached.timestamp) / 60000);
-      walletScanLog(`Loaded cached wallet (${age}m old). Refreshing in background...`, 'info');
+      const currentFilterTip = await getFilterTipHeight();
+      if (cached.filterTip && currentFilterTip && currentFilterTip <= cached.filterTip) {
+        skipRescan = true;
+        walletScanLog(`Loaded cached wallet (${age}m old). Filters unchanged — skipping rescan.`, 'ok');
+      } else {
+        walletScanLog(`Loaded cached wallet (${age}m old). Refreshing in background...`, 'info');
+      }
       _lastWalletScanResult = cached.result;
       // Display everything from cache
       document.getElementById('wallet-balance-value').textContent = cached.result.totalBalanceSC;
@@ -1480,6 +1498,16 @@ async function walletScanUtxos() {
       }
     }
   } catch (_) { /* cache corrupt or missing */ }
+
+  if (skipRescan) {
+    // Cache covers the current chain tip; mempool overlays are still
+    // applied via the regular onMempoolChange path.
+    walletApplyMempool();
+    txbRefreshFromMempool();
+    walletResetLockTimer();
+    _walletScanInProgress = false;
+    return;
+  }
 
   // Wait for background sync to complete so filters are fresh.
   // The syncer may be actively syncing, or may not have started yet.
@@ -1547,6 +1575,12 @@ async function walletScanUtxos() {
               account,
               peerUrl: config.peerUrl,
               genesisHex,
+              // Worker re-opens the OPFS files itself — main-thread blob
+              // URLs aren't reliably fetchable across the worker
+              // boundary, especially when backed by OPFS Files. The
+              // legacy URL fields are kept as a fallback.
+              filterOpfsKey: getFilterOpfsKey(net),
+              utxoOpfsKey: getUtxoIndexOpfsKey(net),
               filterUrl,
               utxoIndexUrl: utxoIndexUrl || undefined,
               certHash: certHash || undefined,
@@ -1661,10 +1695,13 @@ async function walletScanUtxos() {
     walletResetLockTimer();
     walletScanLog('Scan complete in ' + elapsed + 's.', 'ok');
 
-    // Cache scan result so next page load can display immediately
+    // Cache scan result so next page load can display immediately,
+    // and stash the filter tip so we can short-circuit the rescan
+    // when filters haven't moved.
     try {
+      const filterTip = await getFilterTipHeight();
       localStorage.setItem('wallet-scan-cache', JSON.stringify({
-        net, account, result, timestamp: Date.now(),
+        net, account, result, filterTip, timestamp: Date.now(),
       }));
     } catch (_) { /* storage full */ }
 
@@ -1718,7 +1755,6 @@ document.getElementById('btn-wallet-save-json').addEventListener('click', wallet
 // Transaction Builder event listeners
 document.getElementById('txb-btn-add-output').addEventListener('click', txbAddOutputRow);
 document.getElementById('txb-btn-add-change').addEventListener('click', txbAddChangeRow);
-document.getElementById('txb-btn-compute-proofs').addEventListener('click', txbComputeProofs);
 document.getElementById('txb-btn-build').addEventListener('click', txbBuildTransaction);
 document.getElementById('txb-btn-broadcast').addEventListener('click', txbBroadcastTransaction);
 document.getElementById('txb-btn-copy').addEventListener('click', () => {

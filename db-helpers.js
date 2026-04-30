@@ -202,6 +202,22 @@ export async function opfsLoad(key) {
   }
 }
 
+// Like opfsLoad but returns the underlying `File` (which is a `Blob`
+// subclass) without reading it into memory. Suitable for large
+// indexes that are passed to `URL.createObjectURL` — Chrome backs the
+// resulting blob URL with the OPFS file on disk instead of allocating
+// the full byte range up front, which otherwise blows the per-tab
+// blob memory budget on multi-hundred-MB blobs.
+export async function opfsLoadFile(key) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const fileHandle = await root.getFileHandle(key);
+    return await fileHandle.getFile();
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function opfsDelete(key) {
   try {
     const root = await navigator.storage.getDirectory();
