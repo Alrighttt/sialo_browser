@@ -70,9 +70,14 @@ export function initRegistrationWizard(helpers) {
     // Normalize: the SDK's Rust reqwest::Url::parse rejects bare
     // hostnames and surfaces them as "client error: http error:
     // builder error", which is opaque to end users. Default to https
-    // when no scheme is present, and drop a trailing slash.
+    // when no scheme is present.
     if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-    url = url.replace(/\/+$/, '');
+    // Collapse repeated trailing slashes, but keep exactly one: the SDK
+    // joins request paths onto this base, and `Url::join` drops the last
+    // path segment when the base does not end in a slash. Without it an
+    // indexer served under a path, like https://host/api/, would send every
+    // request to https://host/<path> instead.
+    url = url.replace(/\/*$/, '/');
     document.getElementById('wiz-url').value = url;
     document.getElementById('cfg-url').value = url;
     localStorage.setItem('indexer-url', url);
