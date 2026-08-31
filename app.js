@@ -79,13 +79,10 @@ window.addEventListener('DOMContentLoaded', () => {
   _dbg('  Secure context:', window.isSecureContext ? '✅ Yes' : '❌ No (requires HTTPS)');
   _dbg('  Browser:', navigator.userAgent);
 
-  // Safari banner is handled by an inline script in index.html so it
-  // still shows if any module import fails. Here we only warn about
-  // non-Safari compat issues.
   if (typeof WebTransport === 'undefined') {
     const warning = document.createElement('div');
     warning.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#dc2626;color:white;padding:1rem;text-align:center;z-index:9999;font-weight:bold;';
-    warning.innerHTML = '⚠️ WebTransport not supported in this browser. Downloads will fail.<br>Please use Chrome 97+, Edge 97+, or Firefox 114+.';
+    warning.innerHTML = '⚠️ WebTransport not supported in this browser. Downloads will fail.<br>Please use Chrome 97+, Edge 97+, Firefox 114+, or Safari 26+.';
     document.body.prepend(warning);
   } else if (!window.isSecureContext) {
     const warning = document.createElement('div');
