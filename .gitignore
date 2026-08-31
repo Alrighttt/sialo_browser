@@ -9,4 +9,8 @@ pkg/package.json
 # NPM (file-type vendoring build only)
 node_modules/
 
+# Local dev TLS certs (mkcert)
+cert.pem
+key.pem
+
 html
