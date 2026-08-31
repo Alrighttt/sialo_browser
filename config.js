@@ -142,7 +142,7 @@ export async function resolveObject(input, primarySdk) {
   // Try the primary SDK first
   try {
     const obj = isShareUrl
-      ? await primarySdk.sharedObject(input)
+      ? await primarySdk.objectFromShareUrl(input)
       : await primarySdk.object(input);
     return { sdk: primarySdk, obj, fallback: null };
   } catch (primaryErr) {

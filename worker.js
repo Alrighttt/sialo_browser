@@ -61,7 +61,7 @@ self.onmessage = async (e) => {
 
       // Get object
       const obj = objectUrl.startsWith('sia://')
-        ? await sdk.sharedObject(objectUrl)
+        ? await sdk.objectFromShareUrl(objectUrl)
         : await sdk.object(objectUrl);
 
       // Stream download — post chunks back to main thread
@@ -116,7 +116,7 @@ self.onmessage = async (e) => {
       _dbg('[worker-demux] SDK connected. Getting object...');
 
       const obj = objectUrl.startsWith('sia://')
-        ? await sdk.sharedObject(objectUrl)
+        ? await sdk.objectFromShareUrl(objectUrl)
         : await sdk.object(objectUrl);
 
       const totalSize = obj.size();

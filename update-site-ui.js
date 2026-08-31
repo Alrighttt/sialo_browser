@@ -356,14 +356,14 @@ export function initUpdateSiteUI() {
             const { obj } = await resolveObject(row.origShareUrl, sdk);
             obj.updateMetadata(encodeMetadata({ filename: taggedPath }));
             await sdk.updateObjectMetadata(obj);
-            manifest[row.path] = sdk.shareObject(obj, validUntil);
+            manifest[row.path] = sdk.objectShareUrl(obj, validUntil);
           } else if (state === 'modified' || state === 'added') {
             panelStatus().textContent = `Uploading ${row.path} (${i}/${sorted.length})…`;
             const pinned = new PinnedObject();
             pinned.updateMetadata(encodeMetadata({ filename: taggedPath }));
             const obj = await sdk.upload(pinned, row.file.stream());
             await sdk.pinObject(obj);
-            manifest[row.path] = sdk.shareObject(obj, validUntil);
+            manifest[row.path] = sdk.objectShareUrl(obj, validUntil);
           }
         }
 
@@ -375,7 +375,7 @@ export function initUpdateSiteUI() {
         const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
         await sdk.pinObject(manifestObj);
 
-        const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
+        const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
         const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestObj.id();
         resultUrl.textContent = url;

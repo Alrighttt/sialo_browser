@@ -1134,7 +1134,7 @@ export async function uploadSite(sdk, files) {
     pinned.updateMetadata(encodeMetadata({ filename: `${uploadId}/${path}` }));
     const obj = await sdk.upload(pinned, new Blob([raw]).stream());
     await sdk.pinObject(obj);
-    manifest[path] = sdk.shareObject(obj, validUntil);
+    manifest[path] = sdk.objectShareUrl(obj, validUntil);
     _dbg('[sia-site] uploaded', path, '→', obj.id());
   }
   const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);

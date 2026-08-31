@@ -236,7 +236,7 @@ export function initSyncerConfig() {
 
         // 1-year share URL — same default the manifest backup uses.
         const validUntilMs = Date.now() + (365 * 24 * 60 * 60 * 1000);
-        const shareUrl = sdk.shareObject(obj, validUntilMs);
+        const shareUrl = sdk.objectShareUrl(obj, validUntilMs);
         log('Share URL: ' + shareUrl, 'data');
 
         try { await sdk.pinObject(obj); log('Object pinned.', 'ok'); }
@@ -276,7 +276,7 @@ export function initSyncerConfig() {
 
         setBackupStatus('Downloading backup...');
         backupProgressEl.style.display = 'block';
-        const obj = await sdk.sharedObject(url);
+        const obj = await sdk.objectFromShareUrl(url);
         const totalSize = obj.size();
         const stream = sdk.download(obj);
         const reader = stream.getReader();

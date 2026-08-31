@@ -316,7 +316,7 @@ export function initObjectsUI() {
         const siteActions = item.manifestId ? `
           <span style="float:right;">
             <button data-action="open-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open as sia-site">Open Site</button>
-            <button data-action="share-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL for this site">Share</button>
+            <button data-action="share-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL for this site">Share URL</button>
             <button data-action="delete-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#dc2626; color:white; margin-left:0.25rem;" title="Delete this site (or site + all referenced files)">Delete</button>
           </span>` : '';
         html += `
@@ -368,7 +368,7 @@ export function initObjectsUI() {
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
                 <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
-                <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL">Share</button>
+                <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate a share URL, which carries the encryption key and expires">Share URL</button>
                 <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
                 ${isInDraft(obj.id)
                   ? `<button onclick="removeFromSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#0d9488; color:white; margin-left:0.25rem;" title="Remove from the site being built on the Upload Site page">✓ In site</button>`
@@ -1158,7 +1158,7 @@ export function initObjectsUI() {
         // rewritten to the `sia-site://` scheme so the link opens the
         // site loader directly.
         const validUntilMs = Date.now() + (duration * unit);
-        const rawShareUrl = sdk.shareObject(obj, new Date(validUntilMs));
+        const rawShareUrl = sdk.objectShareUrl(obj, new Date(validUntilMs));
         const shareUrl = isManifest
           ? 'sia-site://' + rawShareUrl.replace(/^sia:\/\//, '')
           : rawShareUrl;

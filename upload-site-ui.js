@@ -396,7 +396,7 @@ export function initUploadSiteUI() {
           const taggedPath = `${uploadId}/${paths[i]}`;
           objects[i].updateMetadata(encodeMetadata({ filename: taggedPath }));
           await sdk.pinObject(objects[i]);
-          manifest[paths[i]] = sdk.shareObject(objects[i], validUntil);
+          manifest[paths[i]] = sdk.objectShareUrl(objects[i], validUntil);
           setFileStatus(paths[i], 'done');
         }
 
@@ -422,7 +422,7 @@ export function initUploadSiteUI() {
         // Result URL is a portable sia-site:// share URL signed with
         // the same validity window as the inner file URLs — anyone with
         // it can resolve the site regardless of their indexer account.
-        const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
+        const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
         const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestId;
         resultUrl.textContent = url;
@@ -588,7 +588,7 @@ export function initUploadSiteUI() {
           }
           seen.add(path);
           const obj = await sdk.object(e.id);
-          manifest[path] = sdk.shareObject(obj, validUntil);
+          manifest[path] = sdk.objectShareUrl(obj, validUntil);
         }
 
         panelStatus().textContent = 'Uploading manifest…';
@@ -607,7 +607,7 @@ export function initUploadSiteUI() {
         setStep('Pinning manifest…', 'Pinning manifest…');
         await sdk.pinObject(manifestObj);
 
-        const siaShareUrl = sdk.shareObject(manifestObj, validUntil);
+        const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
         const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestObj.id();
         resultUrl.textContent = url;

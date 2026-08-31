@@ -687,7 +687,7 @@ async function mfstBackup() {
 
     // Step 4: Generate share URL (1 year expiry)
     const validUntilMs = Date.now() + (365 * 24 * 60 * 60 * 1000);
-    const shareUrl = sdk.shareObject(obj, validUntilMs);
+    const shareUrl = sdk.objectShareUrl(obj, validUntilMs);
     mfstLog('Share URL: ' + shareUrl, 'data');
 
     // Step 5: Pin object
@@ -739,7 +739,7 @@ async function mfstDownloadAndRestore(shareUrl) {
 
   statusEl.textContent = 'Downloading backup...';
   progressEl.style.display = 'block';
-  const obj = await sdk.sharedObject(shareUrl);
+  const obj = await sdk.objectFromShareUrl(shareUrl);
 
   const blobParts = [];
   const totalSize = obj.size();

@@ -29,7 +29,7 @@ self.onmessage = async (e) => {
     }
 
     const obj = objectUrl.startsWith('sia://')
-      ? await sdk.sharedObject(objectUrl)
+      ? await sdk.objectFromShareUrl(objectUrl)
       : await sdk.object(objectUrl);
 
     // Send size metadata before download starts

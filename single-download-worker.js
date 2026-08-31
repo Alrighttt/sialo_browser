@@ -34,7 +34,7 @@ self.onmessage = async (e) => {
     try {
       // Fetch object metadata
       const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
-      const obj = isShareUrl ? await sdk.sharedObject(input) : await sdk.object(input);
+      const obj = isShareUrl ? await sdk.objectFromShareUrl(input) : await sdk.object(input);
       const size = obj.size();
       self.postMessage({ type: 'metadata', size });
 
