@@ -1064,7 +1064,7 @@ async function loadContentWithAutoDetect() {
         if (tab.url !== watchedTabUrl) return; // user navigated away
         status.innerHTML =
           '<span class="fail">Sandbox unreachable — iframe never reported in. ' +
-          'Likely a 502/504 from sandbox.sialo.io on this network.</span>';
+          'Check that ' + _esc(SIA_HOSTED_ORIGIN) + ' is reachable from this network.</span>';
       }, 20000);
     } catch (e) {
       status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
