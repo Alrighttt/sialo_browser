@@ -24,6 +24,7 @@ import { connectSdk } from './config.js';
 import { siteEntries, parseSiteUrl } from './sia-site.js';
 import { isSiteAddress, objectIdInUrl } from './object-input.js';
 import { filenameForDisplay, stripUploadUuid } from './object-metadata.js';
+import { explainSdkError } from './utils.js';
 
 /** A short label for a published URL, which carries no filename of its own. */
 function labelForPublishUrl(url) {
@@ -130,7 +131,10 @@ export async function pinTargets(targets, { statusEl, onProgress } = {}) {
       pinned += 1;
       try { bytes += Number(obj.size()) || 0; } catch (_) { /* size is a nicety */ }
     } catch (e) {
-      failed.push({ path: t.path, error: e && e.message ? e.message : String(e) });
+      // A transport failure names the host it could not reach; anything
+      // else keeps the SDK's own wording, which is usually more specific.
+      const addr = typeof t.ref === 'string' ? t.ref : '';
+      failed.push({ path: t.path, error: explainSdkError(e, addr) });
     }
   }
   if (onProgress) onProgress({ done: list.length, total: list.length, name: '' });

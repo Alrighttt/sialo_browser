@@ -1,7 +1,7 @@
 // Browser module — decentralized content viewer with navigation, history,
 // sia:// link interception, iframe video streaming, and content auto-detection.
 
-import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
+import { _dbg, _dbgWarn, _esc, formatSize, explainSdkError } from './utils.js';
 import {
   connectSdk, resolveObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
   getUrl, getKeyHex, getLogLevel,
@@ -720,7 +720,7 @@ async function pinHistoryItem(index, btn) {
     if (isAccountError(e)) {
       showAccountPrompt('Pinning keeps the file on your own account, which needs one.');
     } else {
-      setStatus(`<span class="fail">Could not pin: ${_esc(e.message || String(e))}</span>`);
+      setStatus(`<span class="fail">Could not pin: ${_esc(explainSdkError(e, address))}</span>`);
     }
   } finally {
     if (btn.textContent !== '\u2713') { btn.textContent = original; btn.disabled = false; }
@@ -1067,7 +1067,9 @@ async function redownloadHistoryItem(item, index) {
     if (!isNavInProgress()) pushTabNav(tab, { url: item.originalUrl || item.displayUrl, blobUrl, label: item.title || item.displayUrl, fileType: item.fileType || 'html' });
     updateBrowserUI();
   } catch (e) {
-    status.innerHTML = `<span class="fail">Error re-downloading: ${_esc(e.message)}</span>`;
+    const addr = item.originalUrl || item.displayUrl || '';
+    status.innerHTML =
+      `<span class="fail">Could not reload this page: ${_esc(explainSdkError(e, addr))}</span>`;
   }
 }
 
@@ -1690,7 +1692,7 @@ document.getElementById('btn-pin').addEventListener('click', async () => {
       showAccountPrompt('Pinning stores the file under your own account, which needs one.');
       setStatus('');
     } else {
-      setStatus(`<span class="fail">Could not pin: ${_esc(e.message || String(e))}</span>`);
+      setStatus(`<span class="fail">Could not pin: ${_esc(explainSdkError(e, address))}</span>`);
     }
   } finally {
     btn.disabled = false;

@@ -27,6 +27,46 @@ export function fromHex(h) {
   return bytes;
 }
 
+/**
+ * Turn an SDK error into something a reader can act on.
+ *
+ * A network failure inside the WASM SDK arrives as a reqwest error wrapping a
+ * raw JsValue, which prints as twenty lines of wasm-function frames and never
+ * names the host it could not reach. "TypeError: Failed to fetch" in
+ * particular means the request never completed at the network layer at all —
+ * so there is no status code to report, and the useful information is which
+ * host was being asked and why a browser would refuse to ask it.
+ *
+ * The https note is the non-obvious one. A `sia://` published URL is always
+ * re-fetched over https, unconditionally: the SDK rewrites the scheme
+ * (SHARE_URL_FETCH_SCHEME is "https" in every non-test build). An indexer
+ * served over plain http therefore mints URLs that cannot be resolved again,
+ * and the TLS handshake against a plaintext port fails exactly like an
+ * offline host.
+ *
+ * `url` is optional; pass the address being resolved so the host can be named.
+ */
+export function explainSdkError(err, url) {
+  const raw = (err && err.message) || String(err || '');
+  if (!/Failed to fetch|kind: Request|NetworkError|ERR_/i.test(raw)) {
+    // Not a transport failure — the SDK's own message is the better one.
+    return raw;
+  }
+  let host = '';
+  try {
+    const m = String(url || '').match(/^[a-z][\w+.-]*:\/\/([^/?#]+)/i);
+    if (m) host = m[1];
+  } catch (_) { /* best effort */ }
+
+  return (host ? `Could not reach ${host}.` : 'The request never reached the network.')
+    + ' The browser refused or failed the request before any reply came back,'
+    + ' so there is no error from the indexer to report. Usually one of:'
+    + ' the host is offline or unreachable;'
+    + ' the host serves plain http, and a published URL is always re-fetched'
+    + ' over https, so it cannot be resolved again;'
+    + ' or the host does not allow requests from this page (CORS).';
+}
+
 export function formatSize(bytes) {
   if (bytes < 1e3) return bytes + ' B';
   if (bytes < 1e6) return (bytes / 1e3).toFixed(1) + ' KB';
