@@ -10,6 +10,7 @@
 import init, { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { fromHex } from './worker-utils.js';
+import { downloadOptions } from './transfer-options.js';
 
 // Module-level mp4box reference for seek access across message handlers
 let _mp4box = null;
@@ -67,7 +68,7 @@ self.onmessage = async (e) => {
       // Stream download — post chunks back to main thread
       let byteOffset = 0;
       const totalSize = obj.size();
-      const stream = sdk.download(obj, { maxInflight: maxDownloads });
+      const stream = sdk.download(obj, downloadOptions(maxDownloads));
       const reader = stream.getReader();
       while (true) {
         const { done, value } = await reader.read();
@@ -270,7 +271,7 @@ self.onmessage = async (e) => {
 
       // Download + demux
       _dbg('[worker-demux] Starting download...');
-      const stream = sdk.download(obj, { maxInflight: maxDownloads });
+      const stream = sdk.download(obj, downloadOptions(maxDownloads));
       const reader = stream.getReader();
       while (true) {
         const { done, value } = await reader.read();

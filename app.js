@@ -572,7 +572,19 @@ let profileData = migrateToProfiles();
 renderProfileSelect(profileData);
 activateProfile(profileData, profileData.active);
 
-// Load non-profile settings
+// Load non-profile settings.
+//
+// These two used to be passed to the SDK under the old `maxInflight` name and
+// were silently ignored, so whatever is stored was never actually applied.
+// Honouring a stored 8 or 16 now would mean 240 or 480 concurrent shard
+// writes, well past the 64 WebTransport sessions Chrome allows, so the stored
+// values are rewritten once to the new scale. After that the user's choice
+// stands.
+if (!localStorage.getItem('transfer-limits-rescaled')) {
+  localStorage.removeItem('max-downloads');
+  localStorage.removeItem('max-uploads');
+  localStorage.setItem('transfer-limits-rescaled', '1');
+}
 const savedMaxDownloads = localStorage.getItem('max-downloads');
 const savedMaxUploads = localStorage.getItem('max-uploads');
 const savedLogLevel = localStorage.getItem('log-level');
@@ -1055,9 +1067,12 @@ function setPreset(maxDl, maxUl) {
   localStorage.setItem('max-uploads', maxUl);
 }
 
-document.getElementById('preset-conservative').addEventListener('click', () => setPreset(4, 4));
-document.getElementById('preset-balanced').addEventListener('click', () => setPreset(8, 8));
-document.getElementById('preset-fast').addEventListener('click', () => setPreset(16, 16));
+// Downloads are chunks (~10 host dials each); uploads are slabs (~30 host
+// dials each), so the two axes are scaled separately against the same
+// 64-session budget rather than being given the same number.
+document.getElementById('preset-conservative').addEventListener('click', () => setPreset(4, 1));
+document.getElementById('preset-balanced').addEventListener('click', () => setPreset(6, 2));
+document.getElementById('preset-fast').addEventListener('click', () => setPreset(12, 4));
 
 
 // Account dashboard, host balances, prune → account-ui.js

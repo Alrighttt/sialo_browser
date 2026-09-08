@@ -463,7 +463,7 @@ export async function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, o
 // --- MSE streaming pipeline (legacy fallback for browsers without WebCodecs) ---
 
 export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl, helpers) {
-  const { formatSize, getMaxDownloads, createMP4Box, _dbg, _dbgWarn } = helpers;
+  const { formatSize, getMaxDownloads, createMP4Box, downloadOptions, _dbg, _dbgWarn } = helpers;
 
   if (!window.MediaSource) {
     throw new Error('MediaSource Extensions not supported in this browser');
@@ -664,7 +664,7 @@ export async function transmuxAndStream(sdk, obj, videoEl, statusEl, progressEl,
   const downloadStart = performance.now();
 
   let chunkCount = 0;
-  const dlStream = sdk.download(obj, { maxInflight: getMaxDownloads() });
+  const dlStream = sdk.download(obj, downloadOptions(getMaxDownloads()));
   const dlReader = dlStream.getReader();
   const streamPromise = (async () => {
     while (true) {

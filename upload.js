@@ -4,6 +4,7 @@
 
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { connectSdk, getMaxUploads } from './config.js';
+import { uploadOptions } from './transfer-options.js';
 import { encodeMetadata } from './object-metadata.js';
 
 async function parallelUpload(file, status, progress, _numWorkers) {
@@ -17,7 +18,7 @@ async function parallelUpload(file, status, progress, _numWorkers) {
   if (file && typeof file.name === 'string' && file.name.length > 0) {
     pinned.updateMetadata(encodeMetadata({ filename: file.name }));
   }
-  const obj = await sdk.upload(pinned, file.stream(), { maxInflight: getMaxUploads() });
+  const obj = await sdk.upload(pinned, file.stream(), uploadOptions(getMaxUploads()));
   await sdk.pinObject(obj);
 
   const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);

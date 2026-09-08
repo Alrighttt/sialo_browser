@@ -4,6 +4,7 @@
 
 import init, { AppKey, Builder } from './pkg/sia_storage_wasm.js';
 import { fromHex } from './worker-utils.js';
+import { downloadOptions } from './transfer-options.js';
 
 self.onmessage = async (e) => {
   if (e.data.type !== 'start') return;
@@ -37,7 +38,7 @@ self.onmessage = async (e) => {
 
     // Stream download — post chunks back to main thread
     let byteOffset = 0;
-    const stream = sdk.download(obj, { maxInflight: maxDownloads });
+    const stream = sdk.download(obj, downloadOptions(maxDownloads));
     const reader = stream.getReader();
     const totalSize = obj.size();
     while (true) {

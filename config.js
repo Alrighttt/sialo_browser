@@ -1,6 +1,7 @@
 // Config helpers — shared configuration accessors and SDK connection management.
 
 import { _dbg, _dbgWarn, fromHex, formatSize } from './utils.js';
+import { downloadOptions } from './transfer-options.js';
 import { updateConnectionStatus } from './tabs.js';
 import { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
 
@@ -34,15 +35,22 @@ import { webcodecStream as _webcodecStream, transmuxAndStream as _transmuxAndStr
 
 export function getUrl() { return document.getElementById('cfg-url').value.trim(); }
 export function getKeyHex() { return document.getElementById('cfg-key').value.trim(); }
-export function getMaxDownloads() { return parseInt(document.getElementById('cfg-max-downloads').value, 10) || 8; }
-export function getMaxUploads() { return parseInt(document.getElementById('cfg-max-uploads').value, 10) || 8; }
+// An empty field means "automatic": the SDK's own bound (roughly 10% of
+// system memory) rather than a small hardcoded cap. Returns null in that
+// case so the option can be omitted entirely.
+function positiveIntOrNull(id) {
+  const v = parseInt(document.getElementById(id).value, 10);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+export function getMaxDownloads() { return positiveIntOrNull('cfg-max-downloads'); }
+export function getMaxUploads() { return positiveIntOrNull('cfg-max-uploads'); }
 export function getDownloadWorkers() { return parseInt(localStorage.getItem('download-workers'), 10) || 8; }
 export function getUploadWorkers() { return parseInt(localStorage.getItem('upload-workers'), 10) || 8; }
 export function getLogLevel() { return document.getElementById('cfg-debug-logging').checked ? 'debug' : null; }
 
 // --- Stream helpers (passed to video-streaming.js) ---
 
-const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, createMP4Box, _dbg, _dbgWarn };
+const streamHelpers = { formatSize, getUrl, getKeyHex, getMaxDownloads, getLogLevel, createMP4Box, downloadOptions, _dbg, _dbgWarn };
 
 export function webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, overrideConfig) {
   return _webcodecStream(sdk, obj, canvasEl, statusEl, progressEl, objectUrl, { ...streamHelpers, overrideConfig });

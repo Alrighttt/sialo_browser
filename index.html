@@ -225,14 +225,18 @@
             </div>
             <div style="display:grid; grid-template-columns: 2fr 1fr; gap:0.5rem; align-items:center;">
               <label style="font-size:0.85rem; color:#999;">Max Downloads: <span class="info-tip">&#9432;<span
-                    class="info-tip-text">Maximum concurrent sector downloads per worker. Higher values increase
-                    throughput but use more connections.</span></span></label>
-              <input id="cfg-max-downloads" type="number" min="1" value="8"
+                    class="info-tip-text">How many ~1 MiB chunks are fetched at once. Each chunk needs shards
+                    from about 10 hosts, and Chrome refuses more than 64 WebTransport sessions at a time, so
+                    values above ~12 tend to produce connection failures rather than more speed. Leave blank
+                    for the SDK's own limit.</span></span></label>
+              <input id="cfg-max-downloads" type="number" min="1" value="6" placeholder="auto"
                 style="padding:0.4rem; text-align:center;" />
               <label style="font-size:0.85rem; color:#999;">Max Uploads: <span class="info-tip">&#9432;<span
-                    class="info-tip-text">Maximum concurrent sector uploads per worker. Higher values increase
-                    throughput but use more connections.</span></span></label>
-              <input id="cfg-max-uploads" type="number" min="1" value="8" style="padding:0.4rem; text-align:center;" />
+                    class="info-tip-text">How many slabs are held in memory at once. A slab is 10 data + 20
+                    parity shards written concurrently, so each one dials up to 30 hosts &mdash; against Chrome's
+                    64-session cap, 2 is already near the ceiling. Leave blank for the SDK's own
+                    limit.</span></span></label>
+              <input id="cfg-max-uploads" type="number" min="1" value="2" placeholder="auto" style="padding:0.4rem; text-align:center;" />
               <label for="cfg-debug-logging" style="font-size:0.85rem; color:#999; cursor:pointer;">Debug Logging: <span
                   class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output
                     is written to the browser console (open DevTools to view).</span></span></label>

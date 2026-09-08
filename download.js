@@ -3,6 +3,7 @@
 
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
 import { connectSdk, resolveObject, getMaxDownloads } from './config.js';
+import { downloadOptions } from './transfer-options.js';
 
 async function streamingDownload(sdk, obj, status, progress, label, signal) {
   progress.style.display = 'block';
@@ -14,7 +15,7 @@ async function streamingDownload(sdk, obj, status, progress, label, signal) {
 
   const blobParts = [];
   const totalSize = obj.size();
-  const stream = sdk.download(obj, { maxInflight: getMaxDownloads() });
+  const stream = sdk.download(obj, downloadOptions(getMaxDownloads()));
   const reader = stream.getReader();
   const onAbort = () => { reader.cancel('aborted').catch(() => {}); };
   if (signal) {
