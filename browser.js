@@ -1137,20 +1137,32 @@ async function loadContentWithAutoDetect() {
       // navigation) so we can tell if the user has since moved on.
       const watchedTabUrl = url;
       let sawRequest = false;
+      let sawFailure = false;
       const requestProbe = (e) => {
-        if (e.source === iframe.contentWindow && e.data && e.data.type === 'sia-request') {
+        if (e.source !== iframe.contentWindow || !e.data) return;
+        if (e.data.type === 'sia-request') {
           sawRequest = true;
+          window.removeEventListener('message', requestProbe);
+        } else if (e.data.type === 'sia-bridge-failed') {
+          // The bootstrap already said exactly what went wrong (a missing
+          // secure context, service workers disabled, …). Stand down rather
+          // than replacing a precise message with this generic one 20s later.
+          sawFailure = true;
           window.removeEventListener('message', requestProbe);
         }
       };
       window.addEventListener('message', requestProbe);
       setTimeout(() => {
         window.removeEventListener('message', requestProbe);
-        if (sawRequest) return;
+        if (sawRequest || sawFailure) return;
         if (tab.url !== watchedTabUrl) return; // user navigated away
         status.innerHTML =
-          '<span class="fail">Sandbox unreachable — iframe never reported in. ' +
-          'Check that ' + _esc(SIA_HOSTED_ORIGIN) + ' is reachable from this network.</span>';
+          '<span class="fail">The sandbox never reported in, so its service worker ' +
+          'probably could not install. Two common causes: Safari treats ' +
+          'http://127.0.0.1 as an insecure origin and refuses service workers there ' +
+          '(load the app from http://localhost instead), and private or incognito ' +
+          'windows disable them outright in some browsers. Otherwise check that ' +
+          _esc(SIA_HOSTED_ORIGIN) + ' is reachable from this network.</span>';
       }, 20000);
     } catch (e) {
       status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
