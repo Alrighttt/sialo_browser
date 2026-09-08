@@ -1862,7 +1862,8 @@
       <!-- Clipped rather than wrapped, to keep the bar one line tall. The
            wrapper exists so the expanded copy can escape the clipped box's
            overflow:hidden; renderTabStatus fills both and only marks the
-           wrapper as clipped when the text really does not fit. -->
+           wrapper as clipped when the text really does not fit. No title
+           attribute, deliberately — see renderTabStatus. -->
       <span class="status-wrap" id="iframe-status-wrap">
         <span id="iframe-status" class="status-clipped"></span>
         <span id="iframe-status-full" class="status-full" aria-hidden="true"></span>

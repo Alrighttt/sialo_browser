@@ -549,10 +549,11 @@ progress::-moz-progress-bar {
    cut off, and needs somewhere to be read in full.
    A native `title` is a poor vehicle for 400 characters: it waits about a
    second, is dismissed by any DOM change under the cursor, will not wrap and
-   cannot be styled. So the full text is also rendered into a sibling that is
-   revealed over the viewport on hover or keyboard focus. `title` stays as a
-   fallback. The sibling has to live outside the clipped box, or the parent's
-   overflow:hidden would crop it too. */
+   cannot be styled. So the full text is rendered into a sibling that is
+   revealed over the viewport on hover or keyboard focus, and no title is set —
+   the browser would otherwise draw its own tooltip on top of this one. The
+   sibling has to live outside the clipped box, or the parent's overflow:hidden
+   would crop it too. */
 .status-wrap {
   position: relative;
   display: inline-flex;

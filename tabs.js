@@ -455,16 +455,18 @@ export function renderTabStatus() {
 
     // The bar clips at 60% of its width, and every panel's status lands here,
     // so a long message is cut off with nowhere to read the rest. The full
-    // text goes into a sibling that is revealed on hover, and into `title` as
-    // a fallback.
+    // text goes into a sibling that is revealed on hover.
+    //
+    // Deliberately no `title`: the browser would then draw its own tooltip on
+    // top of the revealed copy, and two overlapping boxes of the same text are
+    // worse than the truncation this set out to fix.
     //
     // Read back as textContent rather than reusing statusHTML: the markup is
     // parsed by this point, so embedded elements (a Register / Log In button,
     // a <span class="fail">) contribute their words instead of their tags,
     // and entities are already characters.
     const full = statusEl.textContent.replace(/\s+/g, ' ').trim();
-    if (full) statusEl.title = full;
-    else statusEl.removeAttribute('title');
+    statusEl.removeAttribute('title');
 
     const fullEl = document.getElementById('iframe-status-full');
     const wrap = document.getElementById('iframe-status-wrap');
