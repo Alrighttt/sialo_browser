@@ -48,7 +48,12 @@ export function setLoadContentHandler(fn) { _loadContentWithAutoDetect = fn; }
 export function setLoadContentInProgress(v) { loadContentInProgress = v; }
 export function setStreamingTabId(v) { streamingTabId = v; }
 export function setLastBrowserUrl(v) { lastBrowserUrl = v; }
-export function setActivePanel(v) { activePanel = v; }
+export function setActivePanel(v) {
+  activePanel = v;
+  // Panels that gate on external state (an indexer connection, say) need a
+  // moment to re-check when they come into view; nothing else observes this.
+  window.dispatchEvent(new CustomEvent('panel-activated', { detail: { panel: v } }));
+}
 
 // ── Persistence ──
 
@@ -165,6 +170,13 @@ export function activateTab(tabId) {
     const panel = document.getElementById('panel-' + tab.panelName);
     if (panel) panel.style.display = panel.classList.contains('has-net-bar') ? 'flex' : 'block';
     activePanel = tab.panelName;
+    // Panels that gate on external state (an indexer account) re-check here.
+    // This is dispatched from the place that actually reveals a panel;
+    // setActivePanel() is exported but nothing calls it, so an event fired
+    // only from there would never reach anyone.
+    window.dispatchEvent(new CustomEvent('panel-activated', {
+      detail: { panel: tab.panelName },
+    }));
   }
 
   activeTabId = tabId;

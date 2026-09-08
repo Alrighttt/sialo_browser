@@ -1271,3 +1271,97 @@ progress::-moz-progress-bar {
 }
 .txb-output-row input[type="text"] { flex: 1; }
 .txb-output-row .txb-output-amount { width: 140px; flex: none; }
+/* ---- Page gate: shown when an indexer account is required ------------------------------------
+   Shown in place of the page's steps when the indexer is not reachable, so
+   nobody stages a whole site and only learns at publish time that it cannot
+   be uploaded. */
+.page-gate {
+  margin: 2rem auto;
+  border: 1px solid rgba(234, 179, 8, 0.35);
+  background: rgba(234, 179, 8, 0.06);
+  border-radius: 8px;
+  padding: 1.25rem;
+  max-width: 62ch;
+}
+.page-gate-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #f0d894;
+  margin-bottom: 0.5rem;
+}
+.page-gate-reason {
+  color: #d9c07a;
+  font-size: 0.87rem;
+  line-height: 1.5;
+  margin: 0 0 0.6rem 0;
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.page-gate-hint {
+  color: #8a929c;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0 0 1rem 0;
+}
+
+/* Chrome buttons that have nothing to act on read as dimmed rather than
+   missing, so the toolbar keeps its shape as tabs change. */
+#btn-external-tab:disabled,
+#btn-go:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.status-action {
+  padding: 0.1rem 0.5rem;
+  margin-left: 0.4rem;
+  font-size: 0.75rem;
+  background: #059669;
+  color: #fff;
+  vertical-align: baseline;
+}
+.status-action:hover { background: #10b981; }
+.status-action[data-sialo-action="settings"] { background: #2563eb; }
+.status-action[data-sialo-action="settings"]:hover { background: #3b82f6; }
+
+/* ---- Account-required prompt -----------------------------------------
+   Covers the viewport when a tab's content cannot load without an indexer
+   account. Deliberately unmissable: the failure it replaces rendered as
+   near-invisible text inside a sandboxed iframe with no way forward. */
+.account-prompt {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  background: rgba(10, 10, 10, 0.94);
+  overflow-y: auto;
+}
+.account-prompt-card {
+  max-width: 46ch;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  background: #101010;
+  border-radius: 10px;
+  padding: 1.5rem;
+}
+.account-prompt-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 0.6rem;
+}
+.account-prompt-reason {
+  color: #d9c07a;
+  font-size: 0.87rem;
+  line-height: 1.5;
+  margin: 0 0 0.7rem 0;
+}
+.account-prompt-hint {
+  color: #8a929c;
+  font-size: 0.87rem;
+  line-height: 1.55;
+  margin: 0 0 1.2rem 0;
+}
+

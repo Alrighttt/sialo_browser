@@ -75,6 +75,29 @@
     <!-- Viewport -->
     <div id="viewport">
 
+      <!-- Shown over a tab whose content could not load for want of an
+           indexer account. Status-bar text is not enough here: a failed site
+           load renders its error inside the sandboxed iframe, where no button
+           of ours can reach, leaving the reader with unstyled text and no
+           route forward. -->
+      <div id="account-prompt" class="account-prompt" style="display:none;">
+        <div class="account-prompt-card">
+          <div class="account-prompt-title">This needs an indexer account</div>
+          <p class="account-prompt-reason" id="account-prompt-reason"></p>
+          <p class="account-prompt-hint">
+            An account lets you look up and fetch content on Sia. Registering takes a
+            moment and is free to start, and an existing recovery phrase logs you back in.
+            Anything shared with you directly keeps working without one &mdash; a sharing
+            link carries everything it needs.
+          </p>
+          <div class="row" style="gap:0.6rem; flex-wrap:wrap;">
+            <button type="button" data-sialo-action="register" class="btn-share">Register / Log In</button>
+            <button type="button" data-sialo-action="settings" class="btn-open">I already have a key</button>
+            <button type="button" id="account-prompt-dismiss" class="btn-muted">Dismiss</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Browser tab iframes are created dynamically by createTab() -->
 
       <!-- Browser: shared video container (used by streaming browser tabs) -->

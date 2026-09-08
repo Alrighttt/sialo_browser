@@ -44,6 +44,7 @@ import { initUploadUI } from './upload-ui.js';
 import { initUploadSiteUI } from './upload-site-ui.js';
 import { initUpdateSiteUI } from './update-site-ui.js';
 import { initObjectsUI } from './objects-ui.js';
+import { initPageGate } from './page-gate.js';
 import { initAccountUI } from './account-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import { setLoadContentHandler as setManifestLoadContent } from './manifest.js';
@@ -1081,6 +1082,10 @@ initAccountUI();
 // Upload UI → upload-ui.js
 initUploadUI();
 
+// Gate the pages that need an indexer account, so someone who arrived on a
+// sharing link is pointed at registration instead of clicking things that
+// silently do nothing → page-gate.js
+initPageGate();
 // Upload Site UI (directory → packed upload → site manifest) → upload-site-ui.js
 initUploadSiteUI();
 

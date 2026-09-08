@@ -22,6 +22,7 @@ import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
+import { isAccountError, showAccountPrompt } from './page-gate.js';
 import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 
@@ -1086,6 +1087,9 @@ async function loadContentWithAutoDetect() {
       }, 20000);
     } catch (e) {
       status.innerHTML = `<span class="fail">${_esc(e.message || String(e))}</span>`;
+      // A load that failed only for want of an account gets the prompt rather
+      // than a line of red text the reader has to notice and interpret.
+      if (isAccountError(e)) showAccountPrompt(e.message || String(e));
     } finally {
       updateNavButtons();
       setLoadContentInProgress(false);
