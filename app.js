@@ -414,8 +414,8 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
 
   // sialo://homepage — quick alias for the configured Homepage site,
   // so users who lose track of it can always type their way back. The
-  // chrome bar gets the resolved sia-site:// URL so subsequent reloads
-  // behave like any other sia-site navigation.
+  // chrome bar gets the resolved sialo:// URL so subsequent reloads
+  // behave like any other sialo:// navigation.
   if (url === 'sialo://homepage' || url === 'sialo://home') {
     bar.value = homepageUrl;
     const browserTab = getOrCreateActiveBrowserTab();
@@ -447,7 +447,7 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
 }
 
 // Safety net for iframe link-click navigation. The sandbox bridge is
-// supposed to preventDefault() on sia:// and sia-site:// link clicks
+// supposed to preventDefault() on sia:// and sialo:// link clicks
 // inside hosted sites and postMessage('sia-navigate') to us. When that
 // script fails to load or run (SW not controlling yet, blocked request,
 // Firefox Feature-Policy quirk) the default navigation fires and the
@@ -457,7 +457,7 @@ window.handleChromeBarNavigation = function handleChromeBarNavigation() {
 window.addEventListener('securitypolicyviolation', (e) => {
   if (!e.violatedDirective || !e.violatedDirective.startsWith('frame-src')) return;
   const blocked = e.blockedURI || '';
-  if (!/^(sia|sia-site):\/\//i.test(blocked)) return;
+  if (!/^(sia|sialo):\/\//i.test(blocked)) return;
   // Firefox can truncate cross-origin blockedURI to origin only.
   // If the path is missing (no `/objects/<id>/shared`), redirecting
   // would land on an unresolvable bare-host URL; warn instead.
@@ -1020,7 +1020,7 @@ document.getElementById('tab-new').addEventListener('click', () => {
 });
 
 // Create initial tabs based on whether user has registered
-const homepageUrl = 'sia-site://sia.storage/objects/40da50bfeef6d88eb479946254b208a82cb5133614d236c7078b9192c7cd079b/shared?sv=4930706815&sc=KeBWcCefOwQkV92f4wqdQ4xs7U_AF4TIAnDf-TwF1F8%3D&ss=CE8uDgp1RviWQqXRlIk1HwzZPHJej3F1GkPL7LYYuHJKSurvP3B9yaC8ohnn9_1uyPVUMthgR5aitG-zxgDsDQ%3D%3D#encryption_key=Ol39nlYucUUEfQVAuLFGHnZNE_pDZWgPDiC65AtXmp0=';
+const homepageUrl = 'sialo://sia.storage/objects/40da50bfeef6d88eb479946254b208a82cb5133614d236c7078b9192c7cd079b/shared?sv=4930706815&sc=KeBWcCefOwQkV92f4wqdQ4xs7U_AF4TIAnDf-TwF1F8%3D&ss=CE8uDgp1RviWQqXRlIk1HwzZPHJej3F1GkPL7LYYuHJKSurvP3B9yaC8ohnn9_1uyPVUMthgR5aitG-zxgDsDQ%3D%3D#encryption_key=Ol39nlYucUUEfQVAuLFGHnZNE_pDZWgPDiC65AtXmp0=';
 const isFirstRun = !localStorage.getItem('app-key');
 
 const savedState = loadTabState();
@@ -1084,7 +1084,7 @@ initUploadUI();
 // Upload Site UI (directory → packed upload → site manifest) → upload-site-ui.js
 initUploadSiteUI();
 
-// Update Site UI (load existing sia-site:// → edit files → republish) → update-site-ui.js
+// Update Site UI (load existing sialo:// → edit files → republish) → update-site-ui.js
 initUpdateSiteUI();
 
 // Download UI → download-ui.js

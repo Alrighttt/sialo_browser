@@ -435,7 +435,7 @@
             <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
               Pick a folder to publish as a Sia-hosted site. Every file is uploaded as
               its own Sia object; a manifest mapping path &rarr; object ID is uploaded last.
-              The manifest ID is your <code>sia-site://</code> URL.
+              The manifest ID is your <code>sialo://</code> URL.
             </p>
 
             <!-- Inner share URL validity — baked into the manifest at upload
@@ -522,7 +522,7 @@
                 <span id="sb-count" style="font-size:0.8rem; color:#888;">0 objects</span>
               </div>
               <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
-                Assemble a <code>sia-site://</code> from objects that already exist.
+                Assemble a <code>sialo://</code> from objects that already exist.
                 Use the <strong>Add to site</strong> button on <strong>My Objects</strong>
                 rows to collect entries; publish here. Entries persist across reloads.
               </p>
@@ -541,7 +541,7 @@
               </div>
             </div>
 
-            <!-- Update Site: load an existing sia-site://, edit its files,
+            <!-- Update Site: load an existing sialo://, edit its files,
                  and republish. Unchanged files are re-signed at the panel's
                  validity and their metadata is re-tagged with the new
                  upload UUID so My Objects keeps them grouped. -->
@@ -551,12 +551,12 @@
                 <span id="upd-count" style="font-size:0.8rem; color:#888;"></span>
               </div>
               <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
-                Paste a <code>sia-site://</code> URL or manifest ID to load its files. Rename, replace,
+                Paste a <code>sialo://</code> URL or manifest ID to load its files. Rename, replace,
                 remove, or add files; publishing issues a new manifest with fresh share URLs.
               </p>
 
               <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
-                <input id="upd-url" type="text" placeholder="sia-site://…"
+                <input id="upd-url" type="text" placeholder="sialo://…"
                   style="flex:1; padding:0.45rem 0.6rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-family:var(--font-mono); font-size:0.8rem;" />
                 <button id="upd-load" style="background:#3b82f6; color:white;">Load</button>
               </div>

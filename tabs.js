@@ -112,7 +112,7 @@ export function createTab({ type, panelName, url, label }) {
     iframe.allowFullscreen = true;
     // Delegate autoplay permission to the iframe so <video autoplay>
     // inside the sandbox video viewer (and autoplaying assets inside
-    // sia-sites) can actually start without a synthetic user gesture.
+    // sialo sites) can actually start without a synthetic user gesture.
     // `allowFullscreen` above covers fullscreen; `allow` only needs
     // autoplay here (Firefox rejects unknown names in the list).
     iframe.allow = 'autoplay';
@@ -467,7 +467,7 @@ export function pushTabNav(tab, entry) {
 
 export function isSiaSiteTab(tab) {
   return !!(tab && tab.type === 'browser' &&
-    typeof tab.url === 'string' && tab.url.startsWith('sia-site://'));
+    typeof tab.url === 'string' && tab.url.startsWith('sialo://'));
 }
 
 export function updateNavButtons() {
@@ -499,7 +499,7 @@ export function goBack() {
   const tab = getActiveTab();
   if (!tab || tab.type !== 'browser') return;
   // Sia-site tabs have two layers of history: the tab's navHistory
-  // (inter-site: each sia-site:// navigation pushes an entry) and the
+  // (inter-site: each sialo:// navigation pushes an entry) and the
   // iframe's internal history (intra-site: clicking a relative link
   // within the current site). Prefer the tab layer first so that
   // navigating from site A to site B and then pressing Back returns to

@@ -92,7 +92,7 @@ export function sanitizeFilename(raw) {
   let name = raw.normalize('NFC');
   name = name.replace(INVISIBLE_OR_CONTROL, '');
   // Flatten path separators so the result is a leaf name, never a path.
-  // Callers that want a path (e.g. sia-site manifest keys) should use
+  // Callers that want a path (e.g. site manifest keys) should use
   // sanitizeDisplayFilename or split and sanitize segments individually.
   name = name.replace(/[\\/]/g, '_');
   // Trim leading/trailing whitespace and dots. Trailing dots are stripped
@@ -133,7 +133,7 @@ export function sanitizeDisplayFilename(raw) {
  * The folder-upload flows prefix each object's filename metadata with
  * a `crypto.randomUUID()` so related files group together when sorted
  * in My Objects (`550e8400-…/index.html`, `550e8400-…/assets/app.js`).
- * When the object is added to a new sia-site via the Site Builder
+ * When the object is added to a new site via the Site Builder
  * this prefix would leak into the new manifest path; callers use this
  * helper to drop it.
  *

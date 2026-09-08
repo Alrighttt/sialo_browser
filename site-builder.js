@@ -1,6 +1,6 @@
-// Site Builder draft — a persistent list of object references the user
-// is assembling into a sia-site. Stored in localStorage so the draft
-// survives page reloads and works across tabs/panels.
+// Site Builder draft — the list of files a sialo site is being assembled
+// from. It is the staging area for both ways of handing a site out:
+// Publish (a signed sialo:// URL) and Share (a sharing key).
 //
 // Entries hold only the data needed to publish: the object ID, the
 // user-chosen filename, and the size for display. Share URLs are

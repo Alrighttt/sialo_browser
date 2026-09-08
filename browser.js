@@ -151,17 +151,32 @@ window.addEventListener('message', (event) => {
   }
 });
 
-// Parse a `sia-site://` URL into the resolvable form the SDK expects
-// (either a bare hex object ID or a full `sia://…` share URL) plus
-// the 64-char hex object ID for display. Accepts both:
-//   • sia-site://<hex>
-//   • sia-site://<host>/objects/<hex>/shared?…#encryption_key=…
+// Parse a `sialo://` URL into the site reference sia-site.js expects,
+// the id to show in the tab label, and any path inside the site.
+// Accepts, in order of preference:
+//   • sialo://<64 hex seed>/<path>        sharing key, current form
+//   • sialo://<64 hex object id>          legacy manifest object
+//   • sialo://<host>/objects/<hex>/shared?…#encryption_key=…
+// A seed and a manifest object id are both 64 hex characters, so they are
+// indistinguishable here; sia-site.js tries the key first and falls back.
 // Returns null for anything that doesn't match.
 function parseSiaSiteUrl(url) {
-  if (typeof url !== 'string' || !url.startsWith('sia-site://')) return null;
-  const rest = url.slice('sia-site://'.length).replace(/\/+$/, '');
-  if (/^[0-9a-fA-F]{64}$/.test(rest)) {
-    return { resolvable: rest, objectId: rest };
+  if (typeof url !== 'string' || !url.startsWith('sialo://')) return null;
+  const body = url.slice('sialo://'.length);
+  // A trailing ?query or #fragment belongs to the page inside the site, not
+  // to the address of the site itself. Tolerate it here so the address still
+  // takes the seed branch; without the trailing group the anchored `$` failed
+  // and the whole thing was misread as a published URL.
+  const hexWithPath = body.match(/^([0-9a-fA-F]{64})(\/[^?#]*)?(?:[?#][\s\S]*)?$/);
+  if (hexWithPath) {
+    const path = hexWithPath[2] || null;
+    return {
+      resolvable: hexWithPath[1],
+      objectId: hexWithPath[1],
+      // `/` is the site root, which is also the default, so only carry a
+      // path that actually points somewhere.
+      subpath: path && path !== '/' ? path : null,
+    };
   }
   // Share-URL form. Convert back to `sia://<rest>` so resolveObject's
   // existing sharedObject() path handles it.
@@ -771,9 +786,9 @@ async function redownloadHistoryItem(item, index) {
   try {
     // Sia-sites are served via the sandbox SW, never as a cached
     // blob — re-load them by dropping back into the normal load flow,
-    // which already handles the `sia-site://` branch and will update
+    // which already handles the `sialo://` branch and will update
     // history in place via addToHistory's dedup.
-    if (item.fileType === 'sia-site') {
+    if (item.fileType === 'sialo') {
       const url = item.originalUrl || item.displayUrl;
       const bar = document.getElementById('chrome-address-bar');
       if (bar) bar.value = url;
@@ -1003,17 +1018,17 @@ async function loadContentWithAutoDetect() {
 
   if (!iframe) { setLoadContentInProgress(false); return; }
 
-  // sia-site:// — decentralised multi-file hosting. The URL after the
+  // sialo:// — decentralised multi-file hosting. The URL after the
   // scheme is either:
-  //   • a bare 64-hex object ID                      →  sia-site://<hex>
-  //   • a share URL path (host/objects/…/shared?…)   →  sia-site://sia.storage/objects/<hex>/shared?…#encryption_key=…
-  // The share form is portable across accounts; we convert it back into
+  //   • a bare 64-hex object ID                      →  sialo://<hex>
+  //   • a published URL path (host/objects/…/shared?…)   →  sialo://sia.storage/objects/<hex>/shared?…#encryption_key=…
+  // The published form is portable across accounts; we convert it back into
   // a full sia:// URL and hand it to resolveObject, which already
   // handles both.
-  if (url.startsWith('sia-site://')) {
+  if (url.startsWith('sialo://')) {
     try {
       const parsed = parseSiaSiteUrl(url);
-      if (!parsed) throw new Error('invalid sia-site URL');
+      if (!parsed) throw new Error('invalid sialo:// URL');
       iframe.style.display = 'block';
       videoContainer.style.display = 'none';
       setBrowserView(false);
@@ -1025,8 +1040,11 @@ async function loadContentWithAutoDetect() {
       // they were viewing rather than the site's root. For fresh
       // forward navigations there's nothing to restore.
       const restoreEntry = isNavInProgress() ? tab.navHistory[tab.navIndex] : null;
-      const subpath = (restoreEntry && typeof restoreEntry.subpath === 'string') ? restoreEntry.subpath : null;
-      // Fresh sia-site load — clear the intra-site path stack used by
+      const restored = (restoreEntry && typeof restoreEntry.subpath === 'string') ? restoreEntry.subpath : null;
+      // A path written into the address wins; otherwise fall back to the
+      // sub-page recorded for this history entry.
+      const subpath = parsed.subpath || restored;
+      // Fresh site load — clear the intra-site path stack used by
       // the in-app back button to decide if delegating to the iframe's
       // history.back() is safe.
       tab.iframePathStack = [];
@@ -1035,8 +1053,8 @@ async function loadContentWithAutoDetect() {
       tab.label = 'Sia site: ' + shortId + '…';
       tab.contentLoaded = true;
       renderTabBar();
-      if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'sia-site' });
-      addToHistory(url, null, tab.label, false, url, 'sia-site');
+      if (!isNavInProgress()) pushTabNav(tab, { url, blobUrl: null, label: tab.label, fileType: 'sialo' });
+      addToHistory(url, null, tab.label, false, url, 'sialo');
       updateNavButtons();
       status.innerHTML = '<span class="pass">Site loaded</span>';
       // If the bootstrap iframe never reaches the parent (sandbox 502/504,
@@ -1117,7 +1135,7 @@ async function loadContentWithAutoDetect() {
 
     // Large files: route through the Sia-site video viewer. This uses a
     // native <video> element inside an iframe on the sandbox origin,
-    // backed by the same SW bridge that powers sia-sites. The browser makes Range
+    // backed by the same SW bridge that powers sialo sites. The browser makes Range
     // requests naturally on seek; the SW forwards offset/length into
     // sdk.download(), so jumping to byte N doesn't require downloading
     // 0..N-1 first. Zero WebCodecs, zero mp4box.js demuxing in the worker.

@@ -154,7 +154,7 @@ async function onMessage(e) {
     case 'sia-bridge-page': {
       // Record the iframe's current in-site path on the owning tab's
       // current navHistory entry. When the user later navigates away
-      // (e.g. clicks a sia-site:// link to another site) and presses
+      // (e.g. clicks a sialo:// link to another site) and presses
       // Back, the saved path lets us restore the sub-page they were
       // last viewing instead of dumping them at the site's root.
       // The path itself is never source-of-truth for the iframe's own
@@ -164,7 +164,7 @@ async function onMessage(e) {
       const entry = tab.navHistory && tab.navHistory[tab.navIndex];
       if (!entry) return;
       // Only stash for sia-site entries; other URL types don't need it.
-      if (typeof entry.url !== 'string' || !entry.url.startsWith('sia-site://')) return;
+      if (typeof entry.url !== 'string' || !entry.url.startsWith('sialo://')) return;
       const path = (typeof d.path === 'string' && d.path) ? d.path : '/';
       const search = typeof d.search === 'string' ? d.search : '';
       const hash = typeof d.hash === 'string' ? d.hash : '';
@@ -201,7 +201,7 @@ async function onMessage(e) {
 
     case 'sia-navigate': {
       // A link inside the hosted page pointed at an external scheme
-      // (sia://, sia-site://) that the iframe can't handle itself.
+      // (sia://, sialo://) that the iframe can't handle itself.
       // Surface it in the parent tab's address bar and kick off the
       // normal navigation flow.
       const target = d.url;
@@ -223,7 +223,7 @@ async function onMessage(e) {
 
     case 'sia-ext-request': {
       // The iframe (its SW, relayed by the bridge) needs bytes for a
-      // sia:// or sia-site:// URL that was rewritten to /_sia-ext/<url>
+      // sia:// or sialo:// URL that was rewritten to /_sia-ext/<url>
       // in an HTML/CSS response. Stream the bytes back with ranged
       // download support.
       streamExternalObject(e.source, d.id, d.url, d.offset, d.length)
@@ -352,7 +352,7 @@ async function resolveManifestPath(manifestId, path) {
   if (contentType === 'text/html') {
     // Inject the bridge script and rewrite subresource references.
     // Two passes:
-    //   1. Explicit sia:// / sia-site:// URLs → /_sia-ext/<encoded>
+    //   1. Explicit sia:// / sialo:// URLs → /_sia-ext/<encoded>
     //      (the iframe SW streams bytes through a same-origin Response
     //      with Range support, so <video src="sia://..."> seeks).
     //   2. Absolute paths (/foo.js, /_next/...) that resolve against
@@ -376,7 +376,7 @@ async function resolveManifestPath(manifestId, path) {
   return { body, contentType };
 }
 
-// Rewrite raw sia:// / sia-site:// URLs in HTML attributes to the
+// Rewrite raw sia:// / sialo:// URLs in HTML attributes to the
 // same-origin /_sia-ext/<encoded-url> path that the SW intercepts.
 // We deliberately skip <a href> so full-page link clicks still fall
 // through to the parent's sia-navigate intercept (user-visible tab
@@ -656,7 +656,7 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
 
 // Look for magic bytes in the first chunk of a Sia object to decide a
 // plausible Content-Type. Covers the common video/image formats we're
-// most likely to encounter embedded in a sia-site.
+// most likely to encounter embedded in a site.
 function sniffContentType(bytes) {
   const b = bytes;
   if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
@@ -783,7 +783,7 @@ function formatExpiry(date) {
   return `in ${Math.round(years)}y`;
 }
 
-// Render a minimal directory-listing page for a sia-site that has no
+// Render a minimal directory-listing page for a site that has no
 // index.html at `dirPath`. Files directly in the directory appear as
 // links with their size; anything further nested collapses into a
 // subdirectory link the user can click to drill into (the service
@@ -905,6 +905,11 @@ async function fetchObject(objectId) {
 // Only version 1 is supported. Older legacy formats (unversioned flat
 // maps, bare-object-ID entries) were dropped — any site published
 // before the envelope existed needs to be re-uploaded.
+// The `type` field inside a published site's manifest JSON. This is a wire
+// format, not a URL scheme: manifests already stored on Sia carry the literal
+// string "sia-site", and those bytes cannot be rewritten. Renaming the URL
+// scheme deliberately does NOT rename this, or every site published before
+// the rename would fail validation and become unloadable.
 const MANIFEST_TYPE = 'sia-site';
 const MANIFEST_VERSION = 1;
 

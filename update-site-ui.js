@@ -1,4 +1,4 @@
-// Update Site — load an existing sia-site://, edit its file list, and
+// Update Site — load an existing sialo://, edit its file list, and
 // republish. Complements the folder-upload and Site Builder flows in
 // upload-site-ui.js: those build a site from scratch, this one forks
 // an existing one.
@@ -41,8 +41,8 @@ function panelStatus() {
 function parseUpdateInput(raw) {
   const s = (raw || '').trim();
   if (!s) return null;
-  if (s.startsWith('sia-site://')) {
-    const rest = s.slice('sia-site://'.length).replace(/\/+$/, '');
+  if (s.startsWith('sialo://')) {
+    const rest = s.slice('sialo://'.length).replace(/\/+$/, '');
     if (/^[0-9a-fA-F]{64}$/.test(rest)) return rest;
     return 'sia://' + rest;
   }
@@ -196,7 +196,7 @@ export function initUpdateSiteUI() {
   async function loadSite() {
     const input = parseUpdateInput(urlInput.value);
     if (!input) {
-      panelStatus().innerHTML = '<span class="fail">Enter a sia-site:// URL or manifest ID.</span>';
+      panelStatus().innerHTML = '<span class="fail">Enter a sialo:// URL or manifest ID.</span>';
       return;
     }
     loadBtn.disabled = true;
@@ -376,7 +376,7 @@ export function initUpdateSiteUI() {
         await sdk.pinObject(manifestObj);
 
         const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
-        const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
+        const url = 'sialo://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestObj.id();
         resultUrl.textContent = url;
         result.style.display = '';

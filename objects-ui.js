@@ -22,7 +22,7 @@ function panelStatus() {
   return tabStatusProxy(getActiveTab()).status;
 }
 
-// Filename-based heuristic for "this object is a sia-site manifest".
+// Filename-based heuristic for "this object is a site manifest".
 // All uploaders in this repo name the manifest either `manifest.json`
 // (bare) or `<uuid>/manifest.json` (UUID-prefixed). Third-party sites
 // that publish under a different filename won't be detected, which is
@@ -223,7 +223,7 @@ export function initObjectsUI() {
   function buildDisplayList(sorted) {
     // Per-uuid aggregates: file count, total bytes, and the manifest
     // object id (if any) so the group header can carry "Open Site /
-    // Share / Delete" actions for sia-site uploads. A non-deleted
+    // Publish / Delete" actions for site uploads. A non-deleted
     // manifest takes priority over a deleted one if there are stale
     // entries lying around.
     const aggregates = new Map();
@@ -310,13 +310,13 @@ export function initObjectsUI() {
         const suffix = item.continuation ? ' (continued)' : '';
         const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
         // Site-level action buttons. Only render when the group has a
-        // manifest (i.e. it was uploaded as a sia-site). The data-action
+        // manifest (i.e. it was uploaded as a site). The data-action
         // attribute pairs with a delegated handler that stops propagation
         // so clicking a button doesn't toggle collapse on the row.
         const siteActions = item.manifestId ? `
           <span style="float:right;">
-            <button data-action="open-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open as sia-site">Open Site</button>
-            <button data-action="share-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate share URL for this site">Share URL</button>
+            <button data-action="open-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open as a site">Open Site</button>
+            <button data-action="publish-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Publish this site as an expiring URL">Publish</button>
             <button data-action="delete-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#dc2626; color:white; margin-left:0.25rem;" title="Delete this site (or site + all referenced files)">Delete</button>
           </span>` : '';
         html += `
@@ -368,7 +368,7 @@ export function initObjectsUI() {
             <td style="padding:0.5rem;">
               ${!obj.deleted ? `
                 <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
-                <button onclick="shareObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Generate a share URL, which carries the encryption key and expires">Share URL</button>
+                <button onclick="publishObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Publish as a URL that carries the encryption key and expires">Publish</button>
                 <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
                 ${isInDraft(obj.id)
                   ? `<button onclick="removeFromSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#0d9488; color:white; margin-left:0.25rem;" title="Remove from the site being built on the Upload Site page">✓ In site</button>`
@@ -420,7 +420,7 @@ export function initObjectsUI() {
     // (Open Site / Share / Delete) intercept the click first and
     // dispatch through to the existing per-row handlers — they pass
     // the manifest id so all the site-aware logic in
-    // viewObjectById / shareObjectById / deleteObjectById applies.
+    // viewObjectById / publishObjectById / deleteObjectById applies.
     objectsList.querySelectorAll('tr.obj-group-header').forEach(tr => {
       tr.addEventListener('click', (ev) => {
         const t = ev.target;
@@ -429,8 +429,8 @@ export function initObjectsUI() {
           const id = t.dataset.id;
           if (!id) return;
           switch (t.dataset.action) {
-            case 'open-site':   window.viewObjectById('sia-site://' + id);   return;
-            case 'share-site':  window.shareObjectById(id);  return;
+            case 'open-site':   window.viewObjectById('sialo://' + id);   return;
+            case 'publish-site':  window.publishObjectById(id);  return;
             case 'delete-site': window.deleteObjectById(id); return;
           }
           return;
@@ -934,7 +934,7 @@ export function initObjectsUI() {
         <h3 style="margin:0 0 1rem 0; color:#f87171;">⚠️ Delete Sia site</h3>
         <p style="color:#888; margin-bottom:1rem;">Manifest: ${shortId}</p>
         <p style="color:#ccc; font-size:0.9rem; margin-bottom:1.25rem;">
-          This object is a sia-site manifest. Choose how much to delete — both
+          This object is a site manifest. Choose how much to delete — both
           options are permanent.
         </p>
         <div style="display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1rem;">
@@ -1052,7 +1052,7 @@ export function initObjectsUI() {
   // Helper function to view an object in the browser. Loads the
   // bare object id so the browser auto-detects type and renders
   // accordingly (JSON for a manifest, video for a video, etc.).
-  // Site-level rendering (`sia-site://`) is now handled by the
+  // Site-level rendering (`sialo://`) is now handled by the
   // group-header "Open Site" button instead of routing manifest
   // rows through here.
   window.viewObjectById = async (objectId) => {
@@ -1067,11 +1067,11 @@ export function initObjectsUI() {
     loadContentWithAutoDetect();
   };
 
-  // Helper function to share an object (generate share URL). For
-  // sia-site manifests the resulting `sia://` URL is rewritten to
-  // `sia-site://` so pasting it into the browser opens the site rather
+  // Helper function to publish an object as an expiring URL. For
+  // site manifests the resulting `sia://` URL is rewritten to
+  // `sialo://` so pasting it into the browser opens the site rather
   // than downloading the raw manifest bytes.
-  window.shareObjectById = async (objectId) => {
+  window.publishObjectById = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
     const match = allObjects.find(o => o.id === objectId);
     const isManifest = !!(match && match.isManifest);
@@ -1154,14 +1154,14 @@ export function initObjectsUI() {
         // Fetch the object
         const obj = await sdk.object(objectId);
 
-        // Generate share URL with configured duration. Manifests get
-        // rewritten to the `sia-site://` scheme so the link opens the
+        // Generate published URL with configured duration. Manifests get
+        // rewritten to the `sialo://` scheme so the link opens the
         // site loader directly.
         const validUntilMs = Date.now() + (duration * unit);
-        const rawShareUrl = sdk.objectShareUrl(obj, new Date(validUntilMs));
-        const shareUrl = isManifest
-          ? 'sia-site://' + rawShareUrl.replace(/^sia:\/\//, '')
-          : rawShareUrl;
+        const rawPublishUrl = sdk.objectShareUrl(obj, new Date(validUntilMs));
+        const publishUrl = isManifest
+          ? 'sialo://' + rawPublishUrl.replace(/^sia:\/\//, '')
+          : rawPublishUrl;
 
         // Calculate human-readable duration
         let durationText = `${duration} ${configModal.querySelector('#share-modal-unit').selectedOptions[0].text}`;

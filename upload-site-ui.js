@@ -19,7 +19,7 @@
 //      - The manifest JSON is uploaded (via a regular sdk.upload()
 //        since its bytes depend on the preceding object IDs).
 //   3. The result card exposes the manifest ID, an Open button that
-//      navigates the active tab to sia-site://<id>, and a copy button.
+//      navigates the active tab to sialo://<id>, and a copy button.
 
 import { _esc, formatSize } from './utils.js';
 import { connectSdk } from './config.js';
@@ -419,11 +419,11 @@ export function initUploadSiteUI() {
         progress.value = progress.max;
         cardCur.textContent = 'Done';
 
-        // Result URL is a portable sia-site:// share URL signed with
+        // Result URL is a portable sialo:// share URL signed with
         // the same validity window as the inner file URLs — anyone with
         // it can resolve the site regardless of their indexer account.
         const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
-        const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
+        const url = 'sialo://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestId;
         resultUrl.textContent = url;
         result.style.display = '';
@@ -608,7 +608,7 @@ export function initUploadSiteUI() {
         await sdk.pinObject(manifestObj);
 
         const siaShareUrl = sdk.objectShareUrl(manifestObj, validUntil);
-        const url = 'sia-site://' + siaShareUrl.replace(/^sia:\/\//, '');
+        const url = 'sialo://' + siaShareUrl.replace(/^sia:\/\//, '');
         resultId.textContent = manifestObj.id();
         resultUrl.textContent = url;
         result.style.display = '';
