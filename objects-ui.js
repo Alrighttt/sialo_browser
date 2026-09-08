@@ -15,7 +15,7 @@ import {
 } from './object-metadata.js';
 import { addToDraft, removeFromDraft, isInDraft, onDraftChange } from './site-builder.js';
 import { shareObjectToKey } from './sharing-keys.js';
-import { objectHealth, healthSummary } from './object-health.js';
+import { objectHealth, healthSummary, usableHostKeys } from './object-health.js';
 
 // Status proxy for the currently-active tab. Writes land in the
 // bottom-right status bar while the tab is selected and stay scoped
@@ -1411,34 +1411,17 @@ async function indexSharingKeyLabels(sdk) {
   let usableHostsCache = null;
   window.addEventListener('profile-updated', () => { usableHostsCache = null; });
 
-  async function usableHostKeys(sdk) {
+  /** Cached per profile; the paging itself lives in object-health.js so the
+   *  download pre-flight and this dialog cannot disagree about what "usable"
+   *  means. */
+  async function cachedUsableHostKeys(sdk) {
     if (usableHostsCache) return usableHostsCache;
-    // Page it. The indexer applies its own default limit of 100 when the
-    // request does not name one, so a bare hosts() call returns the first 100
-    // usable hosts and nothing else — and a single object can be spread over
-    // more hosts than that. Treating the remainder as unusable made every
-    // slab of a large object look unportable, which is a report about the
-    // page size rather than about the object. 500 is the indexer's maximum
-    // accepted limit.
-    const PAGE = 500;
-    const keys = new Set();
-    try {
-      for (let offset = 0; ; offset += PAGE) {
-        // `country` is passed explicitly rather than omitted: the generated
-        // type declares it present-but-undefined, and satisfying that costs
-        // nothing next to a deserialisation failure that would show up only
-        // as health quietly reporting itself unavailable.
-        const page = await sdk.hosts({ country: undefined, limit: PAGE, offset });
-        for (const h of page) keys.add(h.publicKey);
-        if (page.length < PAGE) break;
-      }
-    } catch (e) {
-      _dbgWarn('[objects] could not list usable hosts:', e);
-      return null;
-    }
+    const keys = await usableHostKeys(sdk);
+    if (!keys) { _dbgWarn('[objects] could not list usable hosts'); return null; }
     usableHostsCache = keys;
     return usableHostsCache;
   }
+
 
   window.showObjectInfo = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
@@ -1467,7 +1450,7 @@ async function indexSharingKeyLabels(sdk) {
       // between objects, and the last slab of any object is short.
       let slabs = [];
       try { slabs = obj.slabs() || []; } catch (e) { _dbgWarn('[objects] no slab detail:', e); }
-      const usable = await usableHostKeys(sdk);
+      const usable = await cachedUsableHostKeys(sdk);
       const health = usable ? objectHealth(slabs, usable) : null;
       const summary = health ? healthSummary(health) : null;
 

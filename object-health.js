@@ -35,6 +35,62 @@
 // together, so protocol is not a variable: a host that ever held a shard
 // supported both, and the wasm binding's QUIC filter narrows nothing.
 
+/**
+ * The host public keys this indexer can currently use.
+ *
+ * Paged, because the indexer applies a default limit of 100 when a request
+ * names none and a single object can span more hosts than that; 500 is the
+ * maximum limit it accepts. `country` is passed explicitly because the
+ * generated type declares it present-but-undefined.
+ *
+ * Returns null when the list could not be fetched, which callers must treat as
+ * "unknown" rather than "nothing is usable" — the difference between saying
+ * nothing and condemning every shard.
+ */
+export async function usableHostKeys(sdk) {
+  const PAGE = 500;
+  const keys = new Set();
+  try {
+    for (let offset = 0; ; offset += PAGE) {
+      const page = await sdk.hosts({ country: undefined, limit: PAGE, offset });
+      for (const h of page) keys.add(h.publicKey);
+      if (page.length < PAGE) break;
+    }
+  } catch (_) {
+    return null;
+  }
+  return keys;
+}
+
+/**
+ * The byte ranges of an object that cannot be reconstructed right now, because
+ * fewer than `minShards` of the slab covering them sit on usable hosts.
+ *
+ * This is the one download failure that is knowable in advance: a slab short of
+ * its minimum will fail however it is fetched, so there is no reason to
+ * transfer nine tenths of a file to find out. Each slab's `length` is its
+ * contribution to the object, so the ranges are the running total.
+ *
+ * It is a floor on trouble, not a guarantee of success. A host can be in the
+ * usable set and still not hold the sector, and a slab with enough shards on
+ * paper can still fail if the transport cannot reach them — which is a
+ * different problem with a different fix.
+ */
+export function unreadableRanges(slabs, usableHosts) {
+  const list = Array.isArray(slabs) ? slabs : [];
+  const out = [];
+  let at = 0;
+  for (let i = 0; i < list.length; i += 1) {
+    const len = Number(list[i] && list[i].length) || 0;
+    const h = slabHealth(list[i], usableHosts);
+    if (!h.recoverable) {
+      out.push({ index: i, start: at, end: at + len, usable: h.usable, need: h.need });
+    }
+    at += len;
+  }
+  return out;
+}
+
 /** Mirrors `maxBadParityShards` in indexd's persist/postgres/sectors.go. */
 export const MAX_BAD_PARITY_FRACTION = 0.2;
 

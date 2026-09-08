@@ -4,8 +4,52 @@
 import { _dbg, _dbgWarn, formatSize } from './utils.js';
 import { connectSdk, resolveObject, getMaxDownloads } from './config.js';
 import { downloadOptions } from './transfer-options.js';
+import { usableHostKeys, unreadableRanges } from './object-health.js';
+
+/**
+ * Refuse a download that cannot finish, before transferring anything.
+ *
+ * A slab with fewer shards on usable hosts than it needs will fail however it
+ * is fetched, and it may sit anywhere in the object — which is why a download
+ * can reach 90% and then stop. The check costs one host-list request and no
+ * object data.
+ *
+ * Silent when the host list is unavailable: an unknown answer must not block a
+ * download that would have worked.
+ */
+async function assertDownloadable(sdk, obj) {
+  let slabs;
+  try { slabs = obj.slabs() || []; } catch (_) { return; }
+  if (!slabs.length) return;
+  const usable = await usableHostKeys(sdk);
+  if (!usable) return;
+  const gaps = unreadableRanges(slabs, usable);
+  if (!gaps.length) return;
+
+  const first = gaps[0];
+  const total = gaps.reduce((n, g) => n + (g.end - g.start), 0);
+  const where = `${fmtBytes(first.start)}–${fmtBytes(first.end)}`;
+  const err = new Error(
+    `Cannot download this object: ${gaps.length} of ${slabs.length} slab`
+    + `${slabs.length === 1 ? '' : 's'} ${gaps.length === 1 ? 'has' : 'have'} too few `
+    + `shards left on reachable hosts (${fmtBytes(total)} of the file). The first gap `
+    + `is at ${where}, where ${first.usable} of the ${first.need} needed shards are `
+    + `reachable. Nothing was transferred. Check the object's Info for detail.`,
+  );
+  err.unreadableRanges = gaps;
+  throw err;
+}
+
+/** Bytes for a message, without importing the UI helpers into this module. */
+function fmtBytes(n) {
+  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let v = Number(n) || 0, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i += 1; }
+  return `${v >= 10 || i === 0 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+}
 
 async function streamingDownload(sdk, obj, status, progress, label, signal) {
+  await assertDownloadable(sdk, obj);
   progress.style.display = 'block';
   status.textContent = label || 'Downloading...';
 
@@ -77,11 +121,18 @@ async function parallelDownloadToDisk(objectUrl, writable, status, progress, byt
   if (!primarySdk) return null;
 
   const { sdk, obj } = await resolveObject(objectUrl, primarySdk);
+  await assertDownloadable(sdk, obj);
   const totalSize = Number(obj.size());
   progress.max = totalSize || 1;
   progress.value = 0;
 
-  const reader = sdk.download(obj).getReader();
+  // Options were missing here, so this path ran at the SDK's own WASM default
+  // of 32 buffered chunks while the streaming path ran at the configured 6.
+  // Each chunk races up to ~1.5x minShards host dials, so 32 chunks is several
+  // times Chrome's 64-pending-session ceiling — which is how a large download
+  // could get most of the way through and then fail on "not enough shards"
+  // with every failure being a refused connection.
+  const reader = sdk.download(obj, downloadOptions(getMaxDownloads())).getReader();
   const downloadStart = performance.now();
   let bytesWritten = 0;
   try {
@@ -159,12 +210,14 @@ async function parallelDownloadViaSW(objectUrl, filename, size, status, progress
 
   if (cancelled) { cleanup(); return null; }
   const { sdk, obj } = await resolveObject(objectUrl, primarySdk);
+  await assertDownloadable(sdk, obj);
   const totalSize = Number(obj.size());
   if (onMetadata) onMetadata({ size: totalSize, slabCount: obj.slabs().length });
   progress.max = totalSize || 1;
   progress.value = 0;
 
-  const reader = sdk.download(obj).getReader();
+  // Bounded for the same reason as the path above.
+  const reader = sdk.download(obj, downloadOptions(getMaxDownloads())).getReader();
   let bytesWritten = 0;
   try {
     for (;;) {
