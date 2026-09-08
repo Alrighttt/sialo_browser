@@ -1,10 +1,11 @@
 import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _esc, formatSize } from './utils.js';
 import { connectSdk, getMaxUploads } from './config.js';
+import { uploadOptions } from './transfer-options.js';
 import { withKeepAlive } from './keep-alive.js';
 import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
 import { encodeMetadata } from './object-metadata.js';
-import { checkVideoCompat, suggestFfmpegFix } from './video-compat.js';
+import { checkVideoCompat, suggestFfmpegFix, describeFfmpegFix } from './video-compat.js';
 
 // Bottom-right status bar proxy for the currently-active tab.
 function panelStatus() {
@@ -57,7 +58,7 @@ export function initUploadUI() {
         }
       });
       const obj = await Promise.race([
-        sdk.upload(new PinnedObject(), src, { maxInflight: getMaxUploads() }),
+        sdk.upload(new PinnedObject(), src, uploadOptions(getMaxUploads())),
         abortSignalAsReject(abortCtrl.signal),
       ]);
       const elapsed = ((performance.now() - uploadStart) / 1000).toFixed(1);
@@ -127,7 +128,8 @@ export function initUploadUI() {
       `<div style="font-weight:600; margin-bottom:0.35rem;">&#9888; This video may not play back in the browser</div>` +
       `<ul style="margin:0 0 0.5rem 1.2rem; padding:0;">${problemList}</ul>` +
       `<div style="color:#cbd5e1;">The file will still upload. To make it browser-playable, transcode first:</div>` +
-      `<code style="display:block; margin-top:0.25rem; padding:0.35rem 0.5rem; background:#000; color:#d4d4d4; border-radius:3px; font-size:0.75rem; word-break:break-all;">${_esc(suggestFfmpegFix(file.name))}</code>`;
+      `<code style="display:block; margin-top:0.25rem; padding:0.35rem 0.5rem; background:#000; color:#d4d4d4; border-radius:3px; font-size:0.75rem; word-break:break-all;">${_esc(suggestFfmpegFix(file.name, result))}</code>` +
+      `<div style="color:#94a3b8; margin-top:0.35rem; font-size:0.78rem;">${_esc(describeFfmpegFix(result))}</div>`;
     videoWarn.style.display = '';
   }
 
@@ -263,14 +265,13 @@ export function initUploadUI() {
         const pinned = new PinnedObject();
         pinned.updateMetadata(encodeMetadata({ filename: selectedFile.name }));
         const obj = await Promise.race([
-          sdk.upload(pinned, selectedFile.stream(), {
-            maxInflight: getMaxUploads(),
+          sdk.upload(pinned, selectedFile.stream(), uploadOptions(getMaxUploads(), {
             onShardUploaded: (p) => {
               shardsDone++;
               bytesUploaded += p.shardSize || 0;
               progress.value = shardsDone;
             },
-          }),
+          })),
           abortSignalAsReject(abortCtrl.signal),
         ]);
 
