@@ -1116,7 +1116,7 @@ initUpdateSiteUI();
 initDownloadUI();
 
 
-// Objects list, share, view, delete, info → objects-ui.js
+// Objects list, publish, view, delete, info → objects-ui.js
 initObjectsUI();
 
 // Sharing keys, owner side → sharing-keys.js

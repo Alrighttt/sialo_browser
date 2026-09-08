@@ -180,11 +180,12 @@ function parseSiaSiteUrl(url) {
       subpath: path && path !== '/' ? path : null,
     };
   }
-  // Share-URL form. Convert back to `sia://<rest>` so resolveObject's
-  // existing sharedObject() path handles it.
-  const shareUrl = 'sia://' + rest;
+  // Published-URL form. Convert back to `sia://<rest>` so resolveObject's
+  // existing objectFromShareUrl() path handles it.
+  const rest = body.replace(/\/+$/, '');
+  const publishUrl = 'sia://' + rest;
   const m = rest.match(/objects\/([0-9a-fA-F]{64})(?:\/|$)/);
-  return { resolvable: shareUrl, objectId: m ? m[1] : null };
+  return { resolvable: publishUrl, objectId: m ? m[1] : null, subpath: null };
 }
 
 // Save a Blob to disk, always asking the user for a filename first.
