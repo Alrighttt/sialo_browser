@@ -13,21 +13,37 @@
 // etc. — anything a normal HTTP server can serve — because the SW
 // returns a real same-origin Response for every request.
 //
-// Manifest format (version 1):
+// A site comes from one of two sources, both of which reduce to the same
+// flat `{ path -> ref }` map that the resolver, the auto-index and the
+// URL rewriters all work against.
+//
+// Sharing key (current). The key *is* the manifest: its attached objects
+// are the files, and each object's metadata filename is its path. Nothing
+// separate is published, the owner can revoke the whole site at once, and
+// downloads are billed to them rather than the visitor. Addressed as
+// `sialo://<64 hex seed>/<path>`.
+//
+// Manifest object (legacy, read only). A JSON object mapping paths to
+// signed `sia://` published URLs:
 //   { "type": "sia-site", "version": 1, "files": {
 //       "index.html": "sia://...?sv=...#encryption_key=...",
 //       "app.js":     "sia://...", ...
 //   }}
-//
-// Values are full `sia://` share URLs so the site is portable: any
-// account can resolve and decrypt each entry using the signature +
-// encryption key embedded in the URL.
+// Still loadable so sites published before sharing keys keep working, but
+// nothing writes this format any more.
 
-import { PinnedObject } from './pkg/sia_storage_wasm.js';
+import { PinnedObject, SharedSdk } from './pkg/sia_storage_wasm.js';
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
-import { connectSdk, resolveObject, invalidateSdk, getLastConnectError } from './config.js';
-import { findTabByIframeWindow, tabStatusProxy } from './tabs.js';
-import { encodeMetadata } from './object-metadata.js';
+import {
+  connectSdk, resolveObject, invalidateSdk, getLastConnectError, getUrl, getKeyHex,
+} from './config.js';
+import {
+  findTabByIframeWindow, tabStatusProxy, getActiveTab, setChromeCollapsed,
+} from './tabs.js';
+import { encodeMetadata, filenameForDisplay, stripUploadUuid } from './object-metadata.js';
+import { downloadOptions } from './transfer-options.js';
+import { isSiteAddress } from './object-input.js';
+import { isAccountError, showAccountPrompt } from './page-gate.js';
 
 // "not enough shards: 0/N" after a period of idle usually means every
 // cached WebTransport connection got killed by the QUIC idle timeout.
@@ -70,23 +86,25 @@ export const HOSTED_HOSTNAME = (() => {
   try { return new URL(HOSTED_ORIGIN).hostname; } catch (_) { return location.hostname; }
 })();
 
-const manifestCache = new Map(); // manifestId → { "path": shareUrl, ... }
-const objectCache = new Map();   // shareUrl → Uint8Array
+const manifestCache = new Map(); // manifestId → { "path": publishUrl, ... }
+const objectCache = new Map();   // publishUrl → Uint8Array
+const siteCache = new Map();     // siteId → site source (see getSite)
 
-// Share URLs baked into site manifests should outlive the lifetime of
-// the site. 100 years from upload time is effectively "forever" from
-// a user perspective and stays well inside JavaScript's Date range.
-const SITE_SHARE_VALIDITY_MS = 100 * 365 * 24 * 60 * 60 * 1000;
+// Published URLs baked into site manifests should outlive the lifetime of
+// the site. 100 years from upload time is effectively "forever" from a user
+// perspective and stays well inside JavaScript's Date range.
+const SITE_PUBLISH_VALIDITY_MS = 100 * 365 * 24 * 60 * 60 * 1000;
 
 // In-flight external-object streams, keyed by request id. Looked up by
 // the onMessage handler when the SW cancels a fetch (e.g. the browser
 // aborted a progressive download to issue a Range request on seek).
 const activeExtStreams = new Map(); // id → { cancelled: boolean, reader }
 
-// iframe element → manifestId. Each tab's iframe is independently bound
-// to whichever Sia site it was told to load, so a single main app can
-// host multiple Sia sites at once in different tabs.
-const iframeManifests = new WeakMap();
+// iframe element → siteId (a sharing-key seed, or a legacy manifest
+// reference). Each tab's iframe is independently bound to whichever Sia
+// site it was told to load, so a single main app can host multiple Sia
+// sites at once in different tabs.
+const iframeSites = new WeakMap();
 
 // The handshake state keeps track of which iframes have sent their
 // sia-bridge-ready message. The parent refuses to serve requests until
@@ -121,6 +139,30 @@ export function initSiaSiteHandler() {
   _dbg('[sia-site] handler installed, hosted origin:', HOSTED_ORIGIN);
 }
 
+/**
+ * Show a failure in the owning tab's status bar, offering registration when
+ * that is what would fix it.
+ *
+ * The buttons carry data attributes rather than inline handlers, and are
+ * wired by a delegated listener in page-gate.js — status text is replaced
+ * wholesale on every update, so per-element listeners would be lost.
+ */
+function showTabFailure(source, err) {
+  const tab = findTabByIframeWindow(source);
+  if (!tab) return;
+  const msg = (err && err.message) || String(err);
+  const action = err && err.needsAccount
+    ? ' <button type="button" data-sialo-action="register" class="status-action">Register / Log In</button>'
+      + ' <button type="button" data-sialo-action="settings" class="status-action">Settings</button>'
+    : '';
+  tabStatusProxy(tab).status.innerHTML =
+    `<span class="fail">${_esc(msg)}</span>${action}`;
+  // Status text alone is not enough for a failed content load: the iframe
+  // renders its own error and the reader never looks down here. Cover the
+  // viewport with the prompt instead, which is where they are looking.
+  if (isAccountError(err)) showAccountPrompt(msg);
+}
+
 async function onMessage(e) {
   // Only accept messages from the hosted-site origin. Everything else is
   // either unrelated (e.g. iframe embeds) or actively hostile.
@@ -134,13 +176,19 @@ async function onMessage(e) {
   // for a sia:// link click from an unbound iframe).
   const iframe = findIframeForSource(e.source);
   if (!iframe) return;
-  const manifestId = iframeManifests.get(iframe) || null;
+  const siteId = iframeSites.get(iframe) || null;
 
   switch (d.type) {
     case 'sia-bridge-ready':
-      if (!manifestId) {
-        // The viewer iframe also uses the bridge but has no manifest;
-        // acknowledge it so its bootstrap can proceed without blocking.
+      // Nothing may run ahead of the reply below. The sandbox bootstrap
+      // blocks on `sia-bridge-ok` before it issues any request, so a throw
+      // here strands the whole load and surfaces 20s later as "sandbox
+      // unreachable". Per-page work belongs in `sia-bridge-page`, which is
+      // announced on every document load and blocks nothing.
+      if (!siteId) {
+        // The viewer iframe also uses the bridge but is not bound to a
+        // site; acknowledge it so its bootstrap can proceed without
+        // blocking.
         e.source.postMessage({ type: 'sia-bridge-ok' }, HOSTED_ORIGIN);
         return;
       }
@@ -148,10 +196,40 @@ async function onMessage(e) {
       e.source.postMessage({ type: 'sia-bridge-ok' }, HOSTED_ORIGIN);
       return;
 
+    // A site reporting that the reader scrolled. Only the visible tab may
+    // move the app's chrome: a background tab finishing a lazy scroll must
+    // not yank the address bar out from under whatever is on screen.
+    case 'sia-scroll-chrome': {
+      const srcTab = findTabByIframeWindow(e.source);
+      const active = getActiveTab();
+      if (srcTab && active && srcTab.id === active.id) {
+        setChromeCollapsed(!!d.hidden);
+      }
+      return;
+    }
+
+    // The sandbox bootstrap could not install its service worker. Surface it
+    // immediately: the alternative is the parent's 20s watchdog reporting
+    // "sandbox unreachable", which blames the network for what is usually a
+    // browsing mode with service workers switched off.
+    case 'sia-bridge-failed': {
+      const tab = findTabByIframeWindow(e.source);
+      if (tab) {
+        tabStatusProxy(tab).status.innerHTML =
+          `<span class="fail">${_esc(d.error || 'The sandbox could not start.')}</span>`;
+      }
+      _dbgWarn('[sia-site] sandbox bootstrap failed:', d.error);
+      return;
+    }
+
     case 'sia-bridge-alive':
       return;
 
     case 'sia-bridge-page': {
+      // A document just loaded, scrolled to the top. The scroll reporter only
+      // messages on a state change, so it would never ask us to restore a bar
+      // that the previous page had collapsed.
+      setChromeCollapsed(false);
       // Record the iframe's current in-site path on the owning tab's
       // current navHistory entry. When the user later navigates away
       // (e.g. clicks a sialo:// link to another site) and presses
@@ -206,7 +284,15 @@ async function onMessage(e) {
       // normal navigation flow.
       const target = d.url;
       if (typeof target !== 'string') return;
-      if (!/^(sia|sia-site):\/\//i.test(target)) return;
+      if (!/^(sia|sialo):\/\//i.test(target)) return;
+      // `sialo://` addresses app pages as well as content, so a scheme test
+      // alone would let a hosted page post `sialo://wallet` and drive the
+      // parent into an internal panel. Content sent from inside the sandbox
+      // must be shaped like a site.
+      if (/^sialo:\/\//i.test(target) && !isSiteAddress(target)) {
+        _dbgWarn('[sia-site] refusing sia-navigate to a non-site address:', target);
+        return;
+      }
       // Cancel any in-flight ext-streams owned by the navigating
       // iframe. Without this, their postMessage chunks keep targeting
       // the old document and Chrome floods the console with
@@ -226,14 +312,24 @@ async function onMessage(e) {
       // sia:// or sialo:// URL that was rewritten to /_sia-ext/<url>
       // in an HTML/CSS response. Stream the bytes back with ranged
       // download support.
-      streamExternalObject(e.source, d.id, d.url, d.offset, d.length)
+      streamExternalObject(e.source, d.id, d.url, d.offset, d.length, siteId)
         .catch((err) => {
+          const msg = err.message || String(err);
           try {
             e.source.postMessage(
-              { type: 'sia-ext-error', id: d.id, error: err.message || String(err) },
+              { type: 'sia-ext-error', id: d.id, error: msg },
               HOSTED_ORIGIN,
             );
           } catch (_) {}
+          // Also surface it in the chrome. The message above travels back to
+          // the service worker and becomes a 502 response body, which nothing
+          // ever displays: a <video> or <img> discards it and the console
+          // shows only "502 (Bad Gateway)". Without this the reader gets a
+          // dead player and no way to learn why.
+          try {
+            showTabFailure(e.source, err);
+          } catch (_) {}
+          _dbgWarn('[sia-site] ext request failed:', d.url, msg);
         });
       return;
     }
@@ -253,14 +349,13 @@ async function onMessage(e) {
     }
 
     case 'sia-request':
-      // Serve the resource from the site's manifest. If this iframe has
-      // no manifest binding (e.g. the direct-video viewer), we can't
-      // answer these, so just return an error response so the SW can
-      // stop waiting.
-      if (!manifestId) {
+      // Serve the resource from the site. If this iframe is not bound to
+      // one (e.g. the direct-video viewer), we can't answer these, so
+      // return an error response so the SW stops waiting.
+      if (!siteId) {
         try {
           e.source.postMessage(
-            { type: 'sia-response', id: d.id, error: 'no manifest bound to this iframe' },
+            { type: 'sia-response', id: d.id, error: 'no site bound to this iframe' },
             HOSTED_ORIGIN,
           );
         } catch (_) {}
@@ -276,9 +371,19 @@ async function onMessage(e) {
         // warm-up while still surfacing a visible error when the
         // network is actually broken.
         const result = await Promise.race([
-          resolveManifestPath(manifestId, d.path),
+          resolveSitePath(siteId, d.path, d.mode),
           new Promise((_, reject) => setTimeout(
-            () => reject(new Error("Sia network unreachable (can't fetch shards)")),
+            // Deliberately not "network unreachable": the common cause is a
+            // large file, not a broken network. resolveSitePath buffers the
+            // whole object before replying, so anything that cannot be
+            // fetched and held within this window fails here regardless of
+            // how healthy the hosts are. Naming the real constraint stops
+            // this being debugged as a connectivity problem.
+            () => reject(new Error(
+              `Timed out after 30s fetching ${d.path || '/'} — the whole file has `
+              + 'to be retrieved before it can be served, so large files fail here '
+              + 'even when the network is fine.',
+            )),
             30000,
           )),
         ]);
@@ -303,11 +408,7 @@ async function onMessage(e) {
         // the SDK can't construct (bad app key) or the manifest can't
         // be fetched. Find the tab via the iframe's contentWindow and
         // overwrite it with the real error.
-        const tab = findTabByIframeWindow(e.source);
-        if (tab) {
-          const statusBar = tabStatusProxy(tab).status;
-          statusBar.innerHTML = `<span class="fail">Error: ${_esc(err.message || String(err))}</span>`;
-        }
+        showTabFailure(e.source, err);
         if (!e.source) return;
         try {
           e.source.postMessage(
@@ -329,25 +430,58 @@ function findIframeForSource(source) {
   return null;
 }
 
-async function resolveManifestPath(manifestId, path) {
-  const manifest = await getManifest(manifestId);
+async function resolveSitePath(siteId, path, mode) {
+  const site = await getSite(siteId);
+  const manifest = site.files;
   const lookup = resolveManifestKey(manifest, path);
   if (!lookup) {
     // No file matched AND the request is for a directory-like path
     // (root or trailing slash) — synthesise an index listing from the
-    // manifest so the user can browse a site that has no index.html.
+    // site's files so a site with no index.html is still browsable.
     const normalized = (path || '').replace(/^\/+/, '');
     if (normalized === '' || normalized.endsWith('/')) {
-      const html = await renderAutoIndex(manifest, normalized);
+      const html = await renderAutoIndex(site, normalized);
       const injected = injectBridge(html);
       const body = new TextEncoder().encode(injected).buffer;
       return { body, contentType: 'text/html' };
     }
-    throw new Error('not in manifest: ' + path);
+    throw new Error('not in this site: ' + path);
   }
-  const data = await fetchObject(lookup.objectId);
+  // A large file cannot be served by value: site.read() buffers the whole
+  // object and this resolve is capped, so the request times out however
+  // healthy the network is. Serve a tiny page that embeds the file through
+  // the streaming route, which supports Range so a video seeks. The embed is
+  // a subresource, which is the only form that route works in.
+  // Only for a document navigation. A <video src="big.mp4"> or <img> inside a
+  // site is a subresource fetch and must receive the bytes, not a page about
+  // them — handing HTML to a media element would break the embed outright.
+  // Older sandbox builds send no mode; treat that as a navigation, which is
+  // what every request was before the player page existed.
+  const isNavigation = !mode || mode === 'navigate';
+  const type = guessMime(lookup.key);
+  // Text is never big enough for this to matter, and on a manifest-backed site
+  // `sizeOf` resolves the published URL over the network — so skipping it here
+  // keeps the common case (HTML, CSS, JS) at zero extra cost.
+  const textish = /^(?:text\/|application\/(?:javascript|json|xml))/.test(type);
+  if (isNavigation && !textish && typeof site.streamHrefFor === 'function') {
+    // `sizeOf` is sync for a key-backed site and async for a manifest-backed
+    // one; awaiting covers both. Unawaited this was NaN on a manifest site and
+    // the branch silently never fired.
+    let size = 0;
+    try {
+      size = Number(await site.sizeOf(lookup.objectId)) || 0;
+    } catch (_) { /* size unknown: fall through and serve by value */ }
+    const streamHref = size >= STREAM_MIN_BYTES ? site.streamHrefFor(lookup.key) : null;
+    if (streamHref) {
+      const html = renderStreamPage(lookup.key, streamHref, size, type);
+      const injected = injectBridge(html);
+      return { body: new TextEncoder().encode(injected).buffer, contentType: 'text/html' };
+    }
+  }
 
-  const contentType = guessMime(lookup.key);
+  const data = await site.read(lookup.objectId);
+
+  const contentType = type;
   let body;
   if (contentType === 'text/html') {
     // Inject the bridge script and rewrite subresource references.
@@ -360,7 +494,10 @@ async function resolveManifestPath(manifestId, path) {
     //      builds with absolute asset paths blank-screen because the
     //      sandbox origin doesn't have those files.
     const html = new TextDecoder().decode(data);
-    let rewritten = rewriteSiaUrlsInHtml(html);
+    // Media first: a relative <video src> must reach the streaming route or a
+    // large file 502s on the capped by-value resolve.
+    let rewritten = rewriteMediaToStream(html, site, lookup.key);
+    rewritten = rewriteSiaUrlsInHtml(rewritten);
     rewritten = rewriteAbsolutePathsInHtml(rewritten, manifest);
     const injected = injectBridge(rewritten);
     body = new TextEncoder().encode(injected).buffer;
@@ -384,12 +521,12 @@ async function resolveManifestPath(manifestId, path) {
 function rewriteSiaUrlsInHtml(html) {
   // src / poster / data / formaction on any element.
   html = html.replace(
-    /\b(src|poster|data|formaction)\s*=\s*(["'])(sia(?:-site)?:\/\/[^"'<>\s]+)\2/gi,
+    /\b(src|poster|data|formaction)\s*=\s*(["'])((?:sia|sialo):\/\/[^"'<>\s]+)\2/gi,
     (_, attr, q, url) => attr + '=' + q + '/_sia-ext/' + encodeURIComponent(url) + q,
   );
   // <link ... href="sia://..."> — stylesheets, preloads, icons, etc.
   html = html.replace(
-    /<link\b([^>]*?)\bhref\s*=\s*(["'])(sia(?:-site)?:\/\/[^"'<>\s]+)\2/gi,
+    /<link\b([^>]*?)\bhref\s*=\s*(["'])((?:sia|sialo):\/\/[^"'<>\s]+)\2/gi,
     (_, rest, q, url) => '<link' + rest + 'href=' + q + '/_sia-ext/' + encodeURIComponent(url) + q,
   );
   // Inline style="...: url(sia://...)".
@@ -402,7 +539,7 @@ function rewriteSiaUrlsInHtml(html) {
     /\bsrcset\s*=\s*(["'])([^"']*)\1/gi,
     (_m, q, set) => {
       const rewritten = set.replace(
-        /(sia(?:-site)?:\/\/[^\s,]+)/gi,
+        /((?:sia|sialo):\/\/[^\s,]+)/gi,
         (u) => '/_sia-ext/' + encodeURIComponent(u),
       );
       return 'srcset=' + q + rewritten + q;
@@ -413,7 +550,7 @@ function rewriteSiaUrlsInHtml(html) {
 
 function rewriteSiaUrlsInCss(css) {
   return css.replace(
-    /url\(\s*(["']?)(sia(?:-site)?:\/\/[^"'\s)]+)\1\s*\)/gi,
+    /url\(\s*(["']?)((?:sia|sialo):\/\/[^"'\s)]+)\1\s*\)/gi,
     (_, q, url) => 'url(' + q + '/_sia-ext/' + encodeURIComponent(url) + q + ')',
   );
 }
@@ -430,6 +567,74 @@ function rewriteSiaUrlsInCss(css) {
 // `import()` paths are still strings inside the JS bundles and won't
 // be rewritten — apps that rely on those need a real
 // `assetPrefix: './'` rebuild.
+/**
+ * Media extensions that must be streamed rather than served by value.
+ */
+const STREAMABLE_MEDIA = /\.(?:mp4|m4v|webm|mov|mkv|mp3|m4a|aac|wav|ogg|oga|opus|flac)(?:[?#]|$)/i;
+
+/** Resolve a relative reference against the directory of the page holding it. */
+function resolveSiteRelative(ref, fromPath) {
+  const dir = String(fromPath || '').replace(/[^/]*$/, '');
+  try {
+    return new URL(ref, 'site:/' + dir).pathname.replace(/^\/+/, '');
+  } catch (_) {
+    return ref.replace(/^\/+/, '');
+  }
+}
+
+/**
+ * Point *relative* media references at the streaming route.
+ *
+ * A `<video src="movie.mp4">` inside a site is a subresource fetch, so it is
+ * served by value — and `read()` buffers the whole object before replying,
+ * against a capped resolve. A large video therefore fails with a 502 no matter
+ * how healthy the network is. The player page does not help: that is only for
+ * navigations, and this is not one.
+ *
+ * /_sia-ext/ streams chunk by chunk and supports Range, which media needs
+ * anyway for seeking, so media is routed there regardless of size rather
+ * than paying for a size lookup per reference. Everything else keeps the
+ * cheap by-value path.
+ */
+export function rewriteMediaToStream(html, site, fromPath) {
+  if (!site || typeof site.streamHrefFor !== 'function') return html;
+  const target = (ref) => {
+    if (!STREAMABLE_MEDIA.test(ref)) return null;
+    // Absolute paths, protocol-relative and full URLs are handled by the
+    // other passes; only same-site relative references belong here.
+    if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|\/)/i.test(ref)) return null;
+    const path = resolveSiteRelative(ref, fromPath);
+    if (!Object.prototype.hasOwnProperty.call(site.files, path)) return null;
+    return site.streamHrefFor(path);
+  };
+
+  html = html.replace(
+    /\b(src|poster)\s*=\s*(["'])([^"'<>\s]+)\2/gi,
+    (full, attr, q, ref) => {
+      const to = target(ref);
+      return to ? attr + '=' + q + to + q : full;
+    },
+  );
+
+  html = html.replace(
+    /\bsrcset\s*=\s*(["'])([^"']*)\1/gi,
+    (full, q, set) => {
+      let touched = false;
+      const out = set.split(',').map((part) => {
+        const m = part.trim().match(/^(\S+)(\s.*)?$/);
+        if (!m) return part;
+        const to = target(m[1]);
+        if (!to) return part;
+        touched = true;
+        return ' ' + to + (m[2] || '');
+      }).join(',');
+      return touched ? 'srcset=' + q + out.trim() + q : full;
+    },
+  );
+
+  return html;
+}
+
 function rewriteAbsolutePathsInHtml(html, manifest) {
   const lookup = (rawPath) => {
     const path = rawPath.replace(/^\/+/, '').replace(/[?#].*$/, '');
@@ -504,10 +709,95 @@ function rewriteAbsolutePathsInCss(css, manifest) {
  * error. Handles ranged requests by forwarding offset/length straight
  * to sdk.download().
  */
-async function streamExternalObject(source, id, siaUrl, offset, length) {
+/**
+ * The SDK and object behind a /_sia-ext/ request.
+ *
+ * A key-backed site addresses its own files as `sialo://<seed>/<path>`. Those
+ * resolve through the site's SharedSdk, built from the seed, because the
+ * holder of a sharing key has no account here — going through connectSdk
+ * would demand an indexer URL and app key they were never given. Everything
+ * else is an ordinary published object and resolves as before.
+ */
+async function resolveStreamSource(siaUrl, siteId) {
+  /** Object ID that a key-backed site referenced but does not actually hold. */
+  let unattached = null;
+  const asSite = parseSiteUrl(siaUrl);
+  if (asSite && /^[0-9a-f]{64}$/i.test(asSite.siteId)) {
+    const site = await getSite(asSite.siteId.toLowerCase());
+    if (site && site.kind === 'sharing-key' && site.sdk) {
+      const path = (asSite.path || '/').replace(/^\/+/, '');
+      const obj = site.files[path];
+      if (obj) return { sdk: site.sdk, obj };
+      throw new Error('not in this site: ' + path);
+    }
+  }
+
+  // A published `sia://…/objects/<id>/shared?…` URL embedded in the HTML of a
+  // key-backed site. Resolving it as a published URL needs the account SDK —
+  // `SharedSdk` has no `objectFromShareUrl` — which a sharing-key recipient
+  // does not have, and the request would 502 for them.
+  //
+  // But the object is almost always attached to the same key as the page that
+  // references it, so match it by **object ID** against the key's own objects
+  // and serve it through the site's SharedSdk instead. That keeps a shared
+  // site readable by someone with no account, which is the entire point of
+  // handing out a key.
+  if (siteId && /^[0-9a-f]{64}$/i.test(siteId)) {
+    const embedded = siaUrl.match(/\/objects\/([0-9a-f]{64})/i);
+    if (embedded) {
+      let site = null;
+      try {
+        site = await getSite(String(siteId).toLowerCase());
+      } catch (_) { /* fall through to the account path */ }
+      if (site && site.kind === 'sharing-key' && site.sdk) {
+        const want = embedded[1].toLowerCase();
+        for (const candidate of Object.values(site.files)) {
+          try {
+            if (candidate && candidate.id && candidate.id().toLowerCase() === want) {
+              return { sdk: site.sdk, obj: candidate };
+            }
+          } catch (_) { /* freed handle; skip */ }
+        }
+        _dbgWarn(
+          '[sia-site] embedded published URL is not attached to this sharing key;'
+          + ' falling back to the account SDK:', want,
+        );
+        unattached = want;
+      }
+    }
+  }
+
+  // Falling back to the account is right for a viewer who has one — a
+  // published URL resolves fine that way. It cannot work for someone holding
+  // only a sharing key, so when that is the situation, say what would fix it
+  // rather than reporting a bare connection failure.
+  const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
+  if (!sdk) {
+    if (unattached) {
+      const unattachedErr = new Error(
+        'This page embeds an object that is not attached to the sharing key '
+        + `(${unattached.slice(0, 12)}…), and viewing it that way needs an indexer `
+        + 'account. Attach the object to the same key — My Objects → Sharing Key, '
+        + 'or Attach… on the Sharing Keys page — and it will load for everyone '
+        + 'holding the link.',
+      );
+      unattachedErr.needsAccount = true;
+      throw unattachedErr;
+    }
+    {
+      const e2 = new Error(getLastConnectError() || 'SDK not connected');
+      e2.needsAccount = true;
+      throw e2;
+    }
+  }
+  const { obj } = await resolveObject(siaUrl, sdk);
+  return { sdk, obj };
+}
+
+async function streamExternalObject(source, id, siaUrl, offset, length, siteId) {
   if (typeof siaUrl !== 'string') throw new Error('sia-ext-request missing url');
 
-  const opts = { maxInflight: 8 };
+  const opts = downloadOptions(8);
   if (typeof offset === 'number' && offset > 0) opts.offset = offset;
   if (typeof length === 'number' && length > 0) opts.length = length;
 
@@ -520,9 +810,7 @@ async function streamExternalObject(source, id, siaUrl, offset, length) {
   // element wait minutes for shards that will never arrive.
   const setup = await Promise.race([
     withSdkRetry(async () => {
-      const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-      if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
-      const { obj } = await resolveObject(siaUrl, sdk);
+      const { sdk, obj } = await resolveStreamSource(siaUrl, siteId);
       const totalSize = Number(obj.size());
       const stream = sdk.download(obj, opts);
       const reader = stream.getReader();
@@ -686,7 +974,7 @@ function sniffContentType(bytes) {
 }
 
 function guessMimeFromSiaUrl(url) {
-  // Share URL path is typically /objects/<id>/shared — no filename hint.
+  // Published URL path is typically /objects/<id>/shared — no filename hint.
   // Fall back to octet-stream; sniffContentType() will usually override.
   try {
     const u = new URL(url);
@@ -712,7 +1000,7 @@ function resolveManifestKey(manifest, path) {
   return null;
 }
 
-// Cache of resolved object sizes keyed by the manifest's share URL.
+// Cache of resolved object sizes keyed by the manifest's published URL.
 // Populated as auto-index rendering fetches file metadata; lives for
 // the page session so navigating between directories of the same site
 // doesn't re-request sizes we've already seen.
@@ -725,38 +1013,38 @@ const sizeCache = new Map();
 // and populates the cache for the next directory visit.
 const SIZE_FETCH_TIMEOUT_MS = 800;
 
-async function resolveSizeOrNull(shareUrl) {
+async function resolveSizeOrNull(publishUrl) {
   try {
     const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
     if (!sdk) return null;
-    const { obj } = await resolveObject(shareUrl, sdk);
+    const { obj } = await resolveObject(publishUrl, sdk);
     const size = Number(obj.size());
-    sizeCache.set(shareUrl, size);
+    sizeCache.set(publishUrl, size);
     return size;
   } catch {
     return null;
   }
 }
 
-async function resolveShareUrlSize(shareUrl) {
-  if (sizeCache.has(shareUrl)) return sizeCache.get(shareUrl);
+async function resolvePublishUrlSize(publishUrl) {
+  if (sizeCache.has(publishUrl)) return sizeCache.get(publishUrl);
   let timeoutId;
   const timeout = new Promise((resolve) => {
     timeoutId = setTimeout(() => resolve(null), SIZE_FETCH_TIMEOUT_MS);
   });
   try {
-    return await Promise.race([resolveSizeOrNull(shareUrl), timeout]);
+    return await Promise.race([resolveSizeOrNull(publishUrl), timeout]);
   } finally {
     clearTimeout(timeoutId);
   }
 }
 
-// Pull the validity timestamp out of a sia:// share URL. The `sv`
+// Pull the validity timestamp out of a sia:// published URL. The `sv`
 // query param is the Unix-seconds expiry baked into the signature.
 // Returns a Date, or null if the URL doesn't carry one.
-function shareUrlExpiry(shareUrl) {
-  if (typeof shareUrl !== 'string') return null;
-  const m = shareUrl.match(/[?&]sv=(\d+)/);
+function publishUrlExpiry(publishUrl) {
+  if (typeof publishUrl !== 'string') return null;
+  const m = publishUrl.match(/[?&]sv=(\d+)/);
   if (!m) return null;
   const secs = Number(m[1]);
   if (!Number.isFinite(secs) || secs <= 0) return null;
@@ -788,7 +1076,8 @@ function formatExpiry(date) {
 // links with their size; anything further nested collapses into a
 // subdirectory link the user can click to drill into (the service
 // worker will land back here with the new path and list that subtree).
-async function renderAutoIndex(manifest, dirPath) {
+async function renderAutoIndex(site, dirPath) {
+  const manifest = site.files;
   const keys = Object.keys(manifest).sort();
   const files = [];
   const subdirs = new Set();
@@ -801,20 +1090,43 @@ async function renderAutoIndex(manifest, dirPath) {
     else files.push(rest);
   }
 
-  // Fetch sizes for this directory's files in parallel. Each resolve
-  // is try/caught inside `resolveShareUrlSize`, so a single failure
-  // just shows a blank size cell — the index still renders.
+  // Sizes in parallel. A sharing key already knows them from the listing;
+  // the manifest path has to ask the indexer, and swallows failures so a
+  // slow lookup shows a blank size cell rather than holding the page.
   const sizePairs = await Promise.all(files.map(async (f) => {
-    const shareUrl = manifest[dirPath + f];
-    return [f, shareUrl ? await resolveShareUrlSize(shareUrl) : null];
+    const ref = manifest[dirPath + f];
+    if (ref === undefined) return [f, null];
+    try {
+      return [f, await site.sizeOf(ref)];
+    } catch (_) {
+      return [f, null];
+    }
   }));
   const sizeByFile = new Map(sizePairs);
+
+  // Two different things are called "expiry" here, and they do not belong in
+  // the same place.
+  //
+  // A manifest site links each file by its own signed `sia://` URL, and those
+  // expire independently, so the date is per row.
+  //
+  // A key-backed site has no per-file expiry at all: access ends when the
+  // sharing key ends, one date for the whole link. Rendering that as a column
+  // produced a header over two blank cells, which reads as missing data rather
+  // than as "not applicable". So the column goes, and the key's own expiry is
+  // stated once in the header instead.
+  const perFileExpiry = site.kind !== 'sharing-key';
+  let linkExpiry;   // Date = expires then, null = never, undefined = unknown
+  if (!perFileExpiry && typeof site.keyExpiry === 'function') {
+    linkExpiry = await site.keyExpiry();
+  }
 
   const rows = [];
   // Column header so non-textual columns (Size, Expires) read as
   // labels rather than mystery numbers next to a filename.
   rows.push(
-    `<li class="header"><span class="name">Name</span><span class="size">Size</span><span class="expires">Expires</span></li>`,
+    `<li class="header"><span class="name">Name</span><span class="size">Size</span>${
+      perFileExpiry ? '<span class="expires">Expires</span>' : ''}</li>`,
   );
   if (dirPath) {
     rows.push(`<li class="up"><a href="../">..</a></li>`);
@@ -823,26 +1135,45 @@ async function renderAutoIndex(manifest, dirPath) {
     rows.push(`<li class="dir"><a href="${_esc(d)}">${_esc(d)}</a></li>`);
   }
   for (const f of files) {
-    // File link points at the manifest's share URL (not a relative
-    // path). The injected bridge script catches `sia://` hrefs and
-    // posts SIA_NAVIGATE to the parent, which navigates the Sialo tab
-    // — so the outer URL bar, back/forward, and tab state all update
-    // instead of the iframe navigating internally.
-    const shareUrl = manifest[dirPath + f];
-    const href = shareUrl || f;
+    // Where a file links to depends on the source. A key-backed site links
+    // relatively, so the click is served from inside the site. A manifest
+    // links to the published URL, which the injected bridge turns into a
+    // SIA_NAVIGATE to the parent, so the outer URL bar and tab history
+    // follow along instead of the iframe navigating on its own.
+    const ref = manifest[dirPath + f];
+    const href = site.hrefFor(f, ref);
     const size = sizeByFile.get(f);
     const sizeLabel = typeof size === 'number' ? _esc(formatSize(size)) : '';
-    const expiry = shareUrlExpiry(shareUrl);
-    const expiryLabel = expiry ? _esc(formatExpiry(expiry)) : '';
-    const expiryTitle = expiry ? _esc(`Share URL expires ${expiry.toUTCString()}`) : '';
-    const expiryClass = expiry && expiry.getTime() <= Date.now() ? 'expires expired' : 'expires';
+    let expiryCell = '';
+    if (perFileExpiry) {
+      const expiry = site.expiryOf(ref);
+      const expiryLabel = expiry ? _esc(formatExpiry(expiry)) : '';
+      const expiryTitle = expiry ? _esc(`Published URL expires ${expiry.toUTCString()}`) : '';
+      const expiryClass = expiry && expiry.getTime() <= Date.now() ? 'expires expired' : 'expires';
+      expiryCell = `<span class="${expiryClass}" title="${expiryTitle}">${expiryLabel}</span>`;
+    }
     rows.push(
-      `<li class="file"><a href="${_esc(href)}"><span class="name">${_esc(f)}</span><span class="size">${sizeLabel}</span><span class="${expiryClass}" title="${expiryTitle}">${expiryLabel}</span></a></li>`,
+      `<li class="file"><a href="${_esc(href)}"><span class="name">${_esc(f)}</span><span class="size">${sizeLabel}</span>${expiryCell}</a></li>`,
     );
   }
 
   const title = `Index of /${_esc(dirPath)}`;
   const count = files.length + subdirs.size;
+
+  // The subtitle carries the link's own expiry for a shared site. Saying
+  // nothing when the lookup failed is deliberate: a wrong date here is worse
+  // than no date, because the reader would plan around it.
+  let sub = `${count} entr${count === 1 ? 'y' : 'ies'}`;
+  if (!perFileExpiry) {
+    if (linkExpiry === null) {
+      sub += ' &middot; this link does not expire';
+    } else if (linkExpiry instanceof Date) {
+      const stamp = _esc(linkExpiry.toUTCString());
+      sub += linkExpiry.getTime() <= Date.now()
+        ? ` &middot; <span class="expired" title="${stamp}">this link has expired</span>`
+        : ` &middot; <span title="${stamp}">this link expires ${_esc(formatExpiry(linkExpiry))}</span>`;
+    }
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -869,6 +1200,7 @@ async function renderAutoIndex(manifest, dirPath) {
   .size { color: #6b7280; font-size: 0.8rem; font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
   .expires { color: #6b7280; font-size: 0.75rem; font-variant-numeric: tabular-nums; min-width: 5rem; text-align: right; }
   .expires.expired { color: #f87171; }
+  .sub .expired { color: #f87171; }
   li.header { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.5rem 0.4rem 1.65rem; color: #6b7280; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 1px solid #1e1e1e; }
   li.header .name, li.header .size, li.header .expires { color: #6b7280; font-size: 0.7rem; }
   footer { margin-top: 2rem; color: #4b5563; font-size: 0.75rem; text-align: center; }
@@ -878,7 +1210,7 @@ async function renderAutoIndex(manifest, dirPath) {
   <div class="wrap">
     <header>
       <h1>${title}</h1>
-      <div class="sub">${count} entr${count === 1 ? 'y' : 'ies'}</div>
+      <div class="sub">${sub}</div>
     </header>
     <ul>
       ${rows.join('\n      ')}
@@ -889,12 +1221,223 @@ async function renderAutoIndex(manifest, dirPath) {
 </html>`;
 }
 
+/**
+ * Loads a site and returns the source the rest of the module works
+ * against, whichever kind it is:
+ *
+ *   files    { path -> ref }   every file in the site
+ *   read     (ref) -> bytes    the file's contents
+ *   sizeOf   (ref) -> number   bytes, or null when not known yet
+ *   hrefFor  (path, ref)       what the auto-index links a file to
+ *   expiryOf (ref) -> Date     when the entry stops resolving, or null
+ *
+ * `siteId` is either a 64 hex character sharing-key seed or a legacy
+ * manifest reference (object ID or `sia://` published URL). A seed and a
+ * manifest object ID are both 64 hex characters and cannot be told apart
+ * by inspection, so a bare hex id is tried as a key first and falls back
+ * to a manifest when the indexer does not recognise it.
+ */
+async function getSite(siteId) {
+  const cached = siteCache.get(siteId);
+  if (cached) return cached;
+
+  let site = null;
+  let keyErr = null;
+  if (/^[0-9a-f]{64}$/i.test(siteId)) {
+    try {
+      site = await keySite(siteId.toLowerCase());
+    } catch (e) {
+      keyErr = e;
+      _dbgWarn('[sia-site] not a sharing key, trying as a manifest:', e.message || e);
+    }
+  }
+  if (!site) {
+    try {
+      site = await manifestSite(siteId);
+    } catch (e) {
+      // Both readings failed. The manifest path needs this account's own
+      // indexer credentials and says so, which is actively misleading when
+      // the user was following a sharing link — that needs no account at
+      // all. Report the sharing-key failure instead when there was one.
+      if (keyErr) {
+        throw new Error(
+          `Could not open this site as a sharing key: ${keyErr.message || keyErr}`,
+        );
+      }
+      // A published site resolves its files through the *viewer's* own
+      // indexer account — that is what publishing means. Someone who arrived
+      // via a sharing key has no account, and connectSdk's "set your Indexer
+      // URL and App Key" reads like a misconfiguration rather than the
+      // inherent difference between the two ways a site is handed out.
+      if (!getUrl() || !getKeyHex()) {
+        const err = new Error(
+          'This is a published site link, and opening one needs your own '
+          + 'indexer account: the viewer resolves the files, so it cannot be '
+          + 'read with a sharing key alone.',
+        );
+        // Flagged so whatever displays this can offer the fix as a button
+        // rather than only describing it. Registering is the answer far more
+        // often than editing settings, and telling someone to go find a page
+        // is worse than handing them a way there.
+        err.needsAccount = true;
+        throw err;
+      }
+      throw e;
+    }
+  }
+
+  siteCache.set(siteId, site);
+  _dbg('[sia-site] loaded', site.kind, 'site', String(siteId).slice(0, 16),
+       'files:', Object.keys(site.files).length);
+  return site;
+}
+
+/**
+ * A site backed by a sharing key. Connects as the key's recipient, so it
+ * works without an account on the indexer and streams through the owner's
+ * quota. Sizes come back with the listing, so the auto-index does not have
+ * to go looking for them the way the manifest path does.
+ */
+/**
+ * Where to read a shared site from when this browser has no indexer
+ * configured. A sharing key is a bearer credential: the recipient needs an
+ * indexer to *ask*, but no account and no app key of their own, so a link
+ * has to work in a browser that has never been set up. Mirrors the default
+ * in share.js, which serves the same purpose for the standalone page.
+ */
+export const DEFAULT_INDEXER = 'https://storage.sia.dev';
+
+/**
+ * Above this, a site file is streamed through /_sia-ext/ rather than served by
+ * value. The by-value path buffers the whole object before replying and its
+ * resolve is capped at 30s, so anything that cannot be fetched and held in
+ * that window has to stream. Well below the point where buffering gets slow,
+ * so the cheap path stays the common one.
+ */
+const STREAM_MIN_BYTES = 8 * 1024 * 1024;
+
+async function keySite(seed) {
+  // Prefer the configured indexer, but never require one: demanding setup
+  // here would defeat the point of handing someone a sharing link.
+  const indexer = getUrl() || DEFAULT_INDEXER;
+  const sdk = await SharedSdk.connect(indexer, seed);
+
+  const PAGE = 100;
+  const objects = [];
+  for (let offset = 0; ; offset += PAGE) {
+    const page = await sdk.objects(offset, PAGE);
+    objects.push(...page);
+    if (page.length < PAGE) break;
+  }
+
+  const files = {};
+  for (const obj of objects) {
+    // The object's filename is its path within the site. Uploads made
+    // outside the site flow carry a `<uuid>/` grouping prefix; the key
+    // already scopes these files, so drop it rather than making every
+    // path start with a UUID.
+    const name = filenameForDisplay(obj.metadata()) || '';
+    const path = stripUploadUuid(name).replace(/^\/+/, '');
+    if (!path) continue;
+    files[path] = obj;
+  }
+
+  return {
+    kind: 'sharing-key',
+    files,
+    // Exposed so the streaming route can reuse this connection. It is a
+    // SharedSdk built from the seed alone, which is the whole point: the
+    // holder of a sharing key has no account here, so anything serving their
+    // files must go through this rather than connectSdk.
+    sdk,
+    read: (obj) => withSdkRetry(() => readStreamFully(sdk.download(obj))),
+    sizeOf: (obj) => Number(obj.size()),
+    // Relative, so a click is handled inside the site and an index.html can
+    // link its neighbours with ordinary relative URLs. Large files are NOT
+    // linked at /_sia-ext/ directly: that would make it a top-level
+    // navigation, and the sandbox service worker keys that route off
+    // `e.clientId`, which is empty for a navigation request. It only works as
+    // a subresource. resolveSitePath serves a small page that embeds it
+    // instead — see renderStreamPage.
+    hrefFor: (path) => path,
+    /** The streaming URL for a path, for embedding as a subresource. */
+    streamHrefFor: (path) => '/_sia-ext/' + encodeURIComponent(siteUrl(seed, path)),
+    // A shared file has no expiry of its own: access ends when the key ends.
+    // The per-row column is therefore always blank here, which is why the
+    // auto-index drops it for this kind of site and shows `keyExpiry` once.
+    expiryOf: () => null,
+    /**
+     * When the sharing key itself stops granting access, or null when it never
+     * does. `undefined` means the lookup failed and nothing should be claimed.
+     *
+     * Swallows its own errors: this is one extra request made while rendering a
+     * listing, and a site that has already loaded must not fail to list because
+     * a stats call did.
+     */
+    keyExpiry: async () => {
+      try {
+        const stats = await sdk.stats();
+        return stats.expiresAt || null;
+      } catch (_) {
+        return undefined;
+      }
+    },
+  };
+}
+
+/**
+ * The files a site holds, flattened for callers that act on objects rather
+ * than render pages — pinning, in particular.
+ *
+ * `kind` says what each `ref` is: a `sharing-key` site hands back object
+ * handles the key already decrypted, while a `manifest` site hands back the
+ * published URL recorded for that path. Both are enough to pin from, but they
+ * need different treatment, so the kind travels with them.
+ *
+ * Shares `getSite`'s cache, so asking right after viewing a site costs nothing.
+ */
+export async function siteEntries(siteId) {
+  const site = await getSite(siteId);
+  return {
+    kind: site.kind,
+    entries: Object.keys(site.files).sort().map((path) => ({ path, ref: site.files[path] })),
+  };
+}
+
+/** A site backed by a legacy manifest object of `{ path -> publishUrl }`. */
+async function manifestSite(manifestId) {
+  const files = await getManifest(manifestId);
+  return {
+    kind: 'manifest',
+    files,
+    read: (publishUrl) => fetchObject(publishUrl),
+    sizeOf: (publishUrl) => resolvePublishUrlSize(publishUrl),
+    // Published URLs are absolute; the injected bridge turns a `sia://`
+    // href into a parent navigation so the outer tab tracks it.
+    hrefFor: (path, publishUrl) => publishUrl || path,
+    /**
+     * The streaming URL for a path, for embedding as a subresource. The
+     * manifest already holds a signed URL per file, and /_sia-ext/ has always
+     * carried exactly that, so this needs no new resolution machinery.
+     */
+    streamHrefFor: (path) => {
+      const url = files[path];
+      return url ? '/_sia-ext/' + encodeURIComponent(url) : null;
+    },
+    expiryOf: (publishUrl) => publishUrlExpiry(publishUrl),
+  };
+}
+
 async function fetchObject(objectId) {
   const cached = objectCache.get(objectId);
   if (cached) return cached;
   const data = await withSdkRetry(async () => {
     const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-    if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
+    if (!sdk) {
+      const e2 = new Error(getLastConnectError() || 'SDK not connected');
+      e2.needsAccount = true;
+      throw e2;
+    }
     const { obj } = await resolveObject(objectId, sdk);
     return await readStreamFully(sdk.download(obj));
   });
@@ -914,7 +1457,7 @@ const MANIFEST_TYPE = 'sia-site';
 const MANIFEST_VERSION = 1;
 
 /**
- * Wrap a `{ path -> shareUrl }` map in the versioned manifest envelope
+ * Wrap a `{ path -> publishUrl }` map in the versioned manifest envelope
  * produced by this client. Exposed so the CLI / other callers use the
  * same shape.
  */
@@ -924,7 +1467,7 @@ export function buildSiaSiteManifest(files) {
 
 /**
  * Parse and validate a v1 sia-site manifest. Returns the flat
- * `{ path -> shareUrl }` map the rest of the code works with.
+ * `{ path -> publishUrl }` map the rest of the code works with.
  */
 function parseManifest(data) {
   let m;
@@ -948,7 +1491,7 @@ function parseManifest(data) {
   }
   for (const [k, v] of Object.entries(m.files)) {
     if (typeof v !== 'string' || !v.startsWith('sia://')) {
-      throw new Error(`manifest entry \`${k}\` is not a sia:// share URL`);
+      throw new Error(`manifest entry \`${k}\` is not a sia:// published URL`);
     }
   }
   return m.files;
@@ -959,7 +1502,11 @@ async function getManifest(manifestId) {
   if (cached) return cached;
   const data = await withSdkRetry(async () => {
     const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
-    if (!sdk) throw new Error(getLastConnectError() || 'SDK not connected');
+    if (!sdk) {
+      const e2 = new Error(getLastConnectError() || 'SDK not connected');
+      e2.needsAccount = true;
+      throw e2;
+    }
     const { obj } = await resolveObject(manifestId, sdk);
     return await readStreamFully(sdk.download(obj));
   });
@@ -985,8 +1532,124 @@ async function readStreamFully(stream) {
   return out;
 }
 
+// Reports scroll direction from inside a site back to the app, so the app
+// can slide its address bar out of the way while the reader scrolls down.
+//
+// This is inlined into the page rather than added to the bridge file because
+// the bridge is served by the sandbox origin, which is deployed separately
+// from this app; inlining keeps the behaviour shipping with the code that
+// consumes it. Direction and hysteresis are decided here so a scroll only
+// costs a postMessage when the desired state actually flips, rather than on
+// every frame of a long scroll.
+const SCROLL_REPORTER = [
+  '(function(){',
+  'var last=0,hidden=false,ticking=false;',
+  'function pos(){var e=document.scrollingElement||document.documentElement;return e?e.scrollTop:0;}',
+  'function update(){',
+  'ticking=false;',
+  'var cur=pos(),want=hidden;',
+  // Near the top always show, so a short page can never strand the bar
+  // offscreen. The 6px deadzone keeps trackpad jitter from flapping it.
+  'if(cur<=8){want=false;}',
+  'else if(cur>last+6){want=true;}',
+  'else if(cur<last-6){want=false;}',
+  'else{return;}',
+  'last=cur;',
+  'if(want!==hidden){hidden=want;',
+  "try{parent.postMessage({type:'sia-scroll-chrome',hidden:hidden},'*');}catch(e){}}",
+  '}',
+  "addEventListener('scroll',function(){if(!ticking){ticking=true;requestAnimationFrame(update);}},{passive:true});",
+  '})();',
+].join('');
+
+/**
+ * A standalone page for a file too large to serve by value.
+ *
+ * Media gets a player, everything else a download link. Either way the actual
+ * bytes come from `href` (a /_sia-ext/ URL) as a **subresource**, which is the
+ * only form the sandbox service worker can serve: it resolves that route via
+ * `e.clientId`, and a navigation request has no client. That is why the file
+ * is not linked there directly.
+ */
+/**
+ * Detects a file whose audio decodes but whose video does not.
+ *
+ * The give-away is metadata loading successfully with `videoWidth === 0`: the
+ * container and audio track were understood, the video track was not. That is
+ * what an Ogg/Theora file does in any current browser — Chrome dropped Theora
+ * in 123 — and it presents as a player that emits sound over a blank frame,
+ * which reads as a broken app rather than an unsupported codec.
+ *
+ * Checked by observation rather than a codec table, so it catches anything
+ * undecodable, not just the cases anyone thought to list.
+ */
+const NO_VIDEO_TRACK_PROBE = [
+  '(function(){',
+  "var v=document.getElementById('p'),n=document.getElementById('novid');",
+  'if(!v||!n)return;',
+  'function check(){',
+  'if(v.readyState<1)return;',
+  'if(v.videoWidth>0){n.hidden=true;return;}',
+  'n.hidden=false;',
+  "n.textContent='This file\\u2019s audio plays but its video cannot be decoded by this "
+    + "browser \\u2014 an .ogv is almost always Theora, which Chrome removed in version 123. "
+    + "Re-encode to MP4 (H.264 + AAC) or WebM (VP9 + Opus) to make it playable.';",
+  '}',
+  "v.addEventListener('loadedmetadata',check);",
+  "v.addEventListener('loadeddata',check);",
+  "v.addEventListener('playing',check);",
+  '})();',
+].join('');
+
+function renderStreamPage(name, href, size, type) {
+  const kind = type.startsWith('video/') ? 'video'
+    : type.startsWith('audio/') ? 'audio'
+    : type.startsWith('image/') ? 'image'
+    : 'file';
+  const player = kind === 'video'
+    ? `<video id="p" controls playsinline preload="metadata" src="${_esc(href)}"></video>`
+      + '<div id="novid" class="novid" hidden></div>'
+      + '<scr' + 'ipt>' + NO_VIDEO_TRACK_PROBE + '</scr' + 'ipt>'
+    : kind === 'audio'
+      ? `<audio controls preload="metadata" src="${_esc(href)}"></audio>`
+      : kind === 'image'
+        ? `<img src="${_esc(href)}" alt="${_esc(name)}">`
+        : '';
+  return `<!doctype html><html><head><meta charset="utf-8">
+<title>${_esc(name)}</title>
+<style>
+  html,body{margin:0;background:#0a0a0a;color:#e2e8f0;
+    font-family:system-ui,-apple-system,sans-serif;height:100%}
+  body{display:flex;flex-direction:column}
+  header{padding:.7rem 1rem;border-bottom:1px solid #222;display:flex;
+    align-items:baseline;gap:.6rem;flex-wrap:wrap}
+  h1{margin:0;font-size:.95rem;font-weight:600;word-break:break-all}
+  .size{color:#7a8390;font-size:.8rem}
+  main{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:0;padding:1rem}
+  video,audio,img{max-width:100%;max-height:100%}
+  audio{width:min(560px,100%)}
+  a.dl{color:#4ade80;font-size:.9rem}
+  .novid{margin-top:1rem;max-width:52ch;padding:.8rem 1rem;border-radius:8px;
+    border:1px solid rgba(234,179,8,.4);background:rgba(234,179,8,.08);
+    color:#d9c07a;font-size:.85rem;line-height:1.5;text-align:left}
+  p.note{color:#7a8390;font-size:.8rem;max-width:52ch;line-height:1.5;
+    text-align:center}
+</style></head><body>
+<header>
+  <h1>${_esc(name)}</h1><span class="size">${_esc(formatSize(size))}</span>
+  <a class="dl" href="${_esc(href)}" download="${_esc(name)}"
+     style="margin-left:auto">Download</a>
+</header>
+<main>${player || `<p class="note">This file is ${_esc(formatSize(size))}, too large to
+  render inline. Use Download above — it streams rather than loading the whole
+  file into memory.</p>`}</main>
+</body></html>`;
+}
+
 function injectBridge(html) {
-  const tag = '<script src="/_sia-bridge.js"></' + 'script>';
+  const tag = '<script src="/_sia-bridge.js"></' + 'script>'
+    + '<script>' + SCROLL_REPORTER + '</' + 'script>';
   // Prefer to inject right after <head> so the bridge initialises before
   // any page scripts make their own fetches.
   const m = html.match(/<head[^>]*>/i);
@@ -1039,12 +1702,12 @@ const SITE_LOADING_HTML =
   'align-items:center;justify-content:center;height:100%;font-size:0.9rem;}' +
   '</style><body>Loading site…';
 
-export function loadSite(iframeEl, manifestId, subpath) {
+export function loadSite(iframeEl, siteId, subpath) {
   if (!iframeEl) throw new Error('iframe required');
-  if (!manifestId) throw new Error('manifestId required');
+  if (!siteId) throw new Error('siteId required');
   if (!handlerInstalled) initSiaSiteHandler();
 
-  iframeManifests.set(iframeEl, manifestId);
+  iframeSites.set(iframeEl, siteId);
   handshaken.delete(iframeEl);
 
   // SWs require same-origin context; isolation comes from the separate
@@ -1081,7 +1744,7 @@ export function loadSite(iframeEl, manifestId, subpath) {
  * history via postMessage rather than reloading a new URL.
  */
 export function isSiaSiteIframe(iframeEl) {
-  return !!(iframeEl && iframeManifests.has(iframeEl));
+  return !!(iframeEl && iframeSites.has(iframeEl));
 }
 
 /**
@@ -1111,14 +1774,20 @@ export function siaForward(iframeEl) {
  */
 export function unloadSite(iframeEl) {
   if (!iframeEl) return;
-  iframeManifests.delete(iframeEl);
+  iframeSites.delete(iframeEl);
   handshaken.delete(iframeEl);
 }
 
 /**
- * Upload a set of files as a Sia site. Each file is uploaded
- * individually, then a JSON manifest mapping paths to object IDs is
- * uploaded and returned.
+ * Uploads a set of files as a Sia site and returns its manifest.
+ *
+ * This is the publishing path: each file is uploaded and pinned, then a
+ * JSON manifest mapping paths to signed `sia://` published URLs is uploaded
+ * and its id returned. The manifest is portable — any account can resolve
+ * it — and the URLs stop working when their signatures expire.
+ *
+ * To hand the same files out as a revocable credential instead, attach them
+ * to a sharing key; `keySite` in this module loads a site that way.
  *
  *   await uploadSite(sdk, [
  *     { path: 'index.html', data: htmlBytes },
@@ -1128,10 +1797,11 @@ export function unloadSite(iframeEl) {
  */
 export async function uploadSite(sdk, files) {
   const manifest = {};
-  const validUntil = new Date(Date.now() + SITE_SHARE_VALIDITY_MS);
-  // UUID-prefix every object's filename metadata so all artifacts
-  // from a single publish session group together alphabetically in
-  // My Objects. Site Builder strips the prefix when re-using them.
+  const validUntil = new Date(Date.now() + SITE_PUBLISH_VALIDITY_MS);
+  // UUID-prefix every object's filename metadata so all artifacts from a
+  // single publish session group together alphabetically in My Objects.
+  // Site Builder strips the prefix when re-using them, and so does the
+  // key-backed site loader.
   const uploadId = crypto.randomUUID();
   for (const { path, data } of files) {
     const raw = data instanceof Uint8Array ? data : new Uint8Array(data);
@@ -1145,12 +1815,73 @@ export async function uploadSite(sdk, files) {
   const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
   const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
   const manifestPinned = new PinnedObject();
-  manifestPinned.updateMetadata(
-    encodeMetadata({ filename: `${uploadId}/manifest.json` }),
-  );
+  manifestPinned.updateMetadata(encodeMetadata({ filename: `${uploadId}/manifest.json` }));
   const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
   await sdk.pinObject(manifestObj);
   const manifestId = manifestObj.id();
   _dbg('[sia-site] manifest', manifestId);
   return { manifestId, manifest };
+}
+
+/** The `sialo://` address for a key-backed site, optionally at a path. */
+export function siteUrl(seed, path) {
+  const rest = (path || '').replace(/^\/+/, '');
+  return `sialo://${seed}/${rest}`;
+}
+
+/**
+ * Fragment parameter carrying a whole published `sialo://` address, so a
+ * published site can be handed out as an ordinary app link that loads on open
+ * — the counterpart to a sharing key's `#sharing_key=…&site=1` link.
+ *
+ * The address is percent-encoded because a published URL carries its own
+ * `#encryption_key=` fragment and has to nest inside this one. As with a
+ * sharing-key link, everything sensitive stays in the fragment, which
+ * browsers never send to a server.
+ */
+export const SITE_URL_PARAM = 'site_url';
+
+/** The fragment for a published-site link, without the leading `#`. */
+export function publishedSiteFragment(siaSiteUrl) {
+  return `${SITE_URL_PARAM}=${encodeURIComponent(siaSiteUrl)}`;
+}
+
+/**
+ * A link that loads a published site directly. Points at the app rather than
+ * share.html, because rendering a site needs the sandboxed iframe that only
+ * the app has.
+ */
+export function publishedSiteLink(siaSiteUrl, base) {
+  const page = (base || new URL('.', location.href).href).replace(/#.*$/, '');
+  return `${page}#${publishedSiteFragment(siaSiteUrl)}`;
+}
+
+/**
+ * Reads a published-site link's fragment. Accepts it with or without the
+ * leading `#`, so `location.hash` can be passed straight in. Returns null
+ * when the fragment does not carry one, which is the common case.
+ *
+ * The address is checked to be `sialo://` before it is returned: this
+ * value drives a navigation, so anything else — a `javascript:` or `http:`
+ * URL smuggled into the fragment — must not be handed onward.
+ */
+export function parsePublishedSiteFragment(fragment) {
+  if (!fragment) return null;
+  const params = new URLSearchParams(String(fragment).replace(/^#/, ''));
+  const url = (params.get(SITE_URL_PARAM) || '').trim();
+  // Shape, not just scheme: `sialo://settings` passes a scheme test and would
+  // open an internal panel from a crafted link.
+  if (!isSiteAddress(url)) return null;
+  return { url };
+}
+
+/**
+ * Splits a `sialo://` address into the site and the path inside it.
+ * Returns null when the input is not one.
+ */
+export function parseSiteUrl(url) {
+  if (typeof url !== 'string') return null;
+  const m = url.match(/^sialo:\/\/([^/?#]+)(\/[^?#]*)?/i);
+  if (!m) return null;
+  return { siteId: m[1], path: m[2] || '/' };
 }

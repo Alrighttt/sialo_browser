@@ -1,0 +1,253 @@
+// The recipient half of sharing keys: read-only access to the objects a key
+// grants, paid for by whoever owns the key.
+//
+// A recipient holds only the key's seed. `SharedSdk` authenticates with it
+// instead of an app key, so this panel works without an account on the
+// indexer and cannot upload, pin, or delete.
+//
+// The indexer URL comes from this app's own configuration, never from the
+// link. A link is an untrusted string; letting it name the server would let a
+// hostile one point the SDK wherever it liked.
+
+import { _esc, _dbg, formatSize } from './utils.js';
+import { getUrl } from './config.js';
+import { SharedSdk } from './pkg/sia_storage_wasm.js';
+import { streamingDownload } from './download.js';
+import {
+  filenameForSave, filenameForDisplay, stripUploadUuid,
+} from './object-metadata.js';
+import { parseShareFragment } from './sharing-keys.js';
+import { siteUrl, parsePublishedSiteFragment, DEFAULT_INDEXER } from './sia-site.js';
+import { tabStatusProxy, getActiveTab, openOrActivateInternalTab } from './tabs.js';
+import { isAccountError, showAccountPrompt } from './page-gate.js';
+
+function panelStatus() {
+  return tabStatusProxy(getActiveTab()).status;
+}
+
+const num = (v) => (typeof v === 'bigint' ? Number(v) : (v || 0));
+
+/**
+ * Navigates the active browser tab to a `sialo://` address, the same way
+ * typing one into the chrome bar would. Goes through the address bar rather
+ * than calling the loader directly so the tab's URL, label and history all
+ * end up consistent.
+ */
+function openSiteTab(url) {
+  const bar = document.getElementById('chrome-address-bar');
+  if (bar) bar.value = url;
+  if (typeof window.handleChromeBarNavigation === 'function') {
+    window.handleChromeBarNavigation();
+  } else if (typeof window.viewObjectById === 'function') {
+    window.viewObjectById(url);
+  }
+}
+
+export function initSharedUI() {
+  const seedEl = () => document.getElementById('sh-seed');
+  const listEl = () => document.getElementById('sh-list');
+  const statsEl = () => document.getElementById('sh-stats');
+  const progressEl = () => document.getElementById('sh-progress');
+
+  // Held so downloads reuse one connection rather than reconnecting per file.
+  // Keyed by indexer as well as seed: changing the indexer in Settings has to
+  // reconnect, or the panel keeps serving results from the previous one.
+  let connected = null; // { sdk, seed, indexer }
+
+  async function connect(seed) {
+    // A sharing link never carries an indexer, and its holder is not required
+    // to have an account here — so fall back to the default rather than
+    // demanding setup before they can open what they were sent.
+    const indexer = getUrl() || DEFAULT_INDEXER;
+    if (connected && connected.seed === seed && connected.indexer === indexer) return connected.sdk;
+    const sdk = await SharedSdk.connect(indexer, seed);
+    connected = { sdk, seed, indexer };
+    return sdk;
+  }
+
+  async function open(seed, highlightId) {
+    const status = panelStatus();
+    const list = listEl();
+    list.innerHTML = '<div style="padding:1rem; color:#888;">Connecting…</div>';
+    statsEl().textContent = '';
+    let sdk;
+    try {
+      sdk = await connect(seed);
+    } catch (e) {
+      list.innerHTML = `<div style="padding:1rem; color:#f87171;">${_esc(e.message || e)}</div>`;
+      status.innerHTML = `<span class="fail">${_esc(e.message || e)}</span>`;
+      return;
+    }
+
+    try {
+      const stats = await sdk.stats();
+      const expires = stats.expiresAt ? stats.expiresAt.toLocaleString() : 'never';
+      statsEl().textContent =
+        `${num(stats.objectCount)} object(s) · ${formatSize(num(stats.objectSize))} · expires ${expires}`;
+    } catch (e) {
+      // Stats are decoration; a failure here should not stop the listing.
+      _dbg('[shared] stats failed:', e);
+    }
+
+    list.innerHTML = '<div style="padding:1rem; color:#888;">Loading objects…</div>';
+    let objects;
+    try {
+      const PAGE = 100;
+      objects = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const page = await sdk.objects(offset, PAGE);
+        objects.push(...page);
+        if (page.length < PAGE) break;
+      }
+    } catch (e) {
+      list.innerHTML = `<div style="padding:1rem; color:#f87171;">Could not list shared objects: ${_esc(e.message || e)}</div>`;
+      return;
+    }
+
+    if (!objects.length) {
+      list.innerHTML = '<div style="padding:1rem; color:#888;">This key has no objects attached.</div>';
+      status.innerHTML = '<span style="color:#888;">Nothing shared</span>';
+      return;
+    }
+
+    list.innerHTML = '';
+
+    // A key holding a root index.html is a website, not a pile of files. The
+    // listing can still be useful, so this offers the site view rather than
+    // forcing it — but without the offer there is no way to discover that the
+    // share renders at all.
+    const hasIndex = objects.some((obj) => {
+      const p = stripUploadUuid(filenameForDisplay(obj.metadata()) || '');
+      return /^index\.x?html?$/i.test(p);
+    });
+    if (hasIndex && seed) {
+      const banner = document.createElement('div');
+      banner.className = 'sh-site-banner';
+      banner.innerHTML =
+        '<div><strong>This share is a website.</strong> You are looking at its files.</div>'
+        + '<button type="button" class="sh-site-open btn-share">Open as a site</button>';
+      banner.querySelector('.sh-site-open')
+        .addEventListener('click', () => openSiteTab(siteUrl(seed, '')));
+      list.appendChild(banner);
+    }
+
+    for (const obj of objects) {
+      list.appendChild(renderObject(sdk, obj, obj.id() === highlightId, seed));
+    }
+    status.innerHTML = `<span class="pass">✓ ${objects.length} shared object${objects.length !== 1 ? 's' : ''}</span>`;
+  }
+
+/** Extensions the app can render in a tab rather than only save to disk. */
+const VIEWABLE = /\.(?:x?html?|txt|md|json|css|js|png|jpe?g|gif|webp|avif|svg|ico|pdf|mp4|m4v|webm|mov|mp3|m4a|wav|ogg|flac)$/i;
+
+function renderObject(sdk, obj, highlight, seed) {
+    const id = obj.id();
+    const metadata = obj.metadata();
+    const full = filenameForDisplay(metadata) || id.slice(0, 16);
+    // The per-upload grouping prefix is the owner's filing system, noise to a
+    // recipient, and not part of the path the site loader resolves.
+    const name = stripUploadUuid(full) || full;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex; justify-content:space-between; gap:1rem; align-items:center; padding:0.6rem 1rem; border-bottom:1px solid #222;'
+      + (highlight ? ' background:#0d1f17;' : '');
+    // Anything the app can render opens in a tab rather than only downloading.
+    // The address is the object's path inside this key's namespace, which the
+    // site machinery already resolves through the SharedSdk — so a video
+    // streams with seeking and an HTML file renders in the sandboxed iframe,
+    // with no account needed.
+    const canOpen = !!seed && VIEWABLE.test(name);
+    row.innerHTML = `
+      <div style="min-width:0; flex:1;">
+        <div class="sh-name${canOpen ? ' sh-name--open' : ''}"
+          title="${_esc(full)}${canOpen ? ' — click to open' : ''}">${_esc(name)}</div>
+        <div style="font-size:0.8rem; color:#666; font-family:monospace;">${_esc(id.slice(0, 8))}…${_esc(id.slice(-8))} · ${_esc(formatSize(obj.size()))}</div>
+      </div>
+      ${canOpen ? '<button data-act="open" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#059669; color:white; flex-shrink:0;">Open</button>' : ''}
+      <button data-act="download" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#3b82f6; color:white; flex-shrink:0;">Download</button>
+    `;
+    if (canOpen) {
+      const open = () => openSiteTab(siteUrl(seed, name));
+      row.querySelector('[data-act="open"]').addEventListener('click', open);
+      row.querySelector('.sh-name').addEventListener('click', open);
+    }
+    row.querySelector('[data-act="download"]').addEventListener('click', async (e) => {
+      const button = e.target;
+      const original = button.textContent;
+      button.disabled = true;
+      try {
+        const status = panelStatus();
+        const { blob } = await streamingDownload(sdk, obj, status, progressEl(), `Downloading ${name}`);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filenameForSave(metadata) || id.slice(0, 16);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        status.innerHTML = `<span class="pass">✓ Saved ${_esc(name)}</span>`;
+      } catch (err) {
+        alert(`Download failed: ${err.message || err}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = original;
+        progressEl().style.display = 'none';
+      }
+    });
+    return row;
+  }
+
+  document.getElementById('sh-open').addEventListener('click', () => {
+    const seed = seedEl().value.trim().replace(/^.*[#&]sharing_key=/, '').replace(/&.*$/, '');
+    if (!/^[0-9a-f]{64}$/i.test(seed)) {
+      alert('Paste a sharing link, or the key seed as 64 hex characters.');
+      return;
+    }
+    seedEl().value = seed;
+    open(seed, null);
+  });
+
+  // A link opened in this app arrives as a fragment, and it is left in the
+  // address bar.
+  //
+  // It used to be stripped, on the reasoning that a credential should not
+  // linger in the URL. That cost more than it bought: the tab stopped
+  // behaving like a tab. Reload lost the site, the link could not be copied
+  // back out of the browser's own address bar, and there was no history entry
+  // to return to — for a link whose entire purpose is to be held and passed
+  // on. A fragment is never sent to a server, and the holder was handed it
+  // deliberately, so keeping it visible reveals nothing they do not have.
+  //
+  // Two shapes reach here: a published site, addressed by a signed URL, and a
+  // key-backed one. They are mutually exclusive, and the published form needs
+  // no account at all, so it is checked first.
+  // Entered from share.html's listing? Offer a way back to it. Recorded before
+  // anything else consumes the fragment.
+  try {
+    const params = new URLSearchParams(location.hash.replace(/^#/, ''));
+    const seed = (params.get('sharing_key') || '').trim();
+    const link = document.getElementById('chrome-back-to-list');
+    if (link && params.get('from') === 'list' && /^[0-9a-f]{64}$/i.test(seed)) {
+      const page = new URL('share.html', location.href).href;
+      link.href = `${page}#sharing_key=${encodeURIComponent(seed)}`;
+      link.style.display = '';
+    }
+  } catch (_) { /* nothing to offer */ }
+
+  const publishedSite = parsePublishedSiteFragment(location.hash);
+  if (publishedSite) {
+    openSiteTab(publishedSite.url);
+    return;
+  }
+
+  const fromFragment = parseShareFragment(location.hash);
+  if (fromFragment) {
+    if (fromFragment.site) {
+      // A site link renders in a browser tab through the sandboxed iframe,
+      // not in this panel. Everything the tab needs is in the address, so
+      // hand it over and let the normal site path take it from here.
+      openSiteTab(siteUrl(fromFragment.seed, fromFragment.path));
+    } else {
+      openOrActivateInternalTab('shared');
+      seedEl().value = fromFragment.seed;
+      open(fromFragment.seed, fromFragment.objectId);
+    }
+  }
+}

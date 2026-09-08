@@ -40,6 +40,10 @@
           Site</button>
         <button class="gear-menu-item" data-panel="download"><span class="gear-menu-icon">&#128229;</span>
           Download</button>
+        <button class="gear-menu-item" data-panel="sharing"><span class="gear-menu-icon">&#128273;</span> Sharing
+          Keys</button>
+        <button class="gear-menu-item" data-panel="shared"><span class="gear-menu-icon">&#129309;</span> Shared With
+          Me</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">Blockchain</div>
         <button class="gear-menu-item" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span>
@@ -638,6 +642,86 @@
           </div><!-- /panel-section: Download -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-download -->
+
+      <!-- Panel: Sharing Keys -->
+      <div id="panel-sharing" class="viewport-panel internal-page" data-panel="sharing">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Sharing Keys</h2>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:1rem;">
+              A sharing key is a credential you hand to someone else. It covers every object you attach
+              to it, you can revoke it at any time, and downloads through it are billed to your account.
+              A published URL, by contrast, covers one object, expires with its signature, and cannot be
+              withdrawn once sent.
+            </p>
+
+            <div class="label">Description</div>
+            <input id="sk-description" type="text" placeholder="e.g. holiday photos for Sam" style="margin-bottom:0.5rem" />
+            <div class="label">Expires in</div>
+            <div class="row" style="align-items:center;">
+              <input id="sk-duration" type="number" value="30" min="1" style="width:6rem;" />
+              <select id="sk-unit" style="background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;">
+                <option value="3600000">hours</option>
+                <option value="86400000" selected>days</option>
+                <option value="604800000">weeks</option>
+                <option value="31536000000">years</option>
+                <option value="0">never</option>
+              </select>
+              <button id="sk-create" style="background:#059669; color:white;">Create key</button>
+            </div>
+
+            <div class="row" style="align-items:center; gap:0.75rem; margin-top:1rem;">
+              <button id="sk-refresh">Refresh</button>
+              <button id="sk-import" title="Rebuild a recipient link from a seed created elsewhere, such as by the sialo CLI">Import seed…</button>
+            </div>
+
+            <div id="sk-list" style="margin-top:1rem; max-height:60vh; overflow-y:auto; border:1px solid #222; border-radius:6px;">
+              <div style="padding:1rem; color:#888;">Press Refresh to load your sharing keys.</div>
+            </div>
+          </div><!-- /panel-section: Sharing Keys -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-sharing -->
+
+      <!-- Panel: Shared With Me -->
+      <div id="panel-shared" class="viewport-panel internal-page" data-panel="shared">
+        <div class="internal-page-content">
+          <div class="panel-section">
+            <h2>Shared With Me</h2>
+            <p style="color:#999; font-size:0.85rem; margin-bottom:1rem;">
+              Open a sharing link someone sent you, or paste its seed. Downloads are billed to the
+              key's owner, not to you. The indexer is taken from your own Settings, never from the
+              link.
+            </p>
+
+            <div class="label">Sharing link or seed</div>
+            <div class="row">
+              <input id="sh-seed" type="text" placeholder="Paste a sharing link, or the key seed as 64 hex characters" />
+              <button id="sh-open" style="background:#3b82f6; color:white;">Open</button>
+            </div>
+            <div id="sh-stats" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
+            <progress id="sh-progress" max="100" value="0" style="display:none; width:100%; height:6px; margin-top:0.5rem;"></progress>
+
+            <div id="sh-list" style="margin-top:1rem; max-height:60vh; overflow-y:auto; border:1px solid #222; border-radius:6px;">
+              <div style="padding:1rem; color:#888;">Nothing open yet.</div>
+            </div>
+
+            <!-- Shown to everyone on this page, who by definition arrived on
+                 someone else's key and may have no account of their own.
+                 Registering is the only route from consuming a share to
+                 storing anything, so it is stated once, plainly, rather than
+                 left to be discovered. -->
+            <div class="sh-signup">
+              <div>
+                <strong>Storing your own files takes an account.</strong>
+                Reading a share costs you nothing &mdash; downloads here are paid for by
+                whoever owns the key. Uploading, publishing and sharing your own content
+                needs an indexer account of your own.
+              </div>
+              <button type="button" data-sialo-action="register" class="btn-share">Register / Log In</button>
+            </div>
+          </div><!-- /panel-section: Shared With Me -->
+        </div><!-- /internal-page-content -->
+      </div><!-- /panel-shared -->
 
       <!-- Panel: My Objects -->
       <div id="panel-objects" class="viewport-panel internal-page" data-panel="objects">

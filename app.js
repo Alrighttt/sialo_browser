@@ -44,6 +44,8 @@ import { initUploadUI } from './upload-ui.js';
 import { initUploadSiteUI } from './upload-site-ui.js';
 import { initUpdateSiteUI } from './update-site-ui.js';
 import { initObjectsUI } from './objects-ui.js';
+import { initSharingKeysUI } from './sharing-keys.js';
+import { initSharedUI } from './shared-ui.js';
 import { initPageGate } from './page-gate.js';
 import { initAccountUI } from './account-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
@@ -1098,6 +1100,13 @@ initDownloadUI();
 
 // Objects list, share, view, delete, info → objects-ui.js
 initObjectsUI();
+
+// Sharing keys, owner side → sharing-keys.js
+initSharingKeysUI();
+
+// Sharing keys, recipient side → shared-ui.js. Runs last of the two because
+// it may open its own panel when the page was loaded from a sharing link.
+initSharedUI();
 
 // Browser module → browser.js
 

@@ -19,6 +19,8 @@ export const PANEL_URLS = {
   'wallet':      'sialo://wallet',
   'syncer-config': 'sialo://syncer',
   'manifest':      'sialo://manifest',
+  'sharing':       'sialo://sharing',
+  'shared':        'sialo://shared',
 };
 export const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([k, v]) => [v, k]));
 
@@ -27,6 +29,7 @@ export const PANEL_TITLES = {
   'upload-text': 'Upload Text', 'upload-site': 'Upload Site', 'download': 'Download', 'objects': 'My Objects',
   'history': 'History', 'explorer': 'Explorer',
   'wallet': 'Wallet', 'manifest': 'Manifest', 'syncer-config': 'Syncer',
+  'sharing': 'Sharing Keys', 'shared': 'Shared With Me',
 };
 
 // ── Shared state ──

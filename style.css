@@ -1343,6 +1343,37 @@ progress::-moz-progress-bar {
 .status-action[data-sialo-action="settings"] { background: #2563eb; }
 .status-action[data-sialo-action="settings"]:hover { background: #3b82f6; }
 
+/* Shared-panel file name. Clickable when the app can render the file. */
+.sh-name {
+  color: #e0e0e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sh-name--open { cursor: pointer; }
+.sh-name--open:hover { color: #6ee7b7; text-decoration: underline; }
+
+/* Shared panel: the one place a reader with no account reliably lands, so the
+   route to having one is stated here rather than left to be discovered. */
+.sh-signup {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-top: 1rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  background: rgba(16, 185, 129, 0.06);
+  border-radius: 8px;
+  color: #8a929c;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+.sh-signup strong { color: #d7f5e6; }
+.sh-signup > div { flex: 1 1 24rem; min-width: 0; }
+.sh-signup > button { flex: 0 0 auto; padding: 0.45rem 1rem; font-weight: 600; }
+
 /* ---- Account-required prompt -----------------------------------------
    Covers the viewport when a tab's content cannot load without an indexer
    account. Deliberately unmissable: the failure it replaces rendered as
@@ -1383,3 +1414,20 @@ progress::-moz-progress-bar {
   line-height: 1.55;
   margin: 0 0 1.2rem 0;
 }
+
+/* Offered at the top of a shared file listing when the key holds a root
+   index.html — otherwise there is nothing to reveal that the share renders. */
+.sh-site-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #222;
+  background: rgba(16, 185, 129, 0.07);
+  color: #d7f5e6;
+  font-size: 0.9rem;
+}
+.sh-site-banner > div { flex: 1 1 18rem; min-width: 0; }
+.sh-site-banner > button { flex: 0 0 auto; padding: 0.4rem 0.9rem; font-weight: 600; }

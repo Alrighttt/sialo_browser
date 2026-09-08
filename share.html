@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; connect-src 'self' blob: https: http:; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none';">
+  <title>Shared files</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0; padding: 2rem 1rem; background: #0a0a0a; color: #e0e0e0;
+      font-family: system-ui, -apple-system, sans-serif; line-height: 1.5;
+    }
+    main { max-width: 46rem; margin: 0 auto; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem 0; }
+    .sub { color: #888; font-size: 0.9rem; margin: 0 0 1.5rem 0; }
+    .card { border: 1px solid #222; border-radius: 8px; overflow: hidden; }
+    .row {
+      display: flex; justify-content: space-between; align-items: center; gap: 1rem;
+      padding: 0.7rem 1rem; border-bottom: 1px solid #222;
+    }
+    .row:last-child { border-bottom: none; }
+    .name { color: #e0e0e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { font-size: 0.8rem; color: #666; font-family: ui-monospace, monospace; }
+    .note { padding: 1rem; color: #888; }
+    .err { padding: 1rem; color: #f87171; }
+    button {
+      background: #3b82f6; color: white; border: none; border-radius: 4px;
+      padding: 0.4rem 0.8rem; font-size: 0.9rem; cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    input {
+      background: #0a0a0a; color: #e0e0e0; border: 1px solid #333;
+      border-radius: 4px; padding: 0.5rem; font-size: 0.95rem; width: 100%; box-sizing: border-box;
+    }
+    label { display: block; color: #888; font-size: 0.85rem; margin: 0 0 0.25rem 0; }
+    .field { margin-bottom: 0.75rem; }
+    progress { width: 100%; height: 6px; margin-top: 0.75rem; }
+    footer { color: #555; font-size: 0.8rem; margin-top: 2rem; }
+    .site-banner {
+      display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+      justify-content: space-between;
+      padding: 0.85rem 1rem; margin-bottom: 0.75rem;
+      border: 1px solid rgba(16,185,129,0.4);
+      background: rgba(16,185,129,0.08);
+      border-radius: 8px; font-size: 0.9rem; color: #d7f5e6;
+    }
+    .site-banner-open {
+      padding: 0.4rem 0.9rem; border-radius: 6px;
+      background: #059669; color: #fff; text-decoration: none;
+      font-weight: 600; font-size: 0.85rem; white-space: nowrap;
+    }
+    .site-banner-open:hover { background: #10b981; }
+</style>
+
+  <!-- Hand off to the app before anything else loads.
+       This page can list a share and nothing more: no sandboxed iframe, so it
+       cannot render an HTML file or stream a video, and no route to an
+       account. The app's Shared panel does all three, in a tab. Links that
+       still point here — handed out before this changed, or typed — are
+       forwarded rather than served the lesser version.
+       Inline and ahead of the module so the WASM load is never paid for a
+       page we are leaving, and `replace` so Back does not bounce between the
+       two. Falls through to the standalone listing if the fragment carries no
+       usable key. -->
+  <script>
+    (function () {
+      try {
+        var p = new URLSearchParams(location.hash.replace(/^#/, ''));
+        var raw = (p.get('sharing_key') || '').trim();
+        // A whole link may have been pasted in; take the seed out of it.
+        var m = raw.match(/[#&]sharing_key=([0-9a-fA-F]{64})/);
+        var seed = m ? m[1] : raw;
+        if (!/^[0-9a-fA-F]{64}$/.test(seed)) return;
+        var frag = 'sharing_key=' + seed.toLowerCase();
+        var obj = (p.get('object') || '').trim();
+        if (/^[0-9a-fA-F]{64}$/.test(obj)) frag += '&object=' + obj.toLowerCase();
+        var app = new URL('.', location.href).href.replace(/#.*$/, '');
+        location.replace(app + '#' + frag);
+      } catch (_) { /* stay on this page */ }
+    })();
+  </script>
+</head>
+
+<body>
+  <main>
+    <h1>Shared files</h1>
+    <p class="sub" id="sub">Opening…</p>
+
+    <div id="setup" style="display:none; margin-bottom:1.5rem;">
+      <div class="field">
+        <label for="indexer">Indexer URL</label>
+        <input id="indexer" type="text" placeholder="https://indexer.example" />
+      </div>
+      <div class="field">
+        <label for="seed">Sharing link or seed</label>
+        <input id="seed" type="text" placeholder="Paste the link you were sent, or 64 hex characters" />
+      </div>
+      <button id="open">Open</button>
+    </div>
+
+    <progress id="progress" max="100" value="0" style="display:none;"></progress>
+    <div class="card" id="list" style="display:none;"></div>
+    </div>
+
+    <footer>
+      Downloads are paid for by whoever owns the sharing key. The key travels in this page's URL
+      fragment, which browsers never send to a server, so it stays on your device.
+    </footer>
+  </main>
+
+  <script type="module" src="share.js"></script>
+</body>
+
+</html>

@@ -14,6 +14,7 @@ import {
   stripUploadUuid, extractUploadUuid,
 } from './object-metadata.js';
 import { addToDraft, removeFromDraft, isInDraft, onDraftChange } from './site-builder.js';
+import { shareObjectToKey } from './sharing-keys.js';
 
 // Status proxy for the currently-active tab. Writes land in the
 // bottom-right status bar while the tab is selected and stay scoped
@@ -79,7 +80,81 @@ export function initObjectsUI() {
     `;
   }
 
-  /** Paginate through objectEvents until the SDK runs dry. */
+  /**
+ * Sharing-key descriptions, indexed by the object they are attached to:
+ * objectId -> [sanitised description, …]. Populated lazily after the object
+ * list renders, because building it costs a request per key.
+ */
+const sharedViaByObject = new Map();
+
+/**
+ * Prepare an untrusted string for display in a row.
+ *
+ * A sharing-key description is free text this app did not write and does not
+ * control, so it is treated as hostile in three separate ways:
+ *
+ *   1. Control, zero-width and BiDi-override characters are stripped.
+ *      `sanitizeDisplayFilename` exists for exactly this; without it a
+ *      right-to-left override can reorder the visible text so a description
+ *      impersonates a filename or another object's label.
+ *   2. It is escaped with `_esc` before reaching innerHTML. Every row here is
+ *      assembled by string concatenation, so an unescaped `<img onerror=…>`
+ *      would execute.
+ *   3. It is truncated for display, with the full value only in a `title`, so
+ *      a long description cannot push the rest of the row out of view.
+ *
+ * Returns pre-escaped strings, safe as element text or inside a
+ * double-quoted attribute — never in a JS or URL context.
+ */
+function untrustedLabel(raw, max = 40) {
+  const clean = sanitizeDisplayFilename(String(raw == null ? '' : raw)).trim();
+  if (!clean) return null;
+  const short = clean.length > max ? clean.slice(0, max - 1) + '…' : clean;
+  return { text: _esc(short), title: _esc(clean) };
+}
+
+/**
+ * Index which sharing keys each object is attached to.
+ *
+ * Best effort: it costs a `sharedObjects` walk per key, so failures are
+ * swallowed rather than breaking the object list, and it runs after the first
+ * render so the list is never held up waiting for it.
+ */
+async function indexSharingKeyLabels(sdk) {
+  sharedViaByObject.clear();
+  const PAGE = 100;
+  const keys = [];
+  try {
+    for (let offset = 0; ; offset += PAGE) {
+      const page = await sdk.sharingKeys(offset, PAGE);
+      keys.push(...page);
+      if (page.length < PAGE) break;
+    }
+  } catch (_) {
+    return; // no keys, or this indexer does not support them
+  }
+
+  for (const record of keys) {
+    const label = untrustedLabel(record.description);
+    if (!label) continue;
+    try {
+      for (let offset = 0; ; offset += PAGE) {
+        const page = await sdk.sharedObjects(record.key, offset, PAGE);
+        for (const obj of page) {
+          const id = obj.id();
+          const list = sharedViaByObject.get(id) || [];
+          // Two keys can carry the same description; showing it twice on one
+          // row is noise, not information.
+          if (!list.some((l) => l.title === label.title)) list.push(label);
+          sharedViaByObject.set(id, list);
+        }
+        if (page.length < PAGE) break;
+      }
+    } catch (_) { /* skip this key */ }
+  }
+}
+
+/** Paginate through objectEvents until the SDK runs dry. */
   async function loadAllObjects() {
     if (loadInFlight) return;
     loadInFlight = true;
@@ -151,6 +226,11 @@ export function initObjectsUI() {
       pageIndex = 0;
       render();
       status.innerHTML = `<span class="pass">✓ Found ${allObjects.length} object${allObjects.length !== 1 ? 's' : ''}</span>`;
+      // Not awaited: the list is already usable, and indexing costs a request
+      // per sharing key. Redraw once it lands.
+      indexSharingKeyLabels(sdk).then(() => {
+        if (sharedViaByObject.size) render();
+      }).catch(() => {});
     } catch (e) {
       document.getElementById('objects-list').innerHTML =
         `<div style="padding:1rem; color:#f87171; text-align:center;">Failed to load objects: ${_esc(e.message || String(e))}</div>`;
@@ -348,9 +428,19 @@ export function initObjectsUI() {
       const fnameDisplay = obj.displayName || fnameFull;
       const fnameShort = fnameDisplay.length > 40 ? fnameDisplay.slice(0, 40) + '…' : fnameDisplay;
       const indent = obj.uploadUuid ? 'padding-left:2rem;' : '';
-      const filenameCell = fnameFull
-        ? `<td style="padding:0.5rem; ${indent} font-size:0.85rem; color:#d4d4d4;" title="${_esc(fnameFull)}">${_esc(fnameShort)}</td>`
-        : `<td style="padding:0.5rem; ${indent} color:#555;">—</td>`;
+      // Sharing-key descriptions this object is reachable through. Untrusted
+    // text — untrustedLabel pre-escapes both the visible text and the
+    // tooltip, and neither is used anywhere but as element text and a
+    // double-quoted attribute.
+    const shared = sharedViaByObject.get(obj.id) || [];
+    const sharedChips = shared.slice(0, 2).map((l) =>
+      `<span class="obj-key-chip" title="Shared via a key described: ${l.title}">${l.text}</span>`).join('')
+      + (shared.length > 2
+        ? `<span class="obj-key-chip obj-key-chip--more" title="${shared.length - 2} more">+${shared.length - 2}</span>`
+        : '');
+    const filenameCell = fnameFull
+        ? `<td style="padding:0.5rem; ${indent} font-size:0.85rem; color:#d4d4d4;" title="${_esc(fnameFull)}">${_esc(fnameShort)}${sharedChips}</td>`
+        : `<td style="padding:0.5rem; ${indent} color:#555;">—${sharedChips}</td>`;
       // Ungrouped rows keep a transparent left-border so horizontal
       // alignment stays stable. Grouped rows reuse the group's color
       // as a thinner accent, echoing the header bar.
@@ -369,6 +459,7 @@ export function initObjectsUI() {
               ${!obj.deleted ? `
                 <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
                 <button onclick="publishObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Publish as a URL that carries the encryption key and expires">Publish</button>
+                <button onclick="shareObjectToSharingKey('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#059669; color:white; margin-left:0.25rem;" title="Attach to a sharing key, which you can revoke and which bills downloads to you">Sharing Key</button>
                 <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
                 ${isInDraft(obj.id)
                   ? `<button onclick="removeFromSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#0d9488; color:white; margin-left:0.25rem;" title="Remove from the site being built on the Upload Site page">✓ In site</button>`
@@ -908,11 +999,11 @@ export function initObjectsUI() {
   };
 
   // Pick up the 64-hex object ID embedded in a manifest entry's sia://
-  // share URL (`sia://<host>/objects/<hex>/shared?...`). Returns null if
-  // the URL doesn't look like a share URL we can resolve locally.
-  function objectIdFromShareUrl(shareUrl) {
-    if (typeof shareUrl !== 'string') return null;
-    const m = shareUrl.match(/\/objects\/([0-9a-fA-F]{64})(?:\/|$)/);
+  // published URL (`sia://<host>/objects/<hex>/shared?...`). Returns null if
+  // the URL doesn't look like a published URL we can resolve locally.
+  function objectIdFromPublishUrl(publishUrl) {
+    if (typeof publishUrl !== 'string') return null;
+    const m = publishUrl.match(/\/objects\/([0-9a-fA-F]{64})(?:\/|$)/);
     return m ? m[1].toLowerCase() : null;
   }
 
@@ -977,8 +1068,8 @@ export function initObjectsUI() {
         }
         const ids = [];
         const skipped = [];
-        for (const [path, shareUrl] of Object.entries(files)) {
-          const id = objectIdFromShareUrl(shareUrl);
+        for (const [path, publishUrl] of Object.entries(files)) {
+          const id = objectIdFromPublishUrl(publishUrl);
           if (id) ids.push(id);
           else skipped.push(path);
         }
@@ -1210,6 +1301,22 @@ export function initObjectsUI() {
         alert(`Share failed: ${e.message}`);
       }
     });
+  };
+
+  // Attaches this object to a sharing key, in contrast to `publishObjectById`
+  // above, which mints a published URL. The picker and link modal live in
+  // sharing-keys.js so the Sharing Keys panel and this button agree.
+  window.shareObjectToSharingKey = async (objectId) => {
+    const status = panelStatus();
+    const sdk = await connectSdk(status);
+    if (!sdk) return;
+    try {
+      const obj = await sdk.object(objectId);
+      const name = filenameForDisplay(obj.metadata()) || objectId.slice(0, 16);
+      await shareObjectToKey(sdk, obj, name);
+    } catch (e) {
+      alert(`Could not attach to a sharing key: ${e.message || e}`);
+    }
   };
 
   // Helper function to show object info/details
