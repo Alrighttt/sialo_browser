@@ -426,24 +426,67 @@ export function setBrowserView(showVideo) {
 
 // Render the active tab's status/progress state into the global DOM bar.
 // Called after any proxy write for the active tab, and on tab switch.
+// Reveal the full status message on hover or keyboard focus.
+//
+// Bound to the wrapper rather than the clipped span: the expanded copy is
+// absolutely positioned, and anchoring the trigger to an element whose own box
+// never moves is what stops it appearing, shifting the layout out from under
+// the pointer, and flickering. Bound once — the status bar outlives every tab.
+(function bindStatusReveal() {
+  const wrap = document.getElementById('iframe-status-wrap');
+  if (!wrap) return;   // share.html has a status bar of its own shape
+  const show = () => {
+    if (wrap.classList.contains('is-clipped')) wrap.classList.add('is-expanded');
+  };
+  const hide = () => wrap.classList.remove('is-expanded');
+  wrap.addEventListener('mouseenter', show);
+  wrap.addEventListener('mouseleave', hide);
+  wrap.addEventListener('focusin', show);
+  wrap.addEventListener('focusout', hide);
+})();
+
 export function renderTabStatus() {
   const tab = tabs.find(t => t.id === activeTabId);
   const statusEl = document.getElementById('iframe-status');
   const progressEl = document.getElementById('browser-progress');
   if (statusEl) {
-    statusEl.innerHTML = (tab && tab.statusHTML) || '';
-    // The bar clips at 60% of its width with an ellipsis, and every panel's
-    // status lands here, so a long message — an error explaining three
-    // possible causes, say — is unreadable without somewhere to read it in
-    // full. Mirror the rendered text into the tooltip.
+    const html = (tab && tab.statusHTML) || '';
+    statusEl.innerHTML = html;
+
+    // The bar clips at 60% of its width, and every panel's status lands here,
+    // so a long message is cut off with nowhere to read the rest. The full
+    // text goes into a sibling that is revealed on hover, and into `title` as
+    // a fallback.
     //
     // Read back as textContent rather than reusing statusHTML: the markup is
-    // already parsed by this point, so embedded elements (a Register button,
+    // parsed by this point, so embedded elements (a Register / Log In button,
     // a <span class="fail">) contribute their words instead of their tags,
     // and entities are already characters.
     const full = statusEl.textContent.replace(/\s+/g, ' ').trim();
     if (full) statusEl.title = full;
     else statusEl.removeAttribute('title');
+
+    const fullEl = document.getElementById('iframe-status-full');
+    const wrap = document.getElementById('iframe-status-wrap');
+    // Text, not the markup: copying it would duplicate any button the message
+    // carries — a second, focusable Register / Log In inside an aria-hidden
+    // container, with the delegated handler firing from either. The expanded
+    // copy exists to be read; the real control stays in the bar itself.
+    if (fullEl) fullEl.textContent = full;
+    if (wrap) {
+      // Offer the reveal only when the text really does not fit. scrollWidth
+      // is 0 while the bar is not laid out, so treat "cannot measure" as not
+      // clipped rather than guessing from the string's length.
+      const clipped = statusEl.clientWidth > 0
+        && statusEl.scrollWidth > statusEl.clientWidth + 1;
+      wrap.classList.toggle('is-clipped', clipped);
+      if (clipped) {
+        wrap.tabIndex = 0;
+      } else {
+        wrap.removeAttribute('tabindex');
+        wrap.classList.remove('is-expanded');
+      }
+    }
   }
   if (progressEl) {
     if (tab && tab.progressVisible) {

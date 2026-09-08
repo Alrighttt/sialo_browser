@@ -543,18 +543,58 @@ progress::-moz-progress-bar {
 }
 #status-bar .status-dot.connected { background: #4ade80; }
 
-/* The tab/panel status message. One line, clipped with an ellipsis so the bar
-   never changes height; renderTabStatus mirrors the full text into `title`,
-   and the help cursor advertises that there is more to read. */
+/* The tab/panel status message.
+   One line, clipped with an ellipsis, so the bar never changes height. A long
+   message — an error naming a host and three possible causes — is therefore
+   cut off, and needs somewhere to be read in full.
+   A native `title` is a poor vehicle for 400 characters: it waits about a
+   second, is dismissed by any DOM change under the cursor, will not wrap and
+   cannot be styled. So the full text is also rendered into a sibling that is
+   revealed over the viewport on hover or keyboard focus. `title` stays as a
+   fallback. The sibling has to live outside the clipped box, or the parent's
+   overflow:hidden would crop it too. */
+.status-wrap {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  max-width: 60%;
+}
 .status-clipped {
   color: #888;
   font-size: 0.75rem;
-  max-width: 60%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: help;
 }
+/* Only offer the affordance when there is genuinely more to see. */
+.status-wrap.is-clipped .status-clipped { cursor: help; }
+
+.status-full {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 0.45rem);
+  right: 0;
+  width: max-content;
+  max-width: min(44rem, calc(100vw - 2rem));
+  white-space: normal;
+  text-align: left;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #d6dae0;
+  background: #16181c;
+  border: 1px solid #2f3540;
+  border-radius: 4px;
+  padding: 0.5rem 0.7rem;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.5);
+  z-index: 60;
+  /* A very long message in a short window would otherwise extend past the top
+     of the viewport and lose its first lines, which is the problem this exists
+     to solve. Clamp to the space available and scroll inside it. */
+  max-height: calc(100vh - 3.5rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.status-wrap.is-expanded .status-full { display: block; }
 
 /* History items (used in history panel) */
 .history-item {

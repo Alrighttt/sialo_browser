@@ -1859,10 +1859,14 @@
       <span class="status-dot" id="sync-height-dot" style="display:none;"></span>
       <span id="sync-height-indicator" style="cursor:pointer; display:none;" title="Click to open Syncer"></span>
       <span style="flex:1;"></span>
-      <!-- Clipped rather than wrapped, to keep the bar one line tall. The full
-           text is mirrored into the title attribute on every render (see
-           renderTabStatus), so a clipped message is still readable on hover. -->
-      <span id="iframe-status" class="status-clipped"></span>
+      <!-- Clipped rather than wrapped, to keep the bar one line tall. The
+           wrapper exists so the expanded copy can escape the clipped box's
+           overflow:hidden; renderTabStatus fills both and only marks the
+           wrapper as clipped when the text really does not fit. -->
+      <span class="status-wrap" id="iframe-status-wrap">
+        <span id="iframe-status" class="status-clipped"></span>
+        <span id="iframe-status-full" class="status-full" aria-hidden="true"></span>
+      </span>
     </div>
 
   </div><!-- /app -->
