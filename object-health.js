@@ -17,6 +17,14 @@
 //   repairing comes before migrating: repair puts shards back onto hosts that
 //   are currently good, which is what restores portability.
 //
+// Repair itself is not something this app can do, and the wording here says so
+// rather than implying a button. indexd repairs slabs on its own: a background
+// pass selects slabs with any sector that is unbound or whose contract has gone
+// bad, and rebinds those sectors onto good hosts. It holds the wallet, the
+// contracts and the migration key; a browser client holds none of them, and
+// there is no app-API route to ask for a repair either. So the useful advice is
+// what to expect and what to check, not what to press.
+//
 // Everything here is pure. `usableHosts` is a Set of host public keys, taken
 // from `sdk.hosts()` on the indexer in question.
 
@@ -119,16 +127,19 @@ export function healthSummary(h) {
         text: 'Readable, but not portable',
         detail: `${h.unportable} slab${h.unportable === 1 ? '' : 's'} ${h.unportable === 1 ? 'has' : 'have'}`
           + ' too many shards on hosts this indexer can no longer use. The object'
-          + ' downloads fine, but another indexer would refuse to take it.'
-          + ' Repair it first, which puts those shards back on good hosts.',
+          + ' downloads fine, but another indexer would refuse to take it, so it'
+          + ' cannot be migrated until the indexer has repaired it. Repair runs on'
+          + ' the indexer, not from here.',
       };
     case 'at-risk':
       return {
         tone: 'warn',
         text: 'At risk',
         detail: `${h.bare} slab${h.bare === 1 ? '' : 's'} ${h.bare === 1 ? 'has' : 'have'}`
-          + ' exactly the minimum number of shards left. Losing one more host'
-          + ' makes the object unreadable. Repair it now.',
+          + ' exactly the minimum number of shards left, so losing one more host'
+          + ' makes the object unreadable. The indexer should be repairing this'
+          + ' already; if it stays this way, check that slab migrations are'
+          + ' enabled on it.',
       };
     case 'unreadable':
       return {
@@ -137,7 +148,7 @@ export function healthSummary(h) {
         detail: `${h.unreadable} of ${h.slabCount} slab${h.slabCount === 1 ? '' : 's'}`
           + ' no longer has enough shards on usable hosts to reconstruct.'
           + ' Repair cannot invent missing data — if those hosts do not come'
-          + ' back, this object is gone.',
+          + ' back, this object is gone. Keep a local copy if you have one.',
       };
     default:
       return {

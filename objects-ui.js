@@ -1486,6 +1486,10 @@ async function indexSharingKeyLabels(sdk) {
                 A shard on a host this indexer cannot use is not necessarily lost — the
                 host may simply have no live contract here. "Portable" means another
                 indexer would accept the slab, which is what migrating requires.
+                Repairing is the indexer's own job: it re-uploads shards from unusable
+                hosts onto good ones on a background pass, so there is nothing to press
+                here. If an object stays unhealthy, slab migrations may be turned off on
+                that indexer.
               </div>
             </div>` : `
             <div style="border-top:1px solid #222; margin-top:0.25rem; padding-top:0.75rem; color:#888; font-size:0.85rem;">
