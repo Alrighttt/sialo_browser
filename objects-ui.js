@@ -259,9 +259,34 @@ async function indexSharingKeyLabels(sdk) {
   //
   // Rows without a UUID use their own sortValue for the group key, so
   // they interleave with groups based on the same column criteria.
+  /**
+   * Whether deleted objects appear in the list.
+   *
+   * Hidden by default: the indexer keeps an event per change, so a deleted
+   * object stays in the log forever and an account that has churned through
+   * uploads ends up with a list mostly made of things that no longer exist.
+   * They remain reachable behind the toggle rather than being dropped, because
+   * "did that actually delete?" is a real question to be able to answer.
+   */
+  const SHOW_DELETED_KEY = 'objects-show-deleted';
+  let showDeleted = (() => {
+    try {
+      return localStorage.getItem(SHOW_DELETED_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  })();
+
+  /** The objects the list should show, before sorting or grouping. */
+  function listedObjects() {
+    return showDeleted ? allObjects : allObjects.filter((o) => !o.deleted);
+  }
+
   function sortedObjects() {
+    // The display set, which excludes deleted objects unless the toggle is on.
+    const visible = listedObjects();
     const groupKey = new Map(); // uuid → best sort value across its members
-    for (const o of allObjects) {
+    for (const o of visible) {
       if (!o.uploadUuid) continue;
       const v = sortValue(o);
       if (!groupKey.has(o.uploadUuid)) {
@@ -272,7 +297,7 @@ async function indexSharingKeyLabels(sdk) {
       if (sortState.asc ? v < prev : v > prev) groupKey.set(o.uploadUuid, v);
     }
 
-    const sorted = allObjects.slice();
+    const sorted = visible.slice();
     sorted.sort((a, b) => {
       const agv = a.uploadUuid ? groupKey.get(a.uploadUuid) : sortValue(a);
       const bgv = b.uploadUuid ? groupKey.get(b.uploadUuid) : sortValue(b);
@@ -500,7 +525,15 @@ async function indexSharingKeyLabels(sdk) {
     // (groups + visible rows) so the user sees the same numbers whether
     // or not any groups are collapsed.
     pagerEl.style.display = 'flex';
+    // Name what the filter is hiding. A count that silently drops rows is
+    // indistinguishable from data going missing — which is exactly how it
+    // read the first time it happened.
+    const hiddenDeleted = showDeleted ? 0 : allObjects.filter((o) => o.deleted).length;
     pageInfoEl.textContent = `${start + 1}–${Math.min(start + pageSize, displayList.length)} of ${displayList.length}`;
+    if (hiddenDeleted > 0) {
+      pageInfoEl.textContent +=
+        ` · ${hiddenDeleted} deleted hidden`;
+    }
     document.getElementById('objects-page-first').disabled = pageIndex === 0;
     document.getElementById('objects-page-prev').disabled  = pageIndex === 0;
     document.getElementById('objects-page-next').disabled  = pageIndex >= pageCount - 1;
@@ -577,6 +610,19 @@ async function indexSharingKeyLabels(sdk) {
   } // end render()
 
   // Pager navigation.
+  const showDeletedBox = document.getElementById('objects-show-deleted');
+  if (showDeletedBox) {
+    showDeletedBox.checked = showDeleted;
+    showDeletedBox.addEventListener('change', () => {
+      showDeleted = showDeletedBox.checked;
+      try { localStorage.setItem(SHOW_DELETED_KEY, showDeleted ? '1' : '0'); } catch (_) {}
+      // Back to page one: the row count changes underneath, so the current
+      // index can point past the end of the new, shorter list.
+      pageIndex = 0;
+      render();
+    });
+  }
+
   document.getElementById('objects-page-first').addEventListener('click', () => { pageIndex = 0; render(); });
   document.getElementById('objects-page-prev').addEventListener('click',  () => { pageIndex--; render(); });
   document.getElementById('objects-page-next').addEventListener('click',  () => { pageIndex++; render(); });

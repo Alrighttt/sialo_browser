@@ -1921,3 +1921,16 @@ a.addr-chip--link:hover {
 }
 .sh-site-banner > div { flex: 1 1 18rem; min-width: 0; }
 .sh-site-banner > button { flex: 0 0 auto; padding: 0.4rem 0.9rem; font-weight: 600; }
+
+/* A checkbox sitting inline with pager text. The global `input` rule is
+   width:100%, which stretches a bare checkbox across its whole row. */
+.inline-check {
+  width: 0.95rem;
+  height: 0.95rem;
+  min-width: 0.95rem;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+  accent-color: #10b981;
+}
