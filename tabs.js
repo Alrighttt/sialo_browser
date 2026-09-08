@@ -32,7 +32,7 @@ export const PANEL_URLS = {
 export const URL_TO_PANEL = Object.fromEntries(Object.entries(PANEL_URLS).map(([k, v]) => [v, k]));
 
 export const PANEL_TITLES = {
-  'register': 'Register', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
+  'register': 'Register / Log In', 'setup': 'Settings', 'dashboard': 'Dashboard', 'upload-file': 'Upload File',
   'upload-text': 'Upload Text', 'upload-site': 'Upload Site', 'download': 'Download', 'objects': 'My Objects',
   'history': 'History', 'explorer': 'Explorer',
   'wallet': 'Wallet', 'manifest': 'Manifest', 'syncer-config': 'Syncer',
@@ -47,6 +47,7 @@ export let lastBrowserUrl = '';
 
 export let tabs = [];
 export let activeTabId = null;
+
 let nextTabId = 1;
 export let streamingTabId = null;
 export let loadContentInProgress = false;

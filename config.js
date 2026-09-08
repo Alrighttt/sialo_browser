@@ -124,7 +124,7 @@ export async function connectSdk(statusEl) {
     return null;
   }
   if (!sdk) {
-    lastConnectError = 'App key not recognized by this indexer. Register first.';
+    lastConnectError = 'App key not recognized by this indexer. Register or log in first.';
     statusEl.innerHTML = `<span class="fail">${lastConnectError}</span>`;
     return null;
   }

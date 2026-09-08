@@ -210,7 +210,7 @@ export function initRegistrationWizard(helpers) {
       }
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = 'Register';
+      btn.textContent = 'Register / Log In';
       setStatus(status, 'Error: ' + (e.message || String(e)), 'fail');
     }
   });
