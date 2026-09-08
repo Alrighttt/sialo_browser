@@ -2,6 +2,7 @@ import { _esc, formatSize } from './utils.js';
 import { getUrl, getKeyHex, getMaxDownloads, getLogLevel } from './config.js';
 import { getActiveTab, trackAbort, tabStatusProxy } from './tabs.js';
 import { getActiveServiceWorker } from './download.js';
+import { classifyObjectInput, objectIdInUrl, OBJECT_ID_LENGTH } from './object-input.js';
 
 // -- Download File --
 //
@@ -52,11 +53,39 @@ export function initDownloadUI() {
     progress.value = 0;
     resultCard.style.display = 'none';
 
-    if (!input) {
-      panelStatus().innerHTML = '<span class="fail">Enter an Object ID or Share URL</span>';
+    // Validate before the save picker runs. Being asked where to save a file
+    // and only then told the input was unusable is the wrong order, and it
+    // leaves a stray empty file behind on some platforms.
+    const parsed = classifyObjectInput(input);
+    if (parsed.kind === 'invalid') {
+      panelStatus().innerHTML = `<span class="fail">${_esc(parsed.reason)}</span>`;
       _downloadInProgress = false;
       btn.disabled = false;
       return;
+    }
+    if (parsed.kind === 'site') {
+      // A site is many files plus a manifest, not something to save to disk.
+      // Point at the address bar, which knows how to render one.
+      panelStatus().innerHTML =
+        '<span class="fail">That is a sialo:// address, which is a whole site rather than a '
+        + 'single file. Paste it into the address bar above to browse it.</span>';
+      _downloadInProgress = false;
+      btn.disabled = false;
+      return;
+    }
+    // A published URL carries its own signature and key, so the embedded id is
+    // not used to fetch it — but a malformed one means the link is truncated,
+    // and saying so beats the SDK's "Unexpected length" later on.
+    if (parsed.kind === 'publishUrl') {
+      const embedded = objectIdInUrl(parsed.value);
+      if (embedded && embedded.length !== OBJECT_ID_LENGTH) {
+        panelStatus().innerHTML =
+          `<span class="fail">This URL's object ID is ${embedded.length} hex characters instead of `
+          + `${OBJECT_ID_LENGTH} — the link looks truncated. Check it was copied in full.</span>`;
+        _downloadInProgress = false;
+        btn.disabled = false;
+        return;
+      }
     }
 
     const url = getUrl();
