@@ -450,6 +450,7 @@
                 style="font-family:var(--font-mono,monospace); font-size:0.8rem; color:#60a5fa; word-break:break-all; background:#0a0f14; border:1px solid #1e2a3a; border-radius:6px; padding:0.5rem 0.625rem; cursor:pointer;"
                 title="Click to copy"></div>
             </div>
+
           </div><!-- /panel-section: Upload File -->
         </div><!-- /internal-page-content -->
       </div><!-- /panel-upload-file -->
@@ -459,114 +460,237 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Upload Site</h2>
-            <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
-              Pick a folder to publish as a Sia-hosted site. Every file is uploaded as
-              its own Sia object; a manifest mapping path &rarr; object ID is uploaded last.
-              The manifest ID is your <code>sialo://</code> URL.
+            <p class="us-intro">
+              Assemble a folder of files into a Sia-hosted site. Files are staged in the
+              Site Builder first and nothing uploads until you publish or share, so you can
+              rename and remove entries before committing. A site with an
+              <code>index.html</code> serves it at the root; one without gets a generated
+              index of its files.
             </p>
 
-            <!-- Inner share URL validity — baked into the manifest at upload
-                 time. Determines how long viewers can resolve the site's
-                 files from any account. Not editable after upload. -->
-            <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem; font-size:0.85rem;">
-              <label for="us-validity-num" style="color:#888;">Share for:</label>
-              <input id="us-validity-num" type="number" value="100" min="1"
-                style="width:5rem; padding:0.35rem 0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px;" />
-              <select id="us-validity-unit"
-                style="padding:0.35rem 0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px;">
-                <option value="3600000">hours</option>
-                <option value="86400000">days</option>
-                <option value="604800000">weeks</option>
-                <option value="2592000000">months (30d)</option>
-                <option value="31536000000" selected>years</option>
-              </select>
-            </div>
-
-            <!-- Folder selection + info card -->
-            <div style="display:flex; gap:1rem; margin-bottom:1rem;">
-              <div class="dropzone" id="us-dropzone"
-                style="flex:0 0 220px; min-height:120px; display:flex; flex-direction:column; align-items:center; justify-content:center;">
-                <div style="font-size:2rem; margin-bottom:0.5rem; opacity:0.4;">&#127760;</div>
-                <div style="font-size:0.8rem; color:#666;">Drop a folder here<br>or click to select</div>
-                <input type="file" id="us-dir" webkitdirectory directory multiple style="display:none" />
-              </div>
-              <div id="us-info-card"
-                style="flex:1; display:none; background:var(--bg-card,#151515); border:1px solid var(--border-subtle,#1a1a1a); border-radius:8px; padding:1rem;">
-                <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
-                  <span style="color:#60a5fa; font-size:1.1rem;">&#127760;</span>
-                  <span id="us-card-root" style="font-weight:600; font-size:1rem;"></span>
-                  <span id="us-card-summary" style="color:#888; font-size:0.85rem;"></span>
-                </div>
-                <progress id="us-progress" max="100" value="0"
-                  style="width:100%; height:6px; margin-bottom:0.75rem;"></progress>
-                <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.25rem;">
-                  <span id="us-card-current" style="font-size:0.8rem; color:#888;"></span>
-                </div>
-                <div style="display:flex; gap:2rem; margin-top:0.5rem; align-items:center;">
-                  <div style="text-align:center;">
-                    <div id="us-card-files-done" style="font-size:1.4rem; font-weight:700; color:#e2e8f0;">0</div>
-                    <div style="font-size:0.7rem; color:#666;">Files done</div>
-                  </div>
-                  <div style="text-align:center;">
-                    <div id="us-card-elapsed" style="font-size:1.4rem; font-weight:700; color:#e2e8f0;">0s</div>
-                    <div style="font-size:0.7rem; color:#666;">Elapsed</div>
-                  </div>
-                  <button id="us-cancel" style="margin-left:auto; display:none; padding:0.5rem 1rem; background:#dc2626; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.85rem;">Cancel</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- File list preview (before upload) -->
-            <details id="us-files-details" style="display:none; margin-bottom:0.75rem; background:#111; border:1px solid #1e1e1e; border-radius:6px;">
-              <summary style="padding:0.5rem 0.75rem; cursor:pointer; font-size:0.85rem; color:#888;">Files in this site</summary>
-              <div id="us-files-list" style="max-height:240px; overflow-y:auto; padding:0.5rem 0.75rem; font-family:var(--font-mono); font-size:0.75rem; color:#999;"></div>
-            </details>
-
-            <!-- Result card (shown after successful upload) -->
-            <div id="us-result"
-              style="display:none; margin-top:1rem; background:var(--bg-card,#151515); border:1px solid rgba(96,165,250,0.3); border-radius:8px; padding:1rem;">
-              <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
-                <span style="color:#4ade80; font-size:1.1rem;">&#10003;</span>
-                <span style="font-weight:600; font-size:0.95rem; color:#e2e8f0;">Site published</span>
-              </div>
-              <div style="color:#888; font-size:0.8rem; margin-bottom:0.25rem;">Manifest ID</div>
-              <div id="us-result-id" style="font-family:var(--font-mono); font-size:0.8rem; color:#60a5fa; word-break:break-all; margin-bottom:0.75rem;"></div>
-              <div style="color:#888; font-size:0.8rem; margin-bottom:0.25rem;">URL</div>
-              <div id="us-result-url" style="font-family:var(--font-mono); font-size:0.8rem; color:#4ade80; word-break:break-all; margin-bottom:0.75rem;"></div>
+            <!-- Everything on this page ends in an upload, so it is gated on a
+                 working indexer connection rather than letting the user stage a
+                 site and only discover the problem at publish time. -->
+            <div id="us-gate" class="page-gate" style="display:none;">
+              <div class="page-gate-title">Indexer connection required</div>
+              <p class="page-gate-reason" id="us-gate-reason"></p>
+              <p class="page-gate-hint">
+                Publishing or sharing a site uploads every file to Sia through your indexer
+                account, so this page needs a working connection before you can build one.
+              </p>
               <div class="row" style="gap:0.5rem;">
-                <button id="us-open-btn" style="background:#3b82f6; color:white;">Open site</button>
-                <button id="us-copy-btn">Copy URL</button>
+                <button id="us-gate-register" class="btn-share" style="display:none;">Register / Log In</button>
+                <button id="us-gate-settings" class="btn-open">Open settings</button>
+                <button id="us-gate-retry" class="btn-muted">Retry connection</button>
               </div>
             </div>
 
-            <!-- Site Builder: assemble a sia-site from existing
-                 objects (e.g. via the "Add to site" button on My
-                 Objects). Uses the same "Share for" validity input
-                 as the folder upload above. -->
-            <div style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #222;">
-              <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:0.5rem;">
-                <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Site Builder</h3>
-                <span id="sb-count" style="font-size:0.8rem; color:#888;">0 objects</span>
+            <!-- Step 1 — staging only. Reading a folder fills the builder
+                 below; it deliberately does not start an upload, so the user
+                 can still add objects from My Objects and edit paths. -->
+            <section class="us-step">
+              <div class="us-step-head">
+                <span class="us-step-num">1</span>
+                <h3>Add files</h3>
               </div>
-              <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
-                Assemble a <code>sialo://</code> from objects that already exist.
-                Use the <strong>Add to site</strong> button on <strong>My Objects</strong>
-                rows to collect entries; publish here. Entries persist across reloads.
+              <div class="us-pick">
+                <!-- Two inputs, because one cannot do both jobs: an input
+                     carrying `webkitdirectory` restricts the OS picker to
+                     directories and greys out every individual file. -->
+                <div class="dropzone" id="us-dropzone">
+                  <div class="us-dropzone-icon">&#127760;</div>
+                  <div class="us-dropzone-text">Drop files or a folder here</div>
+                  <div class="us-dropzone-btns">
+                    <button type="button" id="us-pick-folder">Choose folder…</button>
+                    <button type="button" id="us-pick-files">Choose files…</button>
+                  </div>
+                  <input type="file" id="us-dir" webkitdirectory directory multiple hidden />
+                  <input type="file" id="us-files" multiple hidden />
+                </div>
+              </div>
+            </section>
+
+            <!-- Step 2 — the draft. Holds both pending local files and
+                 already-uploaded objects; both can be renamed or removed
+                 here before either action runs. -->
+            <section class="us-step">
+              <div class="us-step-head">
+                <span class="us-step-num">2</span>
+                <h3>Site Builder</h3>
+                <span id="sb-count" class="us-step-count">0 files</span>
+              </div>
+
+              <div id="sb-pending-note" class="us-warn" style="display:none;"></div>
+              <div id="sb-video-warn" class="us-warn" style="display:none;"></div>
+
+              <div id="sb-empty" class="us-empty">
+                Empty — drop a folder above, or add objects from <strong>My Objects</strong>.
+              </div>
+
+              <div id="sb-list-wrap" class="us-list-wrap" style="display:none;">
+                <table id="sb-list" class="us-list"></table>
+              </div>
+
+              <!-- Upload progress. Appears only while a publish or share is
+                   uploading the pending files, since that is the only time
+                   anything is transferred. -->
+              <div id="us-info-card" class="us-progress-card" style="display:none;">
+                <div class="us-progress-head">
+                  <span class="us-progress-icon">&#127760;</span>
+                  <span id="us-card-root" class="us-progress-title"></span>
+                  <span id="us-card-summary" class="us-progress-sub"></span>
+                </div>
+                <progress id="us-progress" max="100" value="0" class="us-progress-bar"></progress>
+                <div id="us-card-current" class="us-progress-current"></div>
+                <div class="us-progress-stats">
+                  <div class="us-stat">
+                    <div id="us-card-files-done" class="us-stat-num">0</div>
+                    <div class="us-stat-label">Files done</div>
+                  </div>
+                  <div class="us-stat">
+                    <div id="us-card-elapsed" class="us-stat-num">0s</div>
+                    <div class="us-stat-label">Elapsed</div>
+                  </div>
+                  <button id="us-cancel" class="us-cancel" style="display:none;">Cancel</button>
+                </div>
+              </div>
+
+              <div id="sb-actions" class="us-step-actions" style="display:none;">
+                <button id="sb-clear" class="btn-muted">Clear draft</button>
+              </div>
+            </section>
+
+            <!-- Step 3 — the two independent ways to hand the site out. Both
+                 upload any pending files first, and both can be used on the
+                 same draft: the second one reuses the objects the first
+                 uploaded rather than uploading again. -->
+            <section class="us-step">
+              <div class="us-step-head">
+                <span class="us-step-num">3</span>
+                <h3>Hand it out</h3>
+              </div>
+              <p class="us-step-intro">
+                Publishing and sharing are independent and can both be done for one site.
+                They differ in who pays for downloads and whether access can be withdrawn.
               </p>
 
-              <div id="sb-empty" style="color:#555; font-size:0.9rem; font-style:italic; padding:1rem 0.5rem;">
-                No entries yet — go to My Objects and click <strong>Add to site</strong>.
-              </div>
+              <div class="us-actions">
+                <div class="us-action" id="us-publish-section">
+                  <div class="us-action-head">
+                    <h4>Publish</h4>
+                    <span class="us-action-tag">standalone link</span>
+                  </div>
+                  <p class="us-action-lead">
+                    An expiring <code>sialo://</code> URL. Anyone can resolve it, and viewers
+                    pay for their own downloads.
+                  </p>
+                  <p class="us-action-desc">
+                    The link stands on its own and <strong>cannot be withdrawn</strong> once
+                    handed out, so treat it as public until its signature lapses. Recipients
+                    resolve it through <strong>their own indexer account</strong> and pay for
+                    <strong>their own bandwidth</strong>.
+                  </p>
+                  <!-- Holds the row that Share uses for its Description field, so
+                       the two cards' "Expires in" rows and buttons line up. Empty
+                       because Publish has no per-link description: a published URL
+                       carries no metadata of its own. -->
+                  <div class="us-field-spacer" aria-hidden="true"></div>
+                  <div class="us-field">
+                    <label for="us-validity-num">Expires in</label>
+                    <div class="us-field-row">
+                      <input id="us-validity-num" type="number" value="100" min="1" />
+                      <select id="us-validity-unit">
+                        <option value="3600000">hours</option>
+                        <option value="86400000">days</option>
+                        <option value="604800000">weeks</option>
+                        <option value="2592000000">months (30d)</option>
+                        <option value="31536000000" selected>years</option>
+                      </select>
+                    </div>
+                    <div class="us-field-hint">
+                      How long the URL's signature stays valid. It cannot be shortened later.
+                    </div>
+                  </div>
+                  <button id="us-publish-btn" class="btn-publish">Publish site</button>
+                  <div id="us-publish-progress" class="us-action-progress" style="display:none;"></div>
 
-              <div id="sb-list-wrap" style="display:none; background:#0a0a0a; border:1px solid #1e1e1e; border-radius:6px; margin-bottom:0.75rem; max-height:320px; overflow-y:auto;">
-                <table id="sb-list" style="width:100%; border-collapse:collapse; font-size:0.85rem;"></table>
-              </div>
+                  <div id="us-publish-result" class="us-action-result" style="display:none;">
+                    <div class="us-result-label">Manifest ID</div>
+                    <div id="us-result-id" class="us-result-mono us-result-id"></div>
+                    <div class="us-result-label">URL</div>
+                    <div id="us-result-url" class="us-result-mono us-result-url"></div>
+                    <div class="us-result-label">Link that loads the site directly</div>
+                    <div id="us-result-link" class="us-result-mono us-result-share"></div>
+                    <div class="us-field-hint" style="margin-bottom:0.75rem;">
+                      Opens the site straight away, for people who do not want to paste an
+                      address. The signed URL rides in the fragment, which browsers never
+                      send to a server.
+                    </div>
+                    <div class="row" style="gap:0.5rem;">
+                      <button id="us-open-btn" class="btn-open">Open site</button>
+                      <button id="us-copy-btn">Copy URL</button>
+                      <button id="us-copy-link-btn">Copy link</button>
+                    </div>
+                  </div>
+                </div>
 
-              <div id="sb-actions" style="display:none; gap:0.5rem; flex-wrap:wrap;">
-                <button id="sb-publish" style="background:#10b981; color:white;">Publish Site</button>
-                <button id="sb-clear" style="background:#333; color:#ccc;">Clear Draft</button>
+                <div class="us-action" id="us-share-section">
+                  <div class="us-action-head">
+                    <h4>Share</h4>
+                    <span class="us-action-tag">revocable key</span>
+                  </div>
+                  <p class="us-action-lead">
+                    A revocable sharing key, plus a link that loads the site directly.
+                    Downloads are billed to you until you revoke it.
+                  </p>
+                  <p class="us-action-desc">
+                    Recipients need <strong>no indexer account</strong> and download on
+                    <strong>your bandwidth</strong>. Revoking the key on the
+                    <strong>Sharing Keys</strong> page cuts off access.
+                  </p>
+                  <div class="us-field">
+                    <label for="us-share-desc-input">Description</label>
+                    <input id="us-share-desc-input" type="text" placeholder="What this key is for" />
+                    <div class="us-field-hint">
+                      Labels the key on the Sharing Keys page. Only you can see it.
+                    </div>
+                  </div>
+                  <div class="us-field">
+                    <label for="us-share-validity-num">Expires in</label>
+                    <div class="us-field-row">
+                      <input id="us-share-validity-num" type="number" value="30" min="1" />
+                      <select id="us-share-validity-unit">
+                        <option value="0">never</option>
+                        <option value="3600000">hours</option>
+                        <option value="86400000" selected>days</option>
+                        <option value="604800000">weeks</option>
+                        <option value="2592000000">months (30d)</option>
+                        <option value="31536000000">years</option>
+                      </select>
+                    </div>
+                    <div class="us-field-hint">
+                      When the key stops working. You can revoke it by hand at any time.
+                    </div>
+                  </div>
+                  <button id="us-share-btn" class="btn-share">Share site</button>
+                  <div id="us-share-progress" class="us-action-progress" style="display:none;"></div>
+
+                  <div id="us-share-result" class="us-action-result" style="display:none;">
+                    <div class="us-result-label">Sharing key</div>
+                    <div id="us-share-key" class="us-result-mono us-result-id"></div>
+                    <div class="us-result-label">Link that loads the site directly</div>
+                    <div id="us-share-url" class="us-result-mono us-result-share"></div>
+                    <div class="us-field-hint" style="margin-bottom:0.75rem;">
+                      The key rides in the URL fragment, which browsers never send to a server.
+                    </div>
+                    <div class="row" style="gap:0.5rem;">
+                      <button id="us-share-copy-btn">Copy share link</button>
+                      <button id="us-share-open-btn">Open shared site</button>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
+            </section>
 
             <!-- Update Site: load an existing sialo://, edit its files,
                  and republish. Unchanged files are re-signed at the panel's

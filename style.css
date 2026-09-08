@@ -1272,6 +1272,387 @@ progress::-moz-progress-bar {
 .txb-output-row input[type="text"] { flex: 1; }
 .txb-output-row .txb-output-amount { width: 140px; flex: none; }
 
+/* ---- Upload Site panel ----------------------------------------------
+   Three numbered steps: add files, review the draft, hand it out. The two
+   hand-out actions (Publish / Share) are siblings rather than modes of one
+   upload, because either can be run on its own and both can be run on the
+   same draft. */
+
+.us-intro {
+  color: #8a929c;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-bottom: 1.5rem;
+  max-width: 62ch;
+}
+
+.us-step {
+  margin-bottom: 2rem;
+}
+.us-step-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+.us-step-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  color: #e2e8f0;
+}
+/* A quiet numbered chip, so the order of operations reads at a glance
+   without the headings shouting. */
+.us-step-num {
+  flex: 0 0 auto;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: #17211c;
+  border: 1px solid #2a3a31;
+  color: #6ee7b7;
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center;
+}
+.us-step-count {
+  margin-left: auto;
+  font-size: 0.8rem;
+  color: #7a8390;
+}
+.us-step-intro {
+  color: #8a929c;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0 0 1rem 0;
+  max-width: 68ch;
+}
+.us-step-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+/* Step 1: dropzone beside its explanation, so "nothing uploads yet" sits
+   where the user is about to click rather than in a footnote. */
+.us-pick {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+}
+.us-pick .dropzone {
+  flex: 1 1 auto;
+  min-height: 140px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.us-dropzone-icon {
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.4;
+}
+.us-dropzone-text {
+  font-size: 0.8rem;
+  color: #666;
+  line-height: 1.4;
+}
+/* Two explicit pickers, because a folder picker and a file picker cannot be
+   the same input. Kept small so the zone still reads as a drop target. */
+.us-dropzone-btns {
+  display: flex;
+  gap: 0.35rem;
+  margin-top: 0.7rem;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.us-dropzone-btns button {
+  background: #1c2a22;
+  border: 1px solid #2c3f34;
+  color: #9fdcc0;
+  font-size: 0.72rem;
+  padding: 0.25rem 0.5rem;
+  white-space: nowrap;
+}
+.us-dropzone-btns button:hover {
+  background: #24382d;
+  color: #c7f0dd;
+}
+
+/* Step 2: the draft. */
+.us-warn {
+  background: rgba(234, 179, 8, 0.08);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  color: #d9c07a;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  margin-bottom: 0.75rem;
+}
+.us-warn strong { color: #f0d894; }
+
+/* The ffmpeg command offered when a dropped video will not play in a browser.
+   Selectable and wrapped rather than truncated: it exists to be copied. */
+.us-ffmpeg {
+  display: block;
+  margin-top: 0.25rem;
+  padding: 0.35rem 0.5rem;
+  background: #000;
+  color: #d4d4d4;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  word-break: break-all;
+  user-select: all;
+}
+.us-ffmpeg-note {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+/* Marks the offending row in the builder table, so a long list still shows
+   which file the warning above is about. */
+.sb-vwarn { color: #eab308; cursor: help; }
+
+.us-empty {
+  color: #555;
+  font-size: 0.9rem;
+  font-style: italic;
+  padding: 1rem 0.5rem;
+}
+.us-list-wrap {
+  background: #0a0a0a;
+  border: 1px solid #1e1e1e;
+  border-radius: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.us-list {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.us-list tr { border-bottom: 1px solid #1a1a1a; }
+.us-list tr:last-child { border-bottom: none; }
+.us-list td { padding: 0.4rem 0.6rem; vertical-align: baseline; }
+.sb-path {
+  color: #ccc;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+.sb-id {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
+}
+.sb-local { color: #6b7280; font-style: italic; font-family: inherit; }
+.sb-note  { color: #6b7280; font-size: 0.75rem; }
+.sb-size   { color: #888; font-size: 0.8rem; white-space: nowrap; }
+.sb-status { font-size: 0.78rem; white-space: nowrap; text-align: right; }
+.sb-act    { white-space: nowrap; text-align: right; }
+.sb-act button {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+}
+.sb-act .sb-rename {
+  background: #262626;
+  color: #c3cad3;
+}
+.sb-act .sb-rename:hover { background: #333; }
+.sb-act .sb-remove {
+  background: #3a1c1c;
+  color: #f0a0a0;
+  margin-left: 0.25rem;
+}
+.sb-act .sb-remove:hover { background: #dc2626; color: #fff; }
+
+/* Upload progress, shown only while a publish or share is transferring the
+   draft's pending files. */
+.us-progress-card {
+  background: var(--bg-card, #151515);
+  border: 1px solid var(--border-subtle, #1a1a1a);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-top: 0.75rem;
+}
+.us-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.us-progress-icon { color: #60a5fa; font-size: 1.1rem; }
+.us-progress-title { font-weight: 600; font-size: 1rem; }
+.us-progress-sub { color: #888; font-size: 0.85rem; }
+.us-progress-bar { width: 100%; height: 6px; margin-bottom: 0.75rem; }
+.us-progress-current {
+  font-size: 0.8rem;
+  color: #888;
+  font-family: var(--font-mono);
+  min-height: 1.1em;
+  word-break: break-all;
+}
+.us-progress-stats {
+  display: flex;
+  gap: 2rem;
+  margin-top: 0.5rem;
+  align-items: center;
+}
+.us-stat { text-align: center; }
+.us-stat-num { font-size: 1.4rem; font-weight: 700; color: #e2e8f0; }
+.us-stat-label { font-size: 0.7rem; color: #666; }
+.us-cancel {
+  margin-left: auto;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.85rem;
+}
+.us-cancel:hover { background: #ef4444; }
+
+/* Step 3: the two hand-out actions, side by side so the trade-off between
+   them is readable in one glance. */
+.us-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  /* Stretch so the pair reads as one block; their buttons sit at natural
+     height rather than being forced onto a shared baseline. */
+  align-items: stretch;
+}
+.us-action {
+  border: 1px solid #222;
+  border-radius: 8px;
+  background: #101010;
+  padding: 1rem;
+}
+.us-action-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+.us-action-head h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+.us-action-tag {
+  font-size: 0.7rem;
+  color: #7a8390;
+  background: #171717;
+  border: 1px solid #262626;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+/* The one-line summary of what the action produces, kept prominent above
+   the fuller explanation of who pays and what can be withdrawn. */
+.us-action-lead {
+  color: #c3cad3;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin: 0 0 0.5rem 0;
+}
+.us-action-lead code {
+  font-size: 0.8rem;
+  color: #93c5fd;
+}
+.us-action-desc {
+  color: #8a929c;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0 0 0.9rem 0;
+}
+.us-action-desc strong { color: #c3cad3; }
+
+.us-field { margin-bottom: 0.85rem; }
+/* Occupies Share's Description row in the Publish card. No height of its own —
+   the subgrid row it sits in is sized by Share's field opposite it. */
+.us-field-spacer { margin-bottom: 0.85rem; }
+.us-field > label {
+  display: block;
+  font-size: 0.78rem;
+  color: #9aa3ad;
+  margin-bottom: 0.3rem;
+}
+/* A number input next to its unit select. The global `input` rule is
+   width:100%, which would push the select onto its own line. */
+.us-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.us-field-row input {
+  width: 5rem;
+  flex: 0 0 auto;
+}
+.us-field-row select { flex: 0 0 auto; }
+.us-field-hint {
+  font-size: 0.72rem;
+  color: #6b7280;
+  line-height: 1.4;
+  margin-top: 0.3rem;
+}
+
+.us-action > button {
+  width: 100%;
+  padding: 0.55rem 1rem;
+  font-weight: 600;
+}
+.btn-publish { background: #2563eb; color: #fff; }
+.btn-publish:hover:not(:disabled) { background: #3b82f6; }
+.btn-share   { background: #059669; color: #fff; }
+.btn-share:hover:not(:disabled) { background: #10b981; }
+.btn-open    { background: #3b82f6; color: #fff; }
+.btn-muted   { background: #333; color: #ccc; }
+
+/* Keep their colour when disabled, dimmed rather than replaced.
+   The global `button:disabled` rule sets a flat grey and outranks the plain
+   class selectors above it (0,1,1 beats 0,1,0), so both action buttons went
+   the same dead grey whenever the draft was empty — losing the colour that
+   distinguishes publishing from sharing at a glance, exactly when the reader
+   is deciding between them. Dimming preserves that distinction while still
+   reading as unavailable. */
+.btn-publish:disabled { background: #2563eb; color: #fff; opacity: 0.4; cursor: not-allowed; }
+.btn-share:disabled   { background: #059669; color: #fff; opacity: 0.4; cursor: not-allowed; }
+.btn-open:disabled    { background: #3b82f6; color: #fff; opacity: 0.4; cursor: not-allowed; }
+.btn-muted:hover { background: #3f3f3f; }
+
+.us-action-progress {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: #888;
+  font-family: var(--font-mono);
+  word-break: break-word;
+}
+.us-action-result {
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid #222;
+}
+.us-result-label {
+  color: #888;
+  font-size: 0.78rem;
+  margin-bottom: 0.2rem;
+}
+.us-result-mono {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  word-break: break-all;
+  margin-bottom: 0.7rem;
+}
+.us-result-id    { color: #60a5fa; }
+.us-result-url   { color: #4ade80; }
+.us-result-share { color: #34d399; }
+
 /* ---- Address bar auto-hide while reading a site ----------------------
    The bar slides up out of #app's clipped box as the reader scrolls down a
    site, and returns on scroll up. margin-top is animated rather than a
@@ -1331,6 +1712,42 @@ progress::-moz-progress-bar {
   cursor: not-allowed;
 }
 
+/* ---- Publish / Share card alignment ---------------------------------
+   The two cards hold different content — Share has a Description field with
+   no Publish equivalent, and their explanatory paragraphs differ in length —
+   so left alone their "Expires in" rows and action buttons sit at different
+   heights. subgrid makes each card adopt the container's rows, so every row
+   is as tall as the taller of the two cards' content and the fields line up
+   exactly across both.
+
+   Only applied while the cards are side by side. Stacked there is nothing to
+   align to, and two cards both spanning rows 1-8 of a single column would
+   overlap — hence the explicit two-column template here rather than relying
+   on the auto-fit one, which could still collapse to one column inside a
+   narrow container. */
+@supports (grid-template-rows: subgrid) {
+  @media (min-width: 720px) {
+    .us-actions {
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: repeat(8, auto);
+    }
+    .us-action {
+      display: grid;
+      grid-template-rows: subgrid;
+      grid-row: span 8;
+      align-content: start;
+    }
+    /* The button should sit at the top of its row rather than stretching to
+       fill the space a longer neighbour needs. */
+    .us-action > button {
+      align-self: start;
+    }
+  }
+}
+
+/* Action buttons embedded in a status-bar message, e.g. "Register" on a
+   failure that registering would fix. Sized to sit inline with the text
+   rather than dominating the bar. */
 .status-action {
   padding: 0.1rem 0.5rem;
   margin-left: 0.4rem;
