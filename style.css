@@ -1760,6 +1760,79 @@ progress::-moz-progress-bar {
 .status-action[data-sialo-action="settings"] { background: #2563eb; }
 .status-action[data-sialo-action="settings"]:hover { background: #3b82f6; }
 
+/* Address-bar chip: names the kind of address currently shown. A bare 64-hex
+   seed says nothing about what it is, and "shared site" is the one fact a
+   viewer needs. Sits inline before the address, like a browser's security
+   indicator. */
+.addr-chip {
+  flex: 0 0 auto;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #6ee7b7;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.addr-chip:hover {
+  background: rgba(16, 185, 129, 0.22);
+  color: #a7f3d0;
+}
+
+/* The neutral variant: content that resolves through the viewer's own account,
+   as opposed to a capability someone granted them. */
+.addr-chip--published {
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.4);
+  color: #93c5fd;
+}
+.addr-chip--published:hover {
+  background: rgba(96, 165, 250, 0.2);
+  color: #bfdbfe;
+}
+
+/* A sharing-key description shown on a My Objects row. The text is untrusted
+   third-party input (see untrustedLabel in objects-ui.js): escaped and
+   stripped of control/BiDi characters before it gets here, and constrained
+   here so a long value cannot push the row's own content out of view. */
+.obj-key-chip {
+  display: inline-block;
+  max-width: 16rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  color: #6ee7b7;
+  font-size: 0.7rem;
+  /* Never let untrusted text inherit the surrounding direction: an embedded
+     RTL run would otherwise reorder the label around it. */
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+.obj-key-chip--more { color: #9aa3ad; border-color: #333; background: #171717; }
+
+/* The chip styling reused as an actual link, for returning to share.html's
+   file listing. */
+a.addr-chip--link {
+  text-decoration: none;
+  color: #93c5fd;
+  background: rgba(96, 165, 250, 0.12);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+a.addr-chip--link:hover {
+  background: rgba(96, 165, 250, 0.22);
+  color: #bfdbfe;
+}
+
 /* Shared-panel file name. Clickable when the app can render the file. */
 .sh-name {
   color: #e0e0e0;

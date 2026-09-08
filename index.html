@@ -60,7 +60,19 @@
           Register</button>
       </div>
       <button id="btn-back" class="nav-btn" title="Go back" disabled>&#8592;</button>
-      <input type="text" id="chrome-address-bar" placeholder="Paste Sia share URL or object ID..."
+      <!-- Names what kind of address is in the bar. A bare 64-hex seed is
+           otherwise unreadable: it does not say "this is a site someone shared
+           with you", which is the one thing a viewer needs to know. Hidden
+           unless the current tab is a shared site. -->
+      <!-- Shown when the app was entered from share.html's file listing, which
+           is a separate document: sialo's own Back has no tab to unwind to,
+           and browser Back is swallowed by the site iframe's joint session
+           history. An explicit link is the only reliable way back. -->
+      <a id="chrome-back-to-list" class="addr-chip addr-chip--link" style="display:none;"
+        title="Return to the file listing for this sharing key">&#8592; file list</a>
+      <span id="chrome-addr-chip" class="addr-chip" style="display:none;"
+        title="A site opened from a sharing key. Click to copy the link that opens it.">shared</span>
+      <input type="text" id="chrome-address-bar" placeholder="Paste Sia published URL or object ID..."
         title="Press Enter or click Go to auto-detect file type">
       <button id="btn-go" title="Auto-detect file type and load content">Go</button>
       <button id="btn-external-tab"

@@ -47,6 +47,7 @@ import { initObjectsUI } from './objects-ui.js';
 import { initSharingKeysUI } from './sharing-keys.js';
 import { initSharedUI } from './shared-ui.js';
 import { initPageGate } from './page-gate.js';
+import { initAddrChip } from './addr-chip.js';
 import { initAccountUI } from './account-ui.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import { setLoadContentHandler as setManifestLoadContent } from './manifest.js';
@@ -1100,6 +1101,11 @@ initUploadUI();
 // sharing link is pointed at registration instead of clicking things that
 // silently do nothing → page-gate.js
 initPageGate();
+
+// Address-bar chip: names the kind of address shown and copies the shareable
+// form of it → addr-chip.js
+initAddrChip();
+
 // Upload Site UI (directory → packed upload → site manifest) → upload-site-ui.js
 initUploadSiteUI();
 

@@ -377,6 +377,13 @@ export function updateAddressBarForTab(tab) {
   } else {
     bar.value = PANEL_URLS[tab.panelName] || '';
   }
+  // Announced rather than handled here: labelling the address needs the link
+  // builders in sharing-keys.js and sia-site.js, and sia-site.js imports this
+  // module — reaching for them here would close an import cycle. See
+  // addr-chip.js.
+  window.dispatchEvent(new CustomEvent('address-changed', {
+    detail: { url: bar.value, tab },
+  }));
 }
 
 export function highlightActiveMenuItem(panelName) {
