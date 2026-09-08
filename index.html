@@ -696,14 +696,15 @@
                  and republish. Unchanged files are re-signed at the panel's
                  validity and their metadata is re-tagged with the new
                  upload UUID so My Objects keeps them grouped. -->
-            <div style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #222;">
+            <div id="us-section-update" style="margin-top:2rem; padding-top:1.5rem; border-top:1px solid #222;">
               <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:0.5rem;">
                 <h3 style="margin:0; font-size:1rem; color:#e0e0e0;">Update Site</h3>
                 <span id="upd-count" style="font-size:0.8rem; color:#888;"></span>
               </div>
               <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
-                Paste a <code>sialo://</code> URL or manifest ID to load its files. Rename, replace,
-                remove, or add files; publishing issues a new manifest with fresh share URLs.
+                Load an existing site by its <code>sialo://</code> address, manifest ID, or sharing-key
+                seed. Rename, replace, remove, or add files, then hand the result out the same two
+                ways as a new site.
               </p>
 
               <div style="display:flex; gap:0.5rem; margin-bottom:1rem;">
@@ -712,6 +713,7 @@
                 <button id="upd-load" style="background:#3b82f6; color:white;">Load</button>
               </div>
 
+              <div id="upd-video-warn" class="us-warn" style="display:none;"></div>
               <div id="upd-empty" style="color:#555; font-size:0.9rem; font-style:italic; padding:1rem 0.5rem;">
                 Load a site to begin editing its files.
               </div>
@@ -723,8 +725,100 @@
               <div id="upd-actions" style="display:none; gap:0.5rem; flex-wrap:wrap; align-items:center;">
                 <button id="upd-add-btn">+ Add File</button>
                 <input type="file" id="upd-add-input" multiple style="display:none" />
-                <button id="upd-publish" style="background:#10b981; color:white;">Publish Updates</button>
-                <button id="upd-discard" style="background:#333; color:#ccc;">Discard</button>
+                <button id="upd-discard" class="btn-muted">Discard changes</button>
+              </div>
+
+              <!-- The same two ways of handing a site out as Upload Site, with
+                   the same distinction. Sharing differs in one way here: when
+                   the site was loaded FROM a sharing key, updating it reuses
+                   that key, so links already handed out keep working. -->
+              <div id="upd-outputs" class="us-actions" style="display:none; margin-top:1.25rem;">
+                <div class="us-action">
+                  <div class="us-action-head">
+                    <h4>Publish updates</h4>
+                    <span class="us-action-tag">standalone link</span>
+                  </div>
+                  <p class="us-action-lead">
+                    An expiring <code>sialo://</code> URL. Anyone can resolve it, and viewers
+                    pay for their own downloads.
+                  </p>
+                  <p class="us-action-desc">
+                    Writes a <strong>new manifest</strong> with fresh signed URLs, so this produces a
+                    <strong>new address</strong> — the site's previous URL keeps resolving to the old
+                    version until it expires, and cannot be withdrawn. Recipients resolve it through
+                    <strong>their own indexer account</strong> and pay for
+                    <strong>their own bandwidth</strong>.
+                  </p>
+                  <div class="us-field">
+                    <label for="upd-validity-num">Expires in</label>
+                    <div class="us-field-row">
+                      <input id="upd-validity-num" type="number" value="100" min="1" />
+                      <select id="upd-validity-unit">
+                        <option value="3600000">hours</option>
+                        <option value="86400000">days</option>
+                        <option value="604800000">weeks</option>
+                        <option value="2592000000">months (30d)</option>
+                        <option value="31536000000" selected>years</option>
+                      </select>
+                    </div>
+                    <div class="us-field-hint">
+                      How long the new URL's signature stays valid. It cannot be shortened later.
+                    </div>
+                  </div>
+                  <button id="upd-publish" class="btn-publish">Publish updates</button>
+                  <div id="upd-publish-progress" class="us-action-progress" style="display:none;"></div>
+                </div>
+
+                <div class="us-action">
+                  <div class="us-action-head">
+                    <h4>Share updates</h4>
+                    <span class="us-action-tag">revocable key</span>
+                  </div>
+                  <p class="us-action-lead">
+                    A revocable sharing key, plus a link that loads the site directly.
+                    Downloads are billed to you until you revoke it.
+                  </p>
+                  <p class="us-action-desc">
+                    Recipients need <strong>no indexer account</strong> and download on
+                    <strong>your bandwidth</strong>. Revoking the key on the
+                    <strong>Sharing Keys</strong> page cuts off access.
+                  </p>
+                  <div id="upd-share-reuse" class="us-warn" style="display:none;"></div>
+                  <div class="us-field" id="upd-share-desc-field">
+                    <label for="upd-share-desc">Description</label>
+                    <input id="upd-share-desc" type="text" placeholder="What this key is for" />
+                    <div class="us-field-hint">
+                      Labels the key on the Sharing Keys page. Only you can see it.
+                    </div>
+                  </div>
+                  <div class="us-field" id="upd-share-validity-field">
+                    <label for="upd-share-validity-num">Expires in</label>
+                    <div class="us-field-row">
+                      <input id="upd-share-validity-num" type="number" value="30" min="1" />
+                      <select id="upd-share-validity-unit">
+                        <option value="0">never</option>
+                        <option value="3600000">hours</option>
+                        <option value="86400000" selected>days</option>
+                        <option value="604800000">weeks</option>
+                        <option value="2592000000">months (30d)</option>
+                        <option value="31536000000">years</option>
+                      </select>
+                    </div>
+                  </div>
+                  <button id="upd-share" class="btn-share">Share updates</button>
+                  <div id="upd-share-progress" class="us-action-progress" style="display:none;"></div>
+
+                  <div id="upd-share-result" class="us-action-result" style="display:none;">
+                    <div class="us-result-label">Sharing key</div>
+                    <div id="upd-share-key" class="us-result-mono us-result-id"></div>
+                    <div class="us-result-label">Link that loads the site directly</div>
+                    <div id="upd-share-url" class="us-result-mono us-result-share"></div>
+                    <div class="row" style="gap:0.5rem;">
+                      <button id="upd-share-copy">Copy share link</button>
+                      <button id="upd-share-open">Open shared site</button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div><!-- /panel-section: Upload Site -->
