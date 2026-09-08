@@ -58,13 +58,38 @@ export function explainSdkError(err, url) {
     if (m) host = m[1];
   } catch (_) { /* best effort */ }
 
-  return (host ? `Could not reach ${host}.` : 'The request never reached the network.')
+  // The object id survives in the address even when the host does not, and a
+  // bare id resolves through whatever indexer is configured now, using the
+  // app key rather than the link's signature. That is the way back to content
+  // whose published URL has died — provided the object is still on the
+  // account, which is why this is phrased as something to try.
+  let objectId = '';
+  try {
+    const m = String(url || '').match(/\/objects\/([0-9a-f]{64})/i);
+    if (m) objectId = m[1].toLowerCase();
+  } catch (_) { /* best effort */ }
+
+  return (host
+    // Say where the host came from. It is fixed into a published URL when the
+    // URL is minted, from whatever indexer was configured at the time, so it
+    // is frequently not the indexer the reader is connected to now — and
+    // being told about an unfamiliar host with no explanation is confusing.
+    ? `Could not reach ${host}, which is the host named inside this link`
+      + ' rather than the indexer you are connected to. A published URL keeps'
+      + ' the host it was created with.'
+    : 'The request never reached the network.')
     + ' The browser refused or failed the request before any reply came back,'
     + ' so there is no error from the indexer to report. Usually one of:'
-    + ' the host is offline or unreachable;'
-    + ' the host serves plain http, and a published URL is always re-fetched'
+    + ' the host is offline, renamed or gone;'
+    + ' it serves plain http, and a published URL is always re-fetched'
     + ' over https, so it cannot be resolved again;'
-    + ' or the host does not allow requests from this page (CORS).';
+    + ' or it does not allow requests from this page (CORS).'
+    + (objectId
+      ? ` The link cannot be pointed at another host, because its signature`
+        + ` covers the host name. The object ID survives though — try`
+        + ` ${objectId} in the address bar, which resolves through your`
+        + ` current indexer if the object is still on your account.`
+      : '');
 }
 
 export function formatSize(bytes) {
