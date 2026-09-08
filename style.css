@@ -1271,6 +1271,25 @@ progress::-moz-progress-bar {
 }
 .txb-output-row input[type="text"] { flex: 1; }
 .txb-output-row .txb-output-amount { width: 140px; flex: none; }
+
+/* ---- Address bar auto-hide while reading a site ----------------------
+   The bar slides up out of #app's clipped box as the reader scrolls down a
+   site, and returns on scroll up. margin-top is animated rather than a
+   transform because the point is for the viewport to reclaim the space, so
+   this has to affect layout; the element is small and the transition short.
+   The tab strip is deliberately left alone — see setChromeCollapsed(). */
+#browser-chrome {
+  transition: margin-top 0.22s ease, opacity 0.18s ease;
+}
+#browser-chrome.chrome-collapsed {
+  opacity: 0;
+  /* Nothing in a bar that is on its way offscreen should be clickable. */
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  #browser-chrome { transition: none; }
+}
+
 /* ---- Page gate: shown when an indexer account is required ------------------------------------
    Shown in place of the page's steps when the indexer is not reachable, so
    nobody stages a whole site and only learns at publish time that it cannot
@@ -1364,4 +1383,3 @@ progress::-moz-progress-bar {
   line-height: 1.55;
   margin: 0 0 1.2rem 0;
 }
-

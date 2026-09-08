@@ -136,6 +136,10 @@ export function activateTab(tabId) {
   if (!tab) return;
   if (activeTabId === tabId) return; // already active
 
+  // Whatever the outgoing tab did to the address bar, the incoming one
+  // starts with it visible.
+  setChromeCollapsed(false);
+
   const prevTab = tabs.find(t => t.id === activeTabId);
 
   // Hide previous tab's content
@@ -481,6 +485,67 @@ export function isSiaSiteTab(tab) {
   return !!(tab && tab.type === 'browser' &&
     typeof tab.url === 'string' && tab.url.startsWith('sialo://'));
 }
+
+/**
+ * Slide the address bar out of view while reading a site, and bring it back.
+ *
+ * Sites render in a cross-origin sandboxed iframe, so the app cannot observe
+ * their scrolling directly; a small reporter injected into each page tells us
+ * which way the reader is going (see SCROLL_REPORTER in sia-site.js). The bar
+ * is the first child of the #app flex column, so a negative top margin slides
+ * it up and #app's `overflow: hidden` clips it. The height is measured at
+ * collapse time rather than hard-coded, because the bar wraps at narrow
+ * widths and its height is not fixed.
+ *
+ * The tab strip deliberately stays put: losing the address bar is
+ * recoverable by scrolling up, but losing the tabs would leave no way back.
+ */
+let chromeCollapsed = false;
+
+export function setChromeCollapsed(collapsed) {
+  const chrome = document.getElementById('browser-chrome');
+  if (!chrome) return;
+  if (collapsed === chromeCollapsed) return;
+  // The gear menu is positioned inside the bar, so collapsing while it is
+  // open would drag an open menu offscreen.
+  const menu = document.getElementById('gear-menu');
+  if (collapsed && menu && menu.style.display !== 'none') return;
+  chromeCollapsed = collapsed;
+  if (collapsed) {
+    chrome.style.marginTop = `-${chrome.offsetHeight}px`;
+    chrome.classList.add('chrome-collapsed');
+  } else {
+    chrome.style.marginTop = '';
+    chrome.classList.remove('chrome-collapsed');
+  }
+}
+
+// Escape hatches for the collapsed address bar.
+//
+// The bar is hidden in response to scrolling *inside* a sandboxed iframe, but
+// it must never be recoverable only that way. If the iframe dies, is blocked,
+// navigates somewhere without the bridge, or simply stops sending — the user
+// is left with no address bar and no way to get it back, which is worse than
+// never hiding it. These restore it independently of any iframe:
+//
+//   • pointer near the top of the window, the convention every browser uses
+//   • Escape, for keyboard users and when the pointer is inside the iframe
+//     (where the parent sees no mousemove at all)
+//
+// Installed once, at module load, so they exist regardless of which panels
+// have initialised.
+(() => {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('mousemove', (e) => {
+    if (e.clientY <= 60) setChromeCollapsed(false);
+  }, { passive: true });
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') setChromeCollapsed(false);
+  });
+  // Focus returning to the app (e.g. clicking out of the iframe) is also a
+  // moment the user may be looking for the bar.
+  window.addEventListener('focus', () => setChromeCollapsed(false));
+})();
 
 export function updateNavButtons() {
   const tab = getActiveTab();
