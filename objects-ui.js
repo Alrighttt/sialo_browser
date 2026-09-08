@@ -508,7 +508,7 @@ async function indexSharingKeyLabels(sdk) {
 
     // Toggle collapse on group-header clicks. Delegated per-render
     // since the tbody HTML is rebuilt. Buttons inside the header
-    // (Open Site / Share / Delete) intercept the click first and
+    // (Open Site / Publish / Delete) intercept the click first and
     // dispatch through to the existing per-row handlers — they pass
     // the manifest id so all the site-aware logic in
     // viewObjectById / publishObjectById / deleteObjectById applies.
@@ -958,7 +958,7 @@ async function indexSharingKeyLabels(sdk) {
   // Helper function to delete an object. Manifest objects prompt the
   // user to choose between deleting just the manifest (leaves all
   // referenced file objects pinned) or the manifest plus every object
-  // the manifest's share URLs point at.
+  // the manifest's published URLs point at.
   window.deleteObjectById = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
     const match = allObjects.find(o => o.id === objectId);
@@ -1009,7 +1009,7 @@ async function indexSharingKeyLabels(sdk) {
 
   // Modal-based confirmation for manifest delete: either drop just the
   // manifest JSON (leaving referenced objects pinned and individually
-  // reachable) or drop the manifest plus every object its share URLs
+  // reachable) or drop the manifest plus every object its published URLs
   // name. Files that belong to other indexers (cross-indexer manifests)
   // are reported but skipped — deleteObject on the primary indexer
   // can't touch them.
@@ -1031,11 +1031,11 @@ async function indexSharingKeyLabels(sdk) {
         <div style="display:flex; flex-direction:column; gap:0.5rem; margin-bottom:1rem;">
           <button id="del-manifest-only" style="padding:0.75rem; background:#f59e0b; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem; text-align:left;">
             <div style="font-weight:600;">Delete manifest only</div>
-            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site entry. Referenced files stay pinned and reachable via their individual share URLs.</div>
+            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site entry. Referenced files stay pinned and reachable via their individual published URLs.</div>
           </button>
           <button id="del-manifest-all" style="padding:0.75rem; background:#dc2626; color:white; border:none; border-radius:4px; cursor:pointer; font-size:0.95rem; text-align:left;">
             <div style="font-weight:600;">Delete manifest + all referenced files</div>
-            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site and every file object it names. Any existing share URLs for those files will break.</div>
+            <div style="font-size:0.8rem; opacity:0.85; margin-top:0.15rem;">Removes the site and every file object it names. Any existing published URLs for those files will break.</div>
           </button>
         </div>
         <button id="del-manifest-cancel" style="width:100%; padding:0.6rem; background:#333; color:#ccc; border:none; border-radius:4px; cursor:pointer; font-size:0.9rem;">Cancel</button>
@@ -1081,7 +1081,7 @@ async function indexSharingKeyLabels(sdk) {
         }
         if (!confirm(
           `Delete the manifest plus ${ids.length} referenced file${ids.length === 1 ? '' : 's'}?` +
-          (skipped.length ? `\n\n${skipped.length} entr${skipped.length === 1 ? 'y was' : 'ies were'} skipped (unrecognized share URL).` : '')
+          (skipped.length ? `\n\n${skipped.length} entr${skipped.length === 1 ? 'y was' : 'ies were'} skipped (unrecognized published URL).` : '')
         )) return;
         ids.push(objectId);
         await deleteObjects(ids, 'manifest + files');
@@ -1175,8 +1175,8 @@ async function indexSharingKeyLabels(sdk) {
       justify-content: center; z-index: 1000;
     `;
 
-    const titleLabel = isManifest ? '🌐 Share Sia site' : '🔗 Generate Share URL';
-    // Sites typically want longer validity than a casual file share —
+    const titleLabel = isManifest ? '🌐 Publish Sia site' : '🔗 Publish object';
+    // Sites typically want longer validity than a casual one-off publish —
     // default to 1 year so the link doesn't expire mid-tour.
     const defaultNum = isManifest ? '1' : '24';
     const hoursSel = isManifest ? '' : '';
@@ -1191,8 +1191,8 @@ async function indexSharingKeyLabels(sdk) {
         <div style="margin-bottom:1.5rem;">
           <div style="color:#e0e0e0; margin-bottom:0.5rem; font-size:0.9rem;">Expires in</div>
           <div style="display:flex; gap:0.5rem; align-items:center;">
-            <input id="share-modal-duration" type="number" value="${defaultNum}" min="1" style="width:5rem; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;" />
-            <select id="share-modal-unit" style="flex:1; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;">
+            <input id="publish-modal-duration" type="number" value="${defaultNum}" min="1" style="width:5rem; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;" />
+            <select id="publish-modal-unit" style="flex:1; padding:0.5rem; background:#0a0a0a; color:#e0e0e0; border:1px solid #333; border-radius:4px; font-size:1rem;">
               <option value="3600000"${hoursSel}>hours</option>
               <option value="86400000"${daysSel}>days</option>
               <option value="604800000">weeks</option>
@@ -1202,10 +1202,10 @@ async function indexSharingKeyLabels(sdk) {
         </div>
 
         <div style="display:flex; gap:0.5rem;">
-          <button id="btn-generate-share" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem; font-weight:500;">
+          <button id="btn-generate-publish" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem; font-weight:500;">
             Generate Link
           </button>
-          <button id="btn-cancel-share" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
+          <button id="btn-cancel-publish" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
             Cancel
           </button>
         </div>
@@ -1220,20 +1220,20 @@ async function indexSharingKeyLabels(sdk) {
     });
 
     // Cancel button
-    configModal.querySelector('#btn-cancel-share').addEventListener('click', () => {
+    configModal.querySelector('#btn-cancel-publish').addEventListener('click', () => {
       configModal.remove();
     });
 
     // Generate button
-    configModal.querySelector('#btn-generate-share').addEventListener('click', async () => {
-      const generateBtn = configModal.querySelector('#btn-generate-share');
+    configModal.querySelector('#btn-generate-publish').addEventListener('click', async () => {
+      const generateBtn = configModal.querySelector('#btn-generate-publish');
       const originalText = generateBtn.textContent;
       generateBtn.textContent = '⏳ Generating...';
       generateBtn.disabled = true;
 
       try {
-        const duration = parseFloat(configModal.querySelector('#share-modal-duration').value);
-        const unit = parseInt(configModal.querySelector('#share-modal-unit', 10).value);
+        const duration = parseFloat(configModal.querySelector('#publish-modal-duration').value);
+        const unit = parseInt(configModal.querySelector('#publish-modal-unit', 10).value);
 
         const status = panelStatus();
         const sdk = await connectSdk(status);
@@ -1255,7 +1255,7 @@ async function indexSharingKeyLabels(sdk) {
           : rawPublishUrl;
 
         // Calculate human-readable duration
-        let durationText = `${duration} ${configModal.querySelector('#share-modal-unit').selectedOptions[0].text}`;
+        let durationText = `${duration} ${configModal.querySelector('#publish-modal-unit').selectedOptions[0].text}`;
 
         // Remove config modal
         configModal.remove();
@@ -1270,17 +1270,17 @@ async function indexSharingKeyLabels(sdk) {
 
         resultModal.innerHTML = `
           <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:600px; width:90%; border:1px solid #333;">
-            <h3 style="margin:0 0 1rem 0; color:#10b981;">${isManifest ? '🌐 Sia Site URL' : '🔗 Share URL Generated'}</h3>
+            <h3 style="margin:0 0 1rem 0; color:#10b981;">${isManifest ? '🌐 Sia Site URL' : '🔗 Object published'}</h3>
             <p style="color:#888; margin-bottom:1rem;">${isManifest ? 'Site' : 'Object'}: ${shortId}</p>
             <div style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem; word-break:break-all; font-family:monospace; font-size:0.9rem;">
-              ${shareUrl}
+              ${publishUrl}
             </div>
             <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
               ⏰ Valid for ${durationText}<br>
               🔒 Includes encryption key in URL
             </p>
             <div style="display:flex; gap:0.5rem;">
-              <button onclick="navigator.clipboard.writeText('${shareUrl.replace(/'/g, "\\'")}').then(() => alert('Share URL copied!')); this.parentElement.parentElement.parentElement.remove();" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
+              <button onclick="navigator.clipboard.writeText('${publishUrl.replace(/'/g, "\\'")}').then(() => alert('Published URL copied!')); this.parentElement.parentElement.parentElement.remove();" style="flex:1; padding:0.75rem; background:#10b981; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
                 📋 Copy URL
               </button>
               <button onclick="this.parentElement.parentElement.parentElement.remove();" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
@@ -1298,7 +1298,7 @@ async function indexSharingKeyLabels(sdk) {
         });
       } catch (e) {
         configModal.remove();
-        alert(`Share failed: ${e.message}`);
+        alert(`Publish failed: ${e.message}`);
       }
     });
   };
