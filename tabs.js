@@ -6,6 +6,13 @@
 
 // ── Panel ↔ URL mappings ──
 
+// object-input.js is a leaf module with no imports of its own, so this cannot
+// close the cycle that keeps the rest of the app out of here (see the note in
+// addr-chip.js). It is imported rather than reimplemented deliberately: a
+// second copy of the site-address shape test is how `sialo://wallet` came to be
+// treated as content once already.
+import { isSiteAddress } from './object-input.js';
+
 export const PANEL_URLS = {
   'setup':       'sialo://settings',
   'dashboard':   'sialo://dashboard',
@@ -567,6 +574,34 @@ export function setChromeCollapsed(collapsed) {
 
 export function updateNavButtons() {
   const tab = getActiveTab();
+
+  // The save button downloads the object the tab is showing. An internal page
+  // (sialo://upload/site and friends) has no object behind it, so the action
+  // is meaningless there — disable it rather than let it fail. Set before the
+  // early returns below, which only concern back/forward.
+  const save = document.getElementById('btn-external-tab');
+  if (save) {
+    const savable = !!(tab && tab.type === 'browser' && tab.url);
+    save.disabled = !savable;
+    save.title = savable
+      ? 'Download this object to disk regardless of file type'
+      : 'Nothing to save on this page';
+  }
+
+  // Pinning acts on whatever the tab is showing, so it needs the same kind of
+  // address the save button does. Whether the address is actually pinnable is
+  // a shape test — a `sia://` object or a site — because the real answer needs
+  // the site resolved, which is far too much work for a button-state update.
+  const pin = document.getElementById('btn-pin');
+  if (pin) {
+    const url = tab && tab.type === 'browser' ? String(tab.url || '') : '';
+    const pinnable = /^sia:\/\//i.test(url) || isSiteAddress(url);
+    pin.disabled = !pinnable;
+    pin.title = pinnable
+      ? 'Pin this to your own account so it stays available after the person sharing it stops'
+      : 'Nothing to pin on this page';
+  }
+
   const back = document.getElementById('btn-back');
   if (!back) return;
   // Sia-site tabs: delegate back/forward to the iframe's own history.

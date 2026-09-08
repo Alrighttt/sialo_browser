@@ -19,6 +19,7 @@ import {
 import { parseShareFragment } from './sharing-keys.js';
 import { siteUrl, parsePublishedSiteFragment, DEFAULT_INDEXER } from './sia-site.js';
 import { tabStatusProxy, getActiveTab, openOrActivateInternalTab } from './tabs.js';
+import { pinHandle, describePinResult } from './pin.js';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
 
 function panelStatus() {
@@ -164,12 +165,48 @@ function renderObject(sdk, obj, highlight, seed) {
       </div>
       ${canOpen ? '<button data-act="open" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#059669; color:white; flex-shrink:0;">Open</button>' : ''}
       <button data-act="download" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#3b82f6; color:white; flex-shrink:0;">Download</button>
+      <button data-act="pin" title="Keep this on your own account, so it stays after the key is revoked or its owner stops paying" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#7c3aed; color:white; flex-shrink:0;">&#128204; Pin</button>
     `;
     if (canOpen) {
       const open = () => openSiteTab(siteUrl(seed, name));
       row.querySelector('[data-act="open"]').addEventListener('click', open);
       row.querySelector('.sh-name').addEventListener('click', open);
     }
+    // Downloading gives you a copy on this device; pinning keeps it on Sia
+    // under your account, which is what survives the key being revoked. The
+    // object handle came from the sharing key and already carries its
+    // decryption keys, so nothing needs resolving or re-uploading.
+    row.querySelector('[data-act="pin"]').addEventListener('click', async (e) => {
+      const button = e.target;
+      const original = button.textContent;
+      const status = panelStatus();
+      if (!confirm(`Pin "${name}" (${formatSize(obj.size())}) to your account?\n\n`
+        + 'It stays available even if this sharing key is revoked, and the storage '
+        + 'is billed to your account from now on. Nothing is re-uploaded.')) return;
+      button.disabled = true;
+      button.textContent = 'Pinning…';
+      try {
+        const result = await pinHandle(obj, { statusEl: status });
+        const summary = _esc(describePinResult(result));
+        status.innerHTML = result.failed.length === 0
+          ? `<span class="pass">${summary}</span>`
+          : `<span style="color:#f59e0b">${summary}</span>`;
+        if (result.pinned > 0) button.textContent = '\u2713 Pinned';
+      } catch (err) {
+        if (isAccountError(err)) {
+          showAccountPrompt('Pinning keeps the file on your own account, which needs one.');
+          status.innerHTML = '';
+        } else {
+          status.innerHTML = `<span class="fail">Could not pin: ${_esc(err.message || err)}</span>`;
+        }
+        button.textContent = original;
+      } finally {
+        // Left disabled after a success: the object is pinned, and a second
+        // press would only re-pin what is already there.
+        if (button.textContent === original) button.disabled = false;
+      }
+    });
+
     row.querySelector('[data-act="download"]').addEventListener('click', async (e) => {
       const button = e.target;
       const original = button.textContent;

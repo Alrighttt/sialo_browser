@@ -25,6 +25,7 @@ import DOMPurify from './vendor/purify.es.mjs';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
 import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
+import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
 
 // -- Decentralized Browser (HTML Viewer with Navigation) --
 
@@ -584,25 +585,30 @@ function updateBrowserUI() {
     const showWarning = item.external && !isPdf;
 
     const itemText = (showWarning ? '⚠️ ' : '') + (item.title || item.displayUrl);
+    // History is where someone goes to find the thing they saw once and want
+    // to keep. Offered only for entries that name Sia content: a local page or
+    // an external tab has nothing to pin.
+    const pinAddr = item.originalUrl || item.displayUrl;
+    const canPin = looksPinnable(pinAddr);
     historyItem.innerHTML = `
       <span class="history-title">${itemText}</span>
+      ${canPin ? '<button class="history-pin" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #a78bfa; cursor: pointer; padding: 0 0.5rem; font-size: 1rem; line-height: 1;" title="Pin to your account">&#128204;</button>' : ''}
       ${item.blobUrl ? '<button class="history-download" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #10b981; cursor: pointer; padding: 0 0.5rem; font-size: 1rem; line-height: 1;" title="Download">⬇</button>' : ''}
       <button class="history-delete" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #ef4444; cursor: pointer; padding: 0 0.5rem; font-size: 1.2rem; line-height: 1;" title="Delete">×</button>
     `;
     historyItem.title = (showWarning ? '[External Tab] ' : '') + item.displayUrl;
 
     // Show buttons on hover
+    const hoverButtons = () => [
+      historyItem.querySelector('.history-delete'),
+      historyItem.querySelector('.history-download'),
+      historyItem.querySelector('.history-pin'),
+    ];
     historyItem.addEventListener('mouseenter', () => {
-      const deleteBtn = historyItem.querySelector('.history-delete');
-      const downloadBtn = historyItem.querySelector('.history-download');
-      if (deleteBtn) deleteBtn.style.opacity = '1';
-      if (downloadBtn) downloadBtn.style.opacity = '1';
+      for (const b of hoverButtons()) if (b) b.style.opacity = '1';
     });
     historyItem.addEventListener('mouseleave', () => {
-      const deleteBtn = historyItem.querySelector('.history-delete');
-      const downloadBtn = historyItem.querySelector('.history-download');
-      if (deleteBtn) deleteBtn.style.opacity = '0';
-      if (downloadBtn) downloadBtn.style.opacity = '0';
+      for (const b of hoverButtons()) if (b) b.style.opacity = '0';
     });
 
     // Navigate on title click
@@ -617,6 +623,15 @@ function updateBrowserUI() {
       });
     }
 
+    // Pin on 📌 click
+    const pinBtn = historyItem.querySelector('.history-pin');
+    if (pinBtn) {
+      pinBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pinHistoryItem(index, pinBtn);
+      });
+    }
+
     // Delete on X click
     historyItem.querySelector('.history-delete').addEventListener('click', (e) => {
       e.stopPropagation();
@@ -625,6 +640,58 @@ function updateBrowserUI() {
 
     historyList.appendChild(historyItem);
   });
+}
+
+/**
+ * Pin what a history entry points at onto this account.
+ *
+ * Kept separate from the chrome button because the entry may be a site the
+ * user is not currently looking at, so there is no active tab to resolve
+ * against or report into — the button itself carries the state instead.
+ */
+async function pinHistoryItem(index, btn) {
+  if (index < 0 || index >= browserHistory.length) return;
+  const item = browserHistory[index];
+  const address = item.originalUrl || item.displayUrl;
+  const active = getActiveTab();
+  const status = active ? tabStatusProxy(active).status : null;
+  const setStatus = (html) => { if (status) status.innerHTML = html; };
+
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = '…';
+  try {
+    const targets = await resolvePinTargets(address);
+    if (!targets || targets.length === 0) {
+      setStatus('<span style="color:#f59e0b">Nothing to pin for that entry.</span>');
+      return;
+    }
+    const what = targets.length === 1
+      ? `Pin "${targets[0].path}" to your account?`
+      : `Pin all ${targets.length} files in this site to your account?`;
+    if (!confirm(`${what}\n\nThey stay available even if whoever shared them stops, `
+      + `and the storage is billed to your account from now on. Nothing is re-uploaded.`)) {
+      return;
+    }
+    const result = await pinTargets(targets, {
+      onProgress: ({ done, total }) => {
+        if (done < total) setStatus(`Pinning ${done + 1} of ${total}…`);
+      },
+    });
+    const summary = _esc(describePinResult(result));
+    setStatus(result.failed.length === 0
+      ? `<span class="pass">${summary}</span>`
+      : `<span style="color:#f59e0b">${summary}</span>`);
+    if (result.pinned > 0) { btn.textContent = '\u2713'; btn.title = 'Pinned to your account'; return; }
+  } catch (e) {
+    if (isAccountError(e)) {
+      showAccountPrompt('Pinning keeps the file on your own account, which needs one.');
+    } else {
+      setStatus(`<span class="fail">Could not pin: ${_esc(e.message || String(e))}</span>`);
+    }
+  } finally {
+    if (btn.textContent !== '\u2713') { btn.textContent = original; btn.disabled = false; }
+  }
 }
 
 function deleteHistoryItem(index) {
@@ -1482,6 +1549,77 @@ document.getElementById('btn-external-tab').addEventListener('click', () => {
   document.getElementById('dl-filename').value = suggestedName;
   openOrActivateInternalTab('download');
   document.getElementById('btn-download').click();
+});
+
+// Pin whatever the current tab is showing onto this account, so it survives the
+// person who shared it losing interest. Costs storage on your account rather
+// than bandwidth: the object's slab references are re-signed with your key, so
+// nothing is re-uploaded and even a multi-gigabyte file pins in moments.
+//
+// Confirmation is not boilerplate here — a site address with no path means
+// every file in the site, which for a shared folder of videos is tens of
+// gigabytes charged to the reader's account. The count and size go in the
+// prompt so the decision is made with them in view.
+document.getElementById('btn-pin').addEventListener('click', async () => {
+  const active = getActiveTab();
+  const status = active ? tabStatusProxy(active).status : null;
+  const setStatus = (html) => { if (status) status.innerHTML = html; };
+  const btn = document.getElementById('btn-pin');
+  const address = (active && active.url) || document.getElementById('chrome-address-bar').value.trim();
+  if (!address) {
+    setStatus('<span style="color:#f59e0b">Nothing to pin on this page.</span>');
+    return;
+  }
+
+  btn.disabled = true;
+  try {
+    setStatus('Working out what to pin…');
+    const targets = await resolvePinTargets(address);
+    if (!targets || targets.length === 0) {
+      setStatus('<span style="color:#f59e0b">Nothing on this page can be pinned.</span>');
+      return;
+    }
+
+    // Only a sharing key hands back object handles, so only then is the size
+    // known before pinning. A manifest site would have to resolve every
+    // published URL to find out, which is the work we are asking about.
+    let known = 0;
+    for (const t of targets) {
+      if (typeof t.ref !== 'string') {
+        try { known += Number(t.ref.size()) || 0; } catch (_) { /* optional */ }
+      }
+    }
+    const sizeNote = known > 0 ? ` (${formatSize(known)})` : '';
+    const what = targets.length === 1
+      ? `Pin "${targets[0].path}"${sizeNote} to your account?`
+      : `Pin all ${targets.length} files${sizeNote} in this site to your account?`;
+    if (!confirm(`${what}\n\nThey stay available even if whoever shared them stops, `
+      + `and the storage is billed to your account from now on. Nothing is re-uploaded.`)) {
+      setStatus('');
+      return;
+    }
+
+    const result = await pinTargets(targets, {
+      onProgress: ({ done, total, name }) => {
+        if (done < total) {
+          setStatus(`Pinning ${done + 1} of ${total}${name ? ` — ${_esc(name)}` : ''}…`);
+        }
+      },
+    });
+    const summary = _esc(describePinResult(result));
+    setStatus(result.failed.length === 0
+      ? `<span class="pass">${summary}</span>`
+      : `<span style="color:#f59e0b">${summary}</span>`);
+  } catch (e) {
+    if (isAccountError(e)) {
+      showAccountPrompt('Pinning stores the file under your own account, which needs one.');
+      setStatus('');
+    } else {
+      setStatus(`<span class="fail">Could not pin: ${_esc(e.message || String(e))}</span>`);
+    }
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 // Listen for messages from iframe (e.g., from example.html buttons)
