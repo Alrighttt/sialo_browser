@@ -26,7 +26,14 @@
 // what to expect and what to check, not what to press.
 //
 // Everything here is pure. `usableHosts` is a Set of host public keys, taken
-// from `sdk.hosts()` on the indexer in question.
+// from `sdk.hosts()` on the indexer in question — the indexer's own
+// usable-hosts query, which is the right yardstick for two reasons. Its
+// contract test is character-for-character the one the pin rule applies
+// (`state IN (0,1) AND renewed_to IS NULL AND good AND proof_height >
+// scanned_height`), so "unusable" here means the same thing as "would be
+// refused on pin" there. And usability requires `has_quic AND has_siamux`
+// together, so protocol is not a variable: a host that ever held a shard
+// supported both, and the wasm binding's QUIC filter narrows nothing.
 
 /** Mirrors `maxBadParityShards` in indexd's persist/postgres/sectors.go. */
 export const MAX_BAD_PARITY_FRACTION = 0.2;

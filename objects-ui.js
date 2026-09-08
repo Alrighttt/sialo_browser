@@ -1539,10 +1539,10 @@ async function indexSharingKeyLabels(sdk) {
                 Repairing is the indexer's own job: it re-uploads shards from unusable
                 hosts onto good ones on a background pass, so there is nothing to press
                 here. If an object stays unhealthy, slab migrations may be turned off on
-                that indexer. One limit worth knowing: the host list this is measured
-                against only includes QUIC hosts, because that is all a browser can
-                reach, so a shard on a host the indexer can use over SiaMux still counts
-                as unusable here.
+                that indexer. A shard counts as unusable here on exactly the terms
+                that stop another indexer accepting it: this list comes from the
+                indexer's own usable-hosts query, whose contract test is the same one
+                the pin rule applies.
               </div>
             </div>` : `
             <div style="border-top:1px solid #222; margin-top:0.25rem; padding-top:0.75rem; color:#888; font-size:0.85rem;">
