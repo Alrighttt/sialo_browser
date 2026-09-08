@@ -543,6 +543,19 @@ progress::-moz-progress-bar {
 }
 #status-bar .status-dot.connected { background: #4ade80; }
 
+/* The tab/panel status message. One line, clipped with an ellipsis so the bar
+   never changes height; renderTabStatus mirrors the full text into `title`,
+   and the help cursor advertises that there is more to read. */
+.status-clipped {
+  color: #888;
+  font-size: 0.75rem;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* History items (used in history panel) */
 .history-item {
   font-size: 0.75rem;

@@ -432,6 +432,18 @@ export function renderTabStatus() {
   const progressEl = document.getElementById('browser-progress');
   if (statusEl) {
     statusEl.innerHTML = (tab && tab.statusHTML) || '';
+    // The bar clips at 60% of its width with an ellipsis, and every panel's
+    // status lands here, so a long message — an error explaining three
+    // possible causes, say — is unreadable without somewhere to read it in
+    // full. Mirror the rendered text into the tooltip.
+    //
+    // Read back as textContent rather than reusing statusHTML: the markup is
+    // already parsed by this point, so embedded elements (a Register button,
+    // a <span class="fail">) contribute their words instead of their tags,
+    // and entities are already characters.
+    const full = statusEl.textContent.replace(/\s+/g, ' ').trim();
+    if (full) statusEl.title = full;
+    else statusEl.removeAttribute('title');
   }
   if (progressEl) {
     if (tab && tab.progressVisible) {
