@@ -26,6 +26,7 @@ import { isAccountError, showAccountPrompt } from './page-gate.js';
 import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
+import { classifyObjectInput } from './object-input.js';
 
 // -- Decentralized Browser (HTML Viewer with Navigation) --
 
@@ -510,6 +511,48 @@ async function handleSiaStreamRequest(url, sessionId, sourceTab) {
   }
 }
 
+/**
+ * Which row actions apply to a history entry, and the reason when one does
+ * not. Both buttons are always rendered, so each answer carries the sentence
+ * that goes in its tooltip — a disabled control that says why is more use than
+ * one that silently is not there.
+ *
+ * Saving wants a single object. A `sialo://` site is many files plus a
+ * manifest, an external tab is not Sia content at all, and neither is
+ * something the Download File panel can be pointed at. A cached blob from an
+ * earlier view is enough on its own, whatever the address looks like.
+ *
+ * Pinning wants content somebody else is paying to host. A bare object ID is
+ * already this account's own object — `sdk.object()` only resolves your own —
+ * so pinning it would be a no-op rather than an error.
+ */
+function historyActions(item) {
+  const url = item.originalUrl || item.displayUrl || '';
+  const parsed = classifyObjectInput(url);
+  const isSite = item.fileType === 'sialo' || parsed.kind === 'site';
+
+  let canSave = true;
+  let saveTitle = 'Save this file to disk';
+  if (item.blobUrl) {
+    saveTitle = 'Save this file to disk';
+  } else if (item.external) {
+    canSave = false; saveTitle = 'Nothing to save: this was an external tab, not Sia content';
+  } else if (isSite) {
+    canSave = false; saveTitle = 'A site is many files — open it and save them individually';
+  } else if (parsed.kind === 'invalid') {
+    canSave = false; saveTitle = 'Nothing to save: this entry does not name a Sia object';
+  }
+
+  const canPin = looksPinnable(url);
+  let pinTitle = 'Pin to your account, so it stays when whoever shared it stops';
+  if (!canPin) {
+    pinTitle = parsed.kind === 'id'
+      ? 'Already on your account — nothing to pin'
+      : 'Nothing to pin: this entry does not name Sia content';
+  }
+  return { canSave, saveTitle, canPin, pinTitle };
+}
+
 const HISTORY_STORAGE_KEY = 'sia-browser-history';
 const browserHistory = [];
 let currentHistoryIndex = -1;
@@ -587,54 +630,43 @@ function updateBrowserUI() {
 
     const itemText = (showWarning ? '⚠️ ' : '') + (item.title || item.displayUrl);
     // History is where someone goes to find the thing they saw once and want
-    // to keep. Offered only for entries that name Sia content: a local page or
-    // an external tab has nothing to pin.
-    const pinAddr = item.originalUrl || item.displayUrl;
-    const canPin = looksPinnable(pinAddr);
+    // to keep, so Save and Pin both belong on every row. Where one does not
+    // apply it is disabled and says why, rather than being absent.
+    const act = historyActions(item);
     historyItem.innerHTML = `
       <span class="history-title">${itemText}</span>
-      ${canPin ? '<button class="history-pin" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #a78bfa; cursor: pointer; padding: 0 0.5rem; font-size: 1rem; line-height: 1;" title="Pin to your account">&#128204;</button>' : ''}
-      ${item.blobUrl ? '<button class="history-download" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #10b981; cursor: pointer; padding: 0 0.5rem; font-size: 1rem; line-height: 1;" title="Download">⬇</button>' : ''}
-      <button class="history-delete" style="opacity: 0; transition: opacity 0.2s; background: none; border: none; color: #ef4444; cursor: pointer; padding: 0 0.5rem; font-size: 1.2rem; line-height: 1;" title="Delete">×</button>
+      <button class="history-act history-act--save"${act.canSave ? '' : ' disabled'}
+        title="${_esc(act.saveTitle)}">&#11015;</button>
+      <button class="history-act history-act--pin"${act.canPin ? '' : ' disabled'}
+        title="${_esc(act.pinTitle)}">&#128204;</button>
+      <button class="history-act history-act--del" title="Remove from history">&times;</button>
     `;
     historyItem.title = (showWarning ? '[External Tab] ' : '') + item.displayUrl;
-
-    // Show buttons on hover
-    const hoverButtons = () => [
-      historyItem.querySelector('.history-delete'),
-      historyItem.querySelector('.history-download'),
-      historyItem.querySelector('.history-pin'),
-    ];
-    historyItem.addEventListener('mouseenter', () => {
-      for (const b of hoverButtons()) if (b) b.style.opacity = '1';
-    });
-    historyItem.addEventListener('mouseleave', () => {
-      for (const b of hoverButtons()) if (b) b.style.opacity = '0';
-    });
 
     // Navigate on title click
     historyItem.querySelector('.history-title').addEventListener('click', () => navigateToHistory(index));
 
-    // Download on ⬇ click
-    const downloadBtn = historyItem.querySelector('.history-download');
-    if (downloadBtn) {
-      downloadBtn.addEventListener('click', (e) => {
+    // Save on ⬇ click. Must stay synchronous through to the download click so
+    // the user activation survives into showSaveFilePicker; see saveHistoryItem.
+    const saveBtn = historyItem.querySelector('.history-act--save');
+    if (act.canSave) {
+      saveBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        downloadHistoryItem(index);
+        saveHistoryItem(index);
       });
     }
 
     // Pin on 📌 click
-    const pinBtn = historyItem.querySelector('.history-pin');
-    if (pinBtn) {
+    const pinBtn = historyItem.querySelector('.history-act--pin');
+    if (act.canPin) {
       pinBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         pinHistoryItem(index, pinBtn);
       });
     }
 
-    // Delete on X click
-    historyItem.querySelector('.history-delete').addEventListener('click', (e) => {
+    // Remove on × click
+    historyItem.querySelector('.history-act--del').addEventListener('click', (e) => {
       e.stopPropagation();
       deleteHistoryItem(index);
     });
@@ -729,6 +761,36 @@ function deleteHistoryItem(index) {
 
   updateBrowserUI();
   saveHistoryToStorage();
+}
+
+/**
+ * Save a history entry to disk.
+ *
+ * A blob cached from viewing it earlier is the cheap path, but blob URLs are
+ * deliberately not persisted (they are dead after a reload) and several
+ * navigation paths — sites, streamed video — never produce one at all. So
+ * without a blob this re-fetches by address, through the Download File panel,
+ * which already owns the save picker, the worker and the progress reporting.
+ *
+ * Synchronous up to and including the download click, on purpose: awaiting
+ * anything here spends the user activation and Chrome then refuses
+ * showSaveFilePicker with "Must be handling a user gesture". Any nicer
+ * filename is worked out later, in the worker, from the object's metadata.
+ */
+function saveHistoryItem(index) {
+  if (index < 0 || index >= browserHistory.length) return;
+  const item = browserHistory[index];
+  if (item.blobUrl) { downloadHistoryItem(index); return; }
+
+  const url = item.originalUrl || item.displayUrl || '';
+  if (!url) return;
+  const idMatch = url.match(/([0-9a-fA-F]{64})/);
+  const suggestedName = idMatch ? `sia_${idMatch[1].slice(0, 8)}` : 'sia_download';
+
+  document.getElementById('dl-url').value = url;
+  document.getElementById('dl-filename').value = suggestedName;
+  openOrActivateInternalTab('download');
+  document.getElementById('btn-download').click();
 }
 
 function downloadHistoryItem(index) {
