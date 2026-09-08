@@ -63,11 +63,14 @@ export function setActivePanel(v) {
 export function saveTabState() {
   try {
     const activeIdx = tabs.findIndex(t => t.id === activeTabId);
+    // Index rather than id: ids are reassigned from zero on load, so a stored
+    // id would point at the wrong tab or none.
     const serializable = tabs.map(t => ({
       type: t.type,
       panelName: t.panelName,
       url: t.url,
       label: t.label,
+      openerIndex: t.openerId ? tabs.findIndex(x => x.id === t.openerId) : -1,
     }));
     localStorage.setItem('tab-state', JSON.stringify({
       tabs: serializable,
@@ -91,6 +94,11 @@ export function createTab({ type, panelName, url, label }) {
   const tab = {
     id,
     type,              // 'browser' or 'internal'
+    // The tab that was active when this one was opened. Back uses it to
+    // unwind: a tab with nothing in its own history has nowhere to go back
+    // *within* itself, but the place the user came from is still meaningful,
+    // and a dead Back button in a freshly opened tab reads as broken.
+    openerId: activeTabId || null,
     panelName: panelName || null,
     label: label || (panelName ? PANEL_TITLES[panelName] : 'New Tab'),
     url: url || '',
@@ -559,25 +567,98 @@ export function updateNavButtons() {
   // Keyed off the URL because it's the only thing persisted across
   // tab-state save/restore.
   if (isSiaSiteTab(tab)) {
+    // Always enabled: a site tab can go back within the site, between sites,
+    // or — with neither left — out of the tab entirely.
     back.disabled = false;
+    back.title = backCloseTarget(tab) ? 'Close this tab and go back' : 'Go back';
     return;
   }
-  if (!tab || tab.type !== 'browser') { back.disabled = true; return; }
+  // Enabled with no history of its own when Back would unwind to the opener,
+  // which is the only way the user can tell the difference between "nothing
+  // to go back to" and "closes this tab".
+  if (!tab || tab.type !== 'browser') {
+    back.disabled = !backCloseTarget(tab);
+    back.title = back.disabled ? 'Go back' : 'Close this tab and go back';
+    return;
+  }
   // A failed navigation leaves tab.url set to the broken URL while
   // navHistory[navIndex] still points at the last-good page. Enable back
   // in that case so the user can rewind to what they were viewing.
   const cur = tab.navHistory[tab.navIndex];
   const failedNav = !!(cur && cur.url !== tab.url);
-  back.disabled = !(tab.navIndex > 0 || failedNav);
+  const canUnwind = !!backCloseTarget(tab);
+  back.disabled = !(tab.navIndex > 0 || failedNav || canUnwind);
+  back.title = (!back.disabled && !(tab.navIndex > 0 || failedNav))
+    ? 'Close this tab and go back'
+    : 'Go back';
 }
 
 let navInProgress = false; // guard to prevent pushTabNav during back/forward
 export function isNavInProgress() { return navInProgress; }
 export function setNavInProgress(v) { navInProgress = v; }
 
+/**
+ * Close `tab` and return to whoever opened it. A no-op when there is nothing
+ * to return to, so Back never closes the last thing standing.
+ */
+function unwindToOpener(tab) {
+  const target = backCloseTarget(tab);
+  if (!target) return;
+  const targetId = target.id;
+  closeTab(tab.id);
+  // closeTab picks a neighbour; override it with the tab the user actually
+  // came from, if it survived.
+  if (tabs.some((t) => t.id === targetId)) activateTab(targetId);
+}
+
+/**
+ * The tab Back should return to when this one has no history of its own, or
+ * null when there is nothing to unwind to.
+ *
+ * Requires the opener to still be open and to not be this tab, so a closed or
+ * self-referencing opener degrades to Back simply doing nothing rather than
+ * closing the tab into nowhere.
+ */
+export function backCloseTarget(tab) {
+  if (!tab || hasOwnHistory(tab)) return null;
+  // The opener only, and only if it is still open.
+  //
+  // This used to fall back to the last-active tab and then to any tab at all.
+  // Both were wrong for the same reason: they were not properties of *this*
+  // tab. The last-active id is module-global and rewritten by every tab
+  // switch, so merely clicking between tabs changed where an untouched tab's
+  // Back would go; and "any tab" resolved to the first in the list, which is
+  // why Back appeared to close whichever tab had been opened first. A tab's
+  // Back target has to be fixed when the tab is created and never move.
+  if (!tab.openerId || tab.openerId === tab.id) return null;
+  return tabs.find((t) => t.id === tab.openerId) || null;
+}
+
+/** Whether this tab can navigate back inside itself. */
+function hasOwnHistory(tab) {
+  if (!tab) return false;
+  if (tab.type !== 'browser') return false;
+  if (tab.navIndex > 0) return true;
+  // A site tab also has intra-site depth, tracked from the iframe's own page
+  // announces. More than one entry means there is a page to go back to.
+  if (isSiaSiteTab(tab)
+      && Array.isArray(tab.iframePathStack) && tab.iframePathStack.length > 1) {
+    return true;
+  }
+  // A failed navigation leaves tab.url pointing at the broken address while
+  // navHistory still holds the last good page; that counts as somewhere to go.
+  const cur = tab.navHistory && tab.navHistory[tab.navIndex];
+  return !!(cur && cur.url !== tab.url);
+}
+
 export function goBack() {
   const tab = getActiveTab();
-  if (!tab || tab.type !== 'browser') return;
+  if (!tab) return;
+  if (tab.type !== 'browser') {
+    // A panel tab has no history of its own, so Back can only mean "leave".
+    unwindToOpener(tab);
+    return;
+  }
   // Sia-site tabs have two layers of history: the tab's navHistory
   // (inter-site: each sialo:// navigation pushes an entry) and the
   // iframe's internal history (intra-site: clicking a relative link
@@ -608,7 +689,10 @@ export function goBack() {
         try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}
         tab.iframeEl.contentWindow.postMessage({ type: 'sia-nav-back' }, targetOrigin);
       } catch (_) {}
+      return;
     }
+    // Nothing left at either layer: unwind the tab itself.
+    unwindToOpener(tab);
     return;
   }
   // Failed-nav recovery: tab.url was updated during a load that errored
@@ -619,7 +703,11 @@ export function goBack() {
     navigateTabNavEntry(tab);
     return;
   }
-  if (tab.navIndex <= 0) return;
+  if (tab.navIndex <= 0) {
+    // No history of its own — unwind the tab instead of doing nothing.
+    unwindToOpener(tab);
+    return;
+  }
   tab.navIndex--;
   navigateTabNavEntry(tab);
 }

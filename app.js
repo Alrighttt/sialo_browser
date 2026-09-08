@@ -1043,6 +1043,18 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
       createTab({ type: 'browser', url: saved.url, label: saved.label });
     }
   }
+  // Re-link openers by position. createTab sets openerId from whichever tab
+  // was active while restoring, which is meaningless here — the saved
+  // relationships are what should survive, so Back still unwinds to the tab a
+  // restored one was opened from.
+  savedState.tabs.forEach((saved, i) => {
+    const tab = tabs[i];
+    if (!tab) return;
+    const oi = saved.openerIndex;
+    tab.openerId = (typeof oi === 'number' && oi >= 0 && oi < tabs.length && oi !== i)
+      ? tabs[oi].id
+      : null;
+  });
   // Activate the previously active tab
   const idx = savedState.activeIndex >= 0 && savedState.activeIndex < tabs.length
     ? savedState.activeIndex : tabs.length - 1;
