@@ -157,15 +157,15 @@ export function initSyncerConfig() {
   //
   // Backup: pack the active network's blobs (filter, txindex, utxo,
   // attestation, headers) into the SBKP envelope, upload as a single
-  // Sia object, return a share URL. Restore: download an SBKP from a
-  // share URL and replace local data. Same logic the manifest panel
+  // Sia object, return a published URL. Restore: download an SBKP from a
+  // published URL and replace local data. Same logic the manifest panel
   // uses, scoped to its own status / progress / URL elements.
   const backupBtn = document.getElementById('sc-btn-backup');
   const restoreBtn = document.getElementById('sc-btn-restore');
   const backupStatusEl = document.getElementById('sc-backup-status');
   const backupProgressEl = document.getElementById('sc-backup-progress');
   const backupResultEl = document.getElementById('sc-backup-result');
-  const backupUrlEl = document.getElementById('sc-backup-share-url');
+  const backupUrlEl = document.getElementById('sc-backup-publish-url');
   const restoreUrlInput = document.getElementById('sc-restore-url');
   const copyUrlBtn = document.getElementById('sc-btn-copy-url');
 
@@ -234,17 +234,17 @@ export function initSyncerConfig() {
         const sdk = await connectSdk(backupStatusEl);
         if (!sdk) { log('Failed to connect to indexer.', 'err'); return; }
 
-        // 1-year share URL — same default the manifest backup uses.
+        // 1-year published URL — same default the manifest backup uses.
         const validUntilMs = Date.now() + (365 * 24 * 60 * 60 * 1000);
-        const shareUrl = sdk.objectShareUrl(obj, validUntilMs);
-        log('Share URL: ' + shareUrl, 'data');
+        const publishUrl = sdk.objectShareUrl(obj, validUntilMs);
+        log('Published URL: ' + publishUrl, 'data');
 
         try { await sdk.pinObject(obj); log('Object pinned.', 'ok'); }
         catch (pinErr) { log('Pin failed: ' + pinErr, 'info'); }
 
-        backupUrlEl.textContent = shareUrl;
+        backupUrlEl.textContent = publishUrl;
         backupUrlEl.onclick = () => {
-          navigator.clipboard.writeText(shareUrl).then(() => log('Share URL copied.', 'ok'));
+          navigator.clipboard.writeText(publishUrl).then(() => log('Published URL copied.', 'ok'));
         };
         backupResultEl.style.display = '';
         setBackupStatus('Backup complete for ' + net + '.', '#4ade80');
@@ -263,7 +263,7 @@ export function initSyncerConfig() {
   if (restoreBtn) {
     restoreBtn.addEventListener('click', async () => {
       const url = restoreUrlInput.value.trim();
-      if (!url) { log('Enter a share URL.', 'err'); return; }
+      if (!url) { log('Enter a published URL.', 'err'); return; }
       if (!url.startsWith('sia://')) { log('URL must start with sia://', 'err'); return; }
 
       const net = chain.getActiveNetwork();
@@ -343,7 +343,7 @@ export function initSyncerConfig() {
     copyUrlBtn.addEventListener('click', () => {
       const url = backupUrlEl.textContent;
       if (url) {
-        navigator.clipboard.writeText(url).then(() => log('Share URL copied.', 'ok'));
+        navigator.clipboard.writeText(url).then(() => log('Published URL copied.', 'ok'));
       }
     });
   }

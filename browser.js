@@ -547,7 +547,7 @@ function updateBrowserUI() {
       addressBar.title = current.displayUrl;
     } else {
       addressBar.value = '';
-      addressBar.placeholder = 'Paste Sia share URL or object ID...';
+      addressBar.placeholder = 'Paste Sia published URL or object ID...';
     }
   } else if (currentHistoryIndex >= 0 && browserHistory[currentHistoryIndex]) {
     // Still track the last browser URL even if not viewing it
@@ -1449,7 +1449,7 @@ document.getElementById('btn-external-tab').addEventListener('click', () => {
   const addressBar = document.getElementById('chrome-address-bar');
   const url = addressBar.value.trim();
   if (!url) {
-    setStatus('<span style="color:#f59e0b">⚠️ Enter an object ID or share URL in the address bar first.</span>');
+    setStatus('<span style="color:#f59e0b">⚠️ Enter an object ID or published URL in the address bar first.</span>');
     return;
   }
 
@@ -1469,7 +1469,7 @@ window.addEventListener('message', async (event) => {
   const { type, url, title } = event.data;
 
   if (type === 'LOAD_IN_VIEWER') {
-    // Load the share URL in a browser tab
+    // Load the published URL in a browser tab
     const tab = getOrCreateActiveBrowserTab();
     tab.url = url;
     tab.label = title || (url.length > 30 ? url.substring(0, 30) + '...' : url);

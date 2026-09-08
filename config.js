@@ -139,23 +139,23 @@ export async function connectSdk(statusEl) {
 }
 
 /**
- * Resolves an object by ID or share URL. Share URLs are indexer-specific
+ * Resolves an object by ID or published URL. Published URLs are indexer-specific
  * and only tried against the primary SDK. Object IDs try the primary SDK
  * first, then fall back through all other configured indexer profiles.
  * Returns { sdk, obj } for the first profile that succeeds.
  */
 export async function resolveObject(input, primarySdk) {
-  const isShareUrl = input.startsWith('sia://') || input.startsWith('https://');
+  const isPublishUrl = input.startsWith('sia://') || input.startsWith('https://');
 
   // Try the primary SDK first
   try {
-    const obj = isShareUrl
+    const obj = isPublishUrl
       ? await primarySdk.objectFromShareUrl(input)
       : await primarySdk.object(input);
     return { sdk: primarySdk, obj, fallback: null };
   } catch (primaryErr) {
-    // Share URLs are indexer-specific — don't fall back to other indexers.
-    if (isShareUrl) throw primaryErr;
+    // Published URLs are indexer-specific — don't fall back to other indexers.
+    if (isPublishUrl) throw primaryErr;
     _dbg(`Primary indexer failed for object: ${primaryErr.message || primaryErr}`);
   }
 

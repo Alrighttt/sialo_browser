@@ -585,7 +585,7 @@
         <div class="internal-page-content">
           <div class="panel-section">
             <h2>Download File</h2>
-            <div class="label">Object ID or Share URL</div>
+            <div class="label">Object ID or published URL</div>
             <input id="dl-url" type="text" placeholder="Paste sia:// URL or object ID (hex)"
               style="margin-bottom:0.5rem" />
             <div class="label">Filename</div>
@@ -1197,7 +1197,7 @@
               </div>
               <div style="margin-bottom:0.75rem;">
                 <div class="label">Message</div>
-                <input id="mfst-share-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%;">
+                <input id="mfst-publish-url" type="text" placeholder="Text, URL, or sia:// link" style="width:100%;">
               </div>
               <div style="margin-bottom:0.75rem;">
                 <div class="label">Miner Fee</div>
@@ -1267,21 +1267,21 @@
             <div id="mfst-backup-section" class="panel-section" style="display:none;">
               <h2>Backup & Restore</h2>
               <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-                Upload sync data to Sia or restore from a share URL or on-chain manifest.
+                Upload sync data to Sia or restore from a published URL or on-chain manifest.
               </p>
 
               <!-- Backup -->
               <div style="margin-bottom:1rem;">
                 <div class="label">Backup</div>
                 <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">Upload the active network's sync data
-                  to Sia. Returns a share URL you can use to restore on any device.</p>
+                  to Sia. Returns a published URL you can use to restore on any device.</p>
                 <button id="btn-mfst-backup" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Backup to Sia</button>
               </div>
               <div id="mfst-backup-result"
                 style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
-                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your
+                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Published URL (save this — it's your
                   backup):</div>
-                <div id="mfst-backup-share-url"
+                <div id="mfst-backup-publish-url"
                   style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;" title="Click to copy">
                 </div>
                 <div style="margin-top:0.5rem;">
@@ -1297,7 +1297,7 @@
                 <div class="label">Restore</div>
                 <div style="display:flex; gap:0.5rem; align-items:center; margin:0.25rem 0 0.5rem;">
                   <select id="mfst-restore-mode" style="font-size:0.85rem; padding:0.3rem 0.5rem;">
-                    <option value="url">From share URL</option>
+                    <option value="url">From published URL</option>
                     <option value="manifest">From on-chain manifest</option>
                   </select>
                   <button id="btn-mfst-restore" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Restore</button>
@@ -1447,7 +1447,7 @@
             <div class="panel-section">
               <h2>Backup & Restore</h2>
               <p style="color:#888; font-size:0.85rem; margin-bottom:0.75rem;">
-                Upload the active network's sync data to Sia, or restore from a share URL produced
+                Upload the active network's sync data to Sia, or restore from a published URL produced
                 by another device or by <code>sialo-filters</code>.
               </p>
 
@@ -1455,7 +1455,7 @@
                 <div class="label">Backup</div>
                 <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">
                   Packs the current network's filter / txindex / utxo / attestation / headers blobs
-                  into a single Sia object. Returns a share URL you can paste into Restore on any
+                  into a single Sia object. Returns a published URL you can paste into Restore on any
                   other device.
                 </p>
                 <button id="sc-btn-backup" style="font-size:0.85rem; padding:0.4rem 0.8rem;">Backup to Sia</button>
@@ -1463,8 +1463,8 @@
 
               <div id="sc-backup-result"
                 style="display:none; margin-bottom:1rem; padding:0.5rem; background:#111; border-radius:4px;">
-                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Share URL (save this — it's your backup):</div>
-                <div id="sc-backup-share-url"
+                <div style="font-size:0.8rem; color:#888; margin-bottom:0.25rem;">Published URL (save this — it's your backup):</div>
+                <div id="sc-backup-publish-url"
                   style="font-size:0.8rem; word-break:break-all; color:#4ade80; cursor:pointer;"
                   title="Click to copy"></div>
                 <div style="margin-top:0.5rem;">
@@ -1475,7 +1475,7 @@
               <div style="margin-bottom:0.75rem;">
                 <div class="label">Restore</div>
                 <p style="color:#666; font-size:0.8rem; margin:0.25rem 0 0.5rem;">
-                  Replaces the active network's sync data with the blobs in the share URL.
+                  Replaces the active network's sync data with the blobs in the published URL.
                   Use this to skip multi-hour browser-side filter generation.
                 </p>
                 <div style="display:flex; gap:0.5rem; align-items:flex-start;">

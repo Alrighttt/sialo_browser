@@ -196,7 +196,7 @@ async function mfstBuildTransaction() {
   const type = document.getElementById('mfst-type').value;
   const account = parseInt(document.getElementById('mfst-account', 10).value) || 0;
   const addrIdx = parseInt(document.getElementById('mfst-address-index', 10).value) || 0;
-  const url = document.getElementById('mfst-share-url').value.trim();
+  const url = document.getElementById('mfst-publish-url').value.trim();
   const feeInput = document.getElementById('mfst-miner-fee').value.trim() || '0';
   const fee = scToHastings(feeInput);
   const network = mfstGetNetwork();
@@ -681,14 +681,14 @@ async function mfstBackup() {
     const { obj, elapsed, size } = await parallelUpload(backupFile, statusEl, progressEl);
     mfstLog(`Uploaded ${size} bytes in ${elapsed}s.`, 'ok');
 
-    // Step 3: Connect SDK for share URL and pin
+    // Step 3: Connect SDK for published URL and pin
     const sdk = await connectSdk(statusEl);
     if (!sdk) { mfstLog('Failed to connect to indexer.', 'err'); return; }
 
-    // Step 4: Generate share URL (1 year expiry)
+    // Step 4: Generate published URL (1 year expiry)
     const validUntilMs = Date.now() + (365 * 24 * 60 * 60 * 1000);
-    const shareUrl = sdk.objectShareUrl(obj, validUntilMs);
-    mfstLog('Share URL: ' + shareUrl, 'data');
+    const publishUrl = sdk.objectShareUrl(obj, validUntilMs);
+    mfstLog('Published URL: ' + publishUrl, 'data');
 
     // Step 5: Pin object
     statusEl.textContent = 'Pinning...';
@@ -699,18 +699,18 @@ async function mfstBackup() {
       mfstLog('Pin failed: ' + pinErr, 'warn');
     }
 
-    // Step 6: Show share URL to user
+    // Step 6: Show published URL to user
     const resultEl = document.getElementById('mfst-backup-result');
-    const urlEl = document.getElementById('mfst-backup-share-url');
-    urlEl.textContent = shareUrl;
+    const urlEl = document.getElementById('mfst-backup-publish-url');
+    urlEl.textContent = publishUrl;
     urlEl.addEventListener('click', () => {
-      navigator.clipboard.writeText(shareUrl);
-      mfstLog('Share URL copied to clipboard.', 'ok');
+      navigator.clipboard.writeText(publishUrl);
+      mfstLog('Published URL copied to clipboard.', 'ok');
     });
     resultEl.style.display = '';
 
     statusEl.style.color = '#4ade80';
-    statusEl.textContent = 'Backup complete for ' + net + '. Save the share URL below.';
+    statusEl.textContent = 'Backup complete for ' + net + '. Save the published URL below.';
     progressEl.style.display = 'none';
 
     setWalletLockSuspended(false);
@@ -727,7 +727,7 @@ async function mfstBackup() {
 }
 
 // Shared download+import logic for both restore modes
-async function mfstDownloadAndRestore(shareUrl) {
+async function mfstDownloadAndRestore(publishUrl) {
   const statusEl = document.getElementById('mfst-backup-status');
   const progressEl = document.getElementById('mfst-backup-progress');
   const net = getActiveNetwork();
@@ -739,7 +739,7 @@ async function mfstDownloadAndRestore(shareUrl) {
 
   statusEl.textContent = 'Downloading backup...';
   progressEl.style.display = 'block';
-  const obj = await sdk.objectFromShareUrl(shareUrl);
+  const obj = await sdk.objectFromShareUrl(publishUrl);
 
   const blobParts = [];
   const totalSize = obj.size();
@@ -774,7 +774,7 @@ async function mfstRestoreFromUrl() {
   const statusEl = document.getElementById('mfst-backup-status');
   const progressEl = document.getElementById('mfst-backup-progress');
   const url = document.getElementById('mfst-restore-url').value.trim();
-  if (!url) { mfstLog('Enter a share URL.', 'err'); return; }
+  if (!url) { mfstLog('Enter a published URL.', 'err'); return; }
   if (!url.startsWith('sia://')) { mfstLog('URL must start with sia://', 'err'); return; }
 
   try {
@@ -873,8 +873,8 @@ async function mfstRestoreFromManifest() {
 
 async function mfstSaveOnChain() {
   const statusEl = document.getElementById('mfst-backup-status');
-  const shareUrl = document.getElementById('mfst-backup-share-url').textContent;
-  if (!shareUrl) { mfstLog('No share URL to save.', 'err'); return; }
+  const publishUrl = document.getElementById('mfst-backup-publish-url').textContent;
+  if (!publishUrl) { mfstLog('No published URL to save.', 'err'); return; }
   if (!getWalletEntropy()) { mfstLog('Wallet is locked.', 'err'); return; }
 
   const net = getActiveNetwork();
@@ -885,7 +885,7 @@ async function mfstSaveOnChain() {
   try {
     statusEl.textContent = 'Building attestation transaction...';
     const nextIdx = await mfstFindNextIndex(account);
-    const attTxnJson = build_private_manifest_transaction(getWalletEntropy(), account, nextIdx, shareUrl, '0', network);
+    const attTxnJson = build_private_manifest_transaction(getWalletEntropy(), account, nextIdx, publishUrl, '0', network);
     const attTxn = JSON.parse(attTxnJson);
     const attestationsJson = JSON.stringify(attTxn.attestations);
 
@@ -1000,8 +1000,8 @@ document.getElementById('mfst-password').addEventListener('keydown', (e) => {
 document.getElementById('btn-mfst-build').addEventListener('click', mfstBuildTransaction);
 document.getElementById('btn-mfst-backup').addEventListener('click', mfstBackup);
 document.getElementById('btn-mfst-copy-url').addEventListener('click', () => {
-  const url = document.getElementById('mfst-backup-share-url').textContent;
-  navigator.clipboard.writeText(url).then(() => mfstLog('Share URL copied to clipboard.', 'ok'));
+  const url = document.getElementById('mfst-backup-publish-url').textContent;
+  navigator.clipboard.writeText(url).then(() => mfstLog('Published URL copied to clipboard.', 'ok'));
 });
 document.getElementById('btn-mfst-save-onchain').addEventListener('click', mfstSaveOnChain);
 document.getElementById('mfst-restore-mode').addEventListener('change', () => {
