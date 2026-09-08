@@ -1,4 +1,4 @@
-import { _esc, formatSize } from './utils.js';
+import { _esc, formatSize, _dbgWarn } from './utils.js';
 import { connectSdk } from './config.js';
 import { ZipWriter } from './vendor/zip-stream.js';
 import { parallelDownloadToDisk } from './download.js';
@@ -15,6 +15,7 @@ import {
 } from './object-metadata.js';
 import { addToDraft, removeFromDraft, isInDraft, onDraftChange } from './site-builder.js';
 import { shareObjectToKey } from './sharing-keys.js';
+import { objectHealth, healthSummary } from './object-health.js';
 
 // Status proxy for the currently-active tab. Writes land in the
 // bottom-right status bar while the tab is selected and stay scoped
@@ -1366,6 +1367,29 @@ async function indexSharingKeyLabels(sdk) {
   };
 
   // Helper function to show object info/details
+  /**
+   * The set of host public keys this indexer currently considers usable.
+   *
+   * Cached because every Info click needs it and it does not change between
+   * them, and dropped when the profile changes since it is per-indexer. A
+   * failure here is not fatal: the modal falls back to reporting no health
+   * rather than refusing to open.
+   */
+  let usableHostsCache = null;
+  window.addEventListener('profile-updated', () => { usableHostsCache = null; });
+
+  async function usableHostKeys(sdk) {
+    if (usableHostsCache) return usableHostsCache;
+    try {
+      const hosts = await sdk.hosts();
+      usableHostsCache = new Set(hosts.map((h) => h.publicKey));
+    } catch (e) {
+      _dbgWarn('[objects] could not list usable hosts:', e);
+      return null;
+    }
+    return usableHostsCache;
+  }
+
   window.showObjectInfo = async (objectId) => {
     const shortId = objectId.substring(0, 8) + '...' + objectId.substring(objectId.length - 8);
 
@@ -1388,9 +1412,28 @@ async function indexSharingKeyLabels(sdk) {
       const obj = await sdk.object(objectId);
       const size = obj.size();
 
-      // Calculate number of slabs (each slab holds 10 shards * 4MB = ~40MB of data)
-      const SLAB_DATA_SIZE = 10 * 4 * 1024 * 1024; // 40 MB
-      const numSlabs = size === 0 ? 0 : Math.ceil(size / SLAB_DATA_SIZE);
+      // Read the real slab layout rather than dividing the size by an assumed
+      // 40 MB per slab: erasure-coding parameters are per slab and can differ
+      // between objects, and the last slab of any object is short.
+      let slabs = [];
+      try { slabs = obj.slabs() || []; } catch (e) { _dbgWarn('[objects] no slab detail:', e); }
+      const usable = await usableHostKeys(sdk);
+      const health = usable ? objectHealth(slabs, usable) : null;
+      const summary = health ? healthSummary(health) : null;
+
+      // Erasure-coding parameters, taken from the slabs themselves. They are
+      // uniform in practice, so say so plainly and only hedge if they are not.
+      const ecs = [...new Set(slabs.map((sl) => `${sl.minShards}/${(sl.sectors || []).length}`))];
+      const ecLabel = ecs.length === 0 ? 'unknown'
+        : ecs.length === 1
+          ? (() => { const [n, t] = ecs[0].split('/'); return `${n} data + ${t - n} parity (any ${n} of ${t})`; })()
+          : `varies across slabs (${ecs.join(', ')})`;
+
+      const shardTotal = slabs.reduce((n, sl) => n + ((sl.sectors || []).length), 0);
+      const shardUsable = health ? health.per.reduce((n, h) => n + h.usable, 0) : null;
+
+      const TONE = { ok: '#4ade80', warn: '#f59e0b', bad: '#f87171', muted: '#888' };
+      const encoded = (() => { try { return obj.encodedSize(); } catch (_) { return null; } })();
 
       // Show info in a modal
       const modal = document.createElement('div');
@@ -1414,16 +1457,40 @@ async function indexSharingKeyLabels(sdk) {
             </div>
             <div style="margin-bottom:0.75rem;">
               <div style="color:#888; font-size:0.85rem; margin-bottom:0.25rem;">Slabs:</div>
-              <div>${numSlabs} slab${numSlabs !== 1 ? 's' : ''} (~${(numSlabs * 40).toFixed(0)} MB encoded)</div>
+              <div>${slabs.length} slab${slabs.length !== 1 ? 's' : ''}${
+                encoded ? ` · ${formatSize(encoded)} stored after erasure coding` : ''}</div>
             </div>
-            <div style="margin-bottom:0.75rem;">
+            <div${summary ? ' style="margin-bottom:0.75rem;"' : ''}>
               <div style="color:#888; font-size:0.85rem; margin-bottom:0.25rem;">Redundancy:</div>
-              <div>10 data shards + 20 parity shards (need any 10 of 30)</div>
+              <div>${_esc(ecLabel)}${health ? ` · spread over ${health.hostCount} host${health.hostCount === 1 ? '' : 's'}` : ''}</div>
             </div>
-            <div>
-              <div style="color:#888; font-size:0.85rem; margin-bottom:0.25rem;">Redundancy:</div>
-              <div>10 data + 20 parity (${formatSize(size)} pinned)</div>
-            </div>
+            ${summary ? `
+            <div style="border-top:1px solid #222; margin-top:0.25rem; padding-top:0.75rem;">
+              <div style="color:#888; font-size:0.85rem; margin-bottom:0.35rem;">Health:</div>
+              <div style="color:${TONE[summary.tone]}; font-weight:600; margin-bottom:0.35rem;">
+                ${_esc(summary.text)}
+              </div>
+              <div style="color:#bbb; font-size:0.85rem; line-height:1.5; margin-bottom:0.6rem;">
+                ${_esc(summary.detail)}
+              </div>
+              <div style="font-size:0.8rem; color:#9aa3ad; line-height:1.6;">
+                ${shardUsable} of ${shardTotal} shards are on hosts this indexer can use.
+                ${health.verdict === 'healthy' ? ''
+                  : `${health.unreadable ? `${health.unreadable} slab${health.unreadable === 1 ? '' : 's'} unreadable. ` : ''}`
+                    + `${health.bare ? `${health.bare} at the minimum. ` : ''}`
+                    + `${health.unportable ? `${health.unportable} not portable. ` : ''}`}
+                ${health.worstHeadroom !== null && health.worstHeadroom >= 0
+                  ? `Thinnest slab has ${health.worstHeadroom} spare shard${health.worstHeadroom === 1 ? '' : 's'}.` : ''}
+              </div>
+              <div style="font-size:0.78rem; color:#6b7280; margin-top:0.6rem; line-height:1.5;">
+                A shard on a host this indexer cannot use is not necessarily lost — the
+                host may simply have no live contract here. "Portable" means another
+                indexer would accept the slab, which is what migrating requires.
+              </div>
+            </div>` : `
+            <div style="border-top:1px solid #222; margin-top:0.25rem; padding-top:0.75rem; color:#888; font-size:0.85rem;">
+              Health could not be assessed: the indexer's host list was unavailable.
+            </div>`}
           </div>
           <button onclick="this.parentElement.parentElement.remove();" style="width:100%; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer; font-size:1rem;">
             Close
