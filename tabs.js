@@ -155,6 +155,10 @@ export function activateTab(tabId) {
   if (!tab) return;
   if (activeTabId === tabId) return; // already active
 
+  // Set when this activation reveals an internal panel, so the event can be
+  // dispatched once the tab is genuinely the active one.
+  let revealed = null;
+
   // Whatever the outgoing tab did to the address bar, the incoming one
   // starts with it visible.
   setChromeCollapsed(false);
@@ -193,13 +197,13 @@ export function activateTab(tabId) {
     const panel = document.getElementById('panel-' + tab.panelName);
     if (panel) panel.style.display = panel.classList.contains('has-net-bar') ? 'flex' : 'block';
     activePanel = tab.panelName;
-    // Panels that gate on external state (an indexer account) re-check here.
-    // This is dispatched from the place that actually reveals a panel;
-    // setActivePanel() is exported but nothing calls it, so an event fired
-    // only from there would never reach anyone.
-    window.dispatchEvent(new CustomEvent('panel-activated', {
-      detail: { panel: tab.panelName },
-    }));
+    // Announced further down rather than here. A listener that reacts by doing
+    // work for "the active tab" — reading panelStatus(), say — would otherwise
+    // resolve the tab being left, because activeTabId is not updated until
+    // after this branch. On the very first activation there is no previous tab
+    // at all and tabStatusProxy(null) throws, which silently killed the
+    // listener rather than reporting anything.
+    revealed = tab.panelName;
   }
 
   activeTabId = tabId;
@@ -208,6 +212,13 @@ export function activateTab(tabId) {
   renderTabBar();
   updateNavButtons();
   renderTabStatus();
+
+  // Now that activeTabId, the address bar and the status bar all refer to this
+  // tab, it is safe for a panel to react to being shown — including by loading
+  // something and reporting progress into the status bar.
+  if (revealed) {
+    window.dispatchEvent(new CustomEvent('panel-activated', { detail: { panel: revealed } }));
+  }
 
   saveTabState();
 
@@ -507,6 +518,17 @@ export function renderTabStatus() {
 // write is for the currently-active tab. Background tabs can't leak into
 // the footer.
 export function tabStatusProxy(tab) {
+  // Tolerate no tab. Panels call this from event handlers — a panel reacting
+  // to being shown, a module initialising before any tab is restored — where
+  // there may genuinely not be an active tab yet. Throwing there kills the
+  // caller mid-way through, which is how an initialiser came to silently skip
+  // every listener it had not registered yet. A status message with nowhere to
+  // go is not worth that.
+  if (!tab) {
+    const sink = { set textContent(_) {}, get textContent() { return ''; },
+                   set innerHTML(_) {}, get innerHTML() { return ''; } };
+    return { status: sink, progress: { value: 0, max: 100, style: { display: 'none' } } };
+  }
   if (!tab._statusBuf) tab._statusBuf = document.createElement('span');
   const buf = tab._statusBuf;
   const syncIfActive = () => { if (activeTabId === tab.id) renderTabStatus(); };

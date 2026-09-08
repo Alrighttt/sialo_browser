@@ -552,12 +552,19 @@ function renderProfileSelect(data) {
 }
 
 function activateProfile(data, name) {
+  // Only a real switch is announced. This also runs once at startup with the
+  // already-active name, and panels that rebuild themselves on the event have
+  // no reason to do it twice before anyone has touched anything.
+  const changed = data.active !== name;
   data.active = name;
   const profile = data.profiles[name] || { url: '', key: '' };
   urlInput.value = profile.url || '';
   keyInput.value = profile.key || '';
   saveProfiles(data);
   renderProfileSelect(data);
+  // connectSdk keys its cache on url|key so it reconnects on its own, but
+  // nothing tells the panels that the account underneath them changed.
+  if (changed) window.dispatchEvent(new CustomEvent('profile-updated'));
 }
 
 function saveActiveProfile(data) {

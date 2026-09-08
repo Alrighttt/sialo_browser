@@ -156,6 +156,31 @@ async function indexSharingKeyLabels(sdk) {
 }
 
 /** Paginate through objectEvents until the SDK runs dry. */
+  /**
+   * Whether this panel is the one on screen.
+   *
+   * An unset `display` counts as hidden: panels start with no inline style and
+   * are only ever revealed by having one set, so treating "" as visible made
+   * this fire during module initialisation, before there was an active tab.
+   */
+  function objectsPanelVisible() {
+    const el = document.getElementById('panel-objects');
+    return !!(el && el.style.display && el.style.display !== 'none');
+  }
+
+  // Switching indexer profile changes whose objects these are, so the list has
+  // to be rebuilt rather than left showing the previous account's.
+  window.addEventListener('profile-updated', () => {
+    // The selection holds object IDs belonging to the account being left.
+    // Carrying it across would let a bulk action target IDs the new indexer
+    // has never heard of.
+    selectedIds.clear();
+    // Only fetch now if the panel is on screen; otherwise the activation
+    // listener picks it up on the way back in, rather than paging the whole
+    // object list for a panel nobody is looking at.
+    if (objectsPanelVisible()) loadAllObjects();
+  });
+
   async function loadAllObjects() {
     if (loadInFlight) return;
     loadInFlight = true;
@@ -724,18 +749,26 @@ async function indexSharingKeyLabels(sdk) {
     loadAllObjects();
   });
 
-  // Auto-load when the panel becomes visible (first open or tab switch back).
-  const panel = document.getElementById('panel-objects');
-  const isVisible = () => panel && panel.style.display !== 'none';
-  let loadedOnce = false;
-  function autoLoadIfVisible() {
-    if (!isVisible()) return;
-    if (loadedOnce) return;
-    loadedOnce = true;
-    loadAllObjects();
-  }
-  autoLoadIfVisible();
-  new MutationObserver(autoLoadIfVisible).observe(panel, { attributes: true, attributeFilter: ['style'] });
+  // Reload every time the panel comes into view, not just the first time.
+  //
+  // This used to latch on a `loadedOnce` flag behind a MutationObserver on the
+  // panel's style attribute, so the list was fetched once and then never again
+  // for the life of the page. The list describes state on another machine: an
+  // upload, a delete or a publish from another tab, the CLI or another device
+  // leaves no trace here, so coming back to the tab is precisely when it is
+  // most likely to be wrong.
+  //
+  // Driven by the activation event rather than by watching the style
+  // attribute, because the event says what happened while a style change only
+  // implies it — and the event is dispatched once the tab is genuinely active,
+  // so status messages from the load land on the right tab.
+  window.addEventListener('panel-activated', (e) => {
+    if (e && e.detail && e.detail.panel === 'objects') loadAllObjects();
+  });
+
+  // A tab restored from a previous session is already the visible panel before
+  // this module initialises, so its activation event has come and gone.
+  if (objectsPanelVisible()) loadAllObjects();
 
   // Cancel ZIP builder
   let zipCancelled = false;
