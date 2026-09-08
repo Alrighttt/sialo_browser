@@ -526,6 +526,28 @@ async function handleSiaStreamRequest(url, sessionId, sourceTab) {
  * already this account's own object — `sdk.object()` only resolves your own —
  * so pinning it would be a no-op rather than an error.
  */
+/**
+ * Which indexer a history entry came from, as a bare host.
+ *
+ * A published URL names its own host and that is authoritative: the object
+ * really was fetched from there, because the host is frozen into the URL when
+ * it is minted rather than read from settings at load time. So an entry can
+ * legitimately show a host that is not the one currently configured — that is
+ * information worth surfacing, not a bug.
+ *
+ * Everything else — a bare object ID, a sialo:// site — went through whichever
+ * indexer was configured at the time, which is why that is recorded on the
+ * entry. Entries from before it was recorded simply have nothing to show.
+ */
+function historyIndexer(item) {
+  const url = item.originalUrl || item.displayUrl || '';
+  const inLink = url.match(/^sia:\/\/([^/?#]+)/i);
+  if (inLink) return { host: inLink[1], fromLink: true };
+  const m = String(item.indexerUrl || '').match(/^[a-z][\w+.-]*:\/\/([^/?#]+)/i);
+  if (m) return { host: m[1], fromLink: false };
+  return null;
+}
+
 function historyActions(item) {
   const url = item.originalUrl || item.displayUrl || '';
   const parsed = classifyObjectInput(url);
@@ -583,6 +605,7 @@ function saveHistoryToStorage() {
       external: item.external,
       originalUrl: item.originalUrl,
       fileType: item.fileType,
+      indexerUrl: item.indexerUrl,
       blobUrl: null  // Don't save blob URLs - they won't work after refresh
     }));
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(toSave));
@@ -633,8 +656,21 @@ function updateBrowserUI() {
     // to keep, so Save and Pin both belong on every row. Where one does not
     // apply it is disabled and says why, rather than being absent.
     const act = historyActions(item);
+    // Where it came from, shown quietly. Marked when the link's own host is
+    // not the indexer in use now: that is how an entry whose published URL
+    // points at a retired hostname gives itself away, instead of only
+    // surfacing as a failure when someone opens it.
+    const src = historyIndexer(item);
+    const here = (getUrl() || '').match(/^[a-z][\w+.-]*:\/\/([^/?#]+)/i);
+    const foreign = !!(src && src.fromLink && here && src.host !== here[1]);
+    const srcTitle = !src ? '' : (src.fromLink
+      ? `Loaded from ${src.host}, the host named inside the link itself`
+        + (foreign ? ` — not ${here[1]}, the indexer you are connected to now` : '')
+      : `Loaded through ${src.host}, the indexer configured at the time`);
     historyItem.innerHTML = `
       <span class="history-title">${itemText}</span>
+      ${src ? `<span class="history-src${foreign ? ' history-src--foreign' : ''}"
+        title="${_esc(srcTitle)}">${_esc(src.host)}</span>` : ''}
       <button class="history-act history-act--save"${act.canSave ? '' : ' disabled'}
         title="${_esc(act.saveTitle)}">&#11015;</button>
       <button class="history-act history-act--pin"${act.canPin ? '' : ' disabled'}
@@ -1093,6 +1129,9 @@ function addToHistory(displayUrl, blobUrl, title = null, external = false, origi
     _dbg(`📍 URL already exists at index ${existingIndex}, updating blob URL`);
     browserHistory[existingIndex].blobUrl = blobUrl;
     browserHistory[existingIndex].title = title || displayUrl;
+    // Refreshed, not preserved: reloading the same object through a different
+    // profile means it did come from somewhere else this time.
+    browserHistory[existingIndex].indexerUrl = getUrl();
     currentHistoryIndex = existingIndex;
     updateBrowserUI();
     saveHistoryToStorage();
@@ -1106,7 +1145,11 @@ function addToHistory(displayUrl, blobUrl, title = null, external = false, origi
     title: title || displayUrl,
     external,
     originalUrl,
-    fileType
+    fileType,
+    // Where it was fetched from. A published URL names its own host, but a
+    // bare object ID or a sialo:// site does not, and nothing else records
+    // which indexer answered — so it is captured here, at load time.
+    indexerUrl: getUrl(),
   });
   currentHistoryIndex = browserHistory.length - 1;
 

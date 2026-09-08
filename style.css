@@ -675,6 +675,27 @@ progress::-moz-progress-bar {
 .history-act--pin  { color: #a78bfa; }
 .history-act--del  { color: #ef4444; font-size: 1.15rem; }
 
+/* The indexer a history entry came from. Reference information rather than the
+   point of the row, so it is small and dim and sits between the title and the
+   actions; the title takes the remaining space, so it is this that stays a
+   fixed size and the entry name that shrinks.
+   The marked variant means the link names a host other than the indexer in
+   use now — usually a hostname that has since been retired, which is worth
+   noticing before clicking rather than after. */
+.history-src {
+  flex-shrink: 0;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.65rem;
+  color: #5b6572;
+  cursor: help;
+}
+.history-item:hover .history-src { color: #79838f; }
+.history-src--foreign { color: #9a8348; }
+.history-item:hover .history-src--foreign { color: #c2a55c; }
+
 /* Video-player controls: visible on hover or when paused. CSS :hover
    tracks the real pointer position so the UI comes back as soon as the
    mouse is inside, without needing JS mouseenter/leave bookkeeping. */
