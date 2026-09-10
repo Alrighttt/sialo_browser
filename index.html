@@ -534,12 +534,28 @@
                 <span id="sb-count" class="us-step-count">0 files</span>
               </div>
 
+              <!-- The site's own name. Lives with the draft rather than inside
+                   Publish or Share because it describes the site both of them
+                   hand out, and it is written into the manifest either way. -->
+              <div class="us-field">
+                <label for="us-site-name">Site name <span class="us-field-opt">(optional)</span></label>
+                <input id="us-site-name" type="text" maxlength="120"
+                       placeholder="e.g. Holiday photos" autocomplete="off" />
+                <div class="us-field-hint">Shown instead of the object ID in My Objects, and as
+                  the heading on the site's generated index pages.</div>
+              </div>
+
+              <div id="sb-dup-warn" class="us-warn" style="display:none;"></div>
               <div id="sb-pending-note" class="us-warn" style="display:none;"></div>
               <div id="sb-video-warn" class="us-warn" style="display:none;"></div>
 
               <div id="sb-empty" class="us-empty">
                 Empty — drop a folder above, or add objects from <strong>My Objects</strong>.
               </div>
+
+              <!-- Where you are in the draft's folders. Hidden at the root,
+                   where there is nothing to climb back out of. -->
+              <div id="sb-crumbs" class="sb-crumbs" style="display:none;"></div>
 
               <div id="sb-list-wrap" class="us-list-wrap" style="display:none;">
                 <table id="sb-list" class="us-list"></table>
@@ -604,11 +620,6 @@
                     resolve it through <strong>their own indexer account</strong> and pay for
                     <strong>their own bandwidth</strong>.
                   </p>
-                  <!-- Holds the row that Share uses for its Description field, so
-                       the two cards' "Expires in" rows and buttons line up. Empty
-                       because Publish has no per-link description: a published URL
-                       carries no metadata of its own. -->
-                  <div class="us-field-spacer" aria-hidden="true"></div>
                   <div class="us-field">
                     <label for="us-validity-num">Expires in</label>
                     <div class="us-field-row">
@@ -660,15 +671,9 @@
                   <p class="us-action-desc">
                     Recipients need <strong>no indexer account</strong> and download on
                     <strong>your bandwidth</strong>. Revoking the key on the
-                    <strong>Sharing Keys</strong> page cuts off access.
+                    <strong>Sharing Keys</strong> page cuts off access. The key is
+                    labelled with the site name from step 2, which only you can see.
                   </p>
-                  <div class="us-field">
-                    <label for="us-share-desc-input">Description</label>
-                    <input id="us-share-desc-input" type="text" placeholder="What this key is for" />
-                    <div class="us-field-hint">
-                      Labels the key on the Sharing Keys page. Only you can see it.
-                    </div>
-                  </div>
                   <div class="us-field">
                     <label for="us-share-validity-num">Expires in</label>
                     <div class="us-field-row">

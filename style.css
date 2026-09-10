@@ -135,6 +135,11 @@ textarea {
   color: #4ade80;
 }
 
+/* A neutral status line, for something waiting rather than done or broken.
+   Sits alongside .pass and .fail in the same progress elements. */
+.muted {
+  color: #9aa3ad;
+}
 .fail {
   color: #f87171;
 }
@@ -1536,6 +1541,58 @@ progress::-moz-progress-bar {
   max-height: 340px;
   overflow-y: auto;
 }
+/* Breadcrumbs for the draft's folder view. */
+.sb-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.3rem;
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+.sb-crumb {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: #60a5fa;
+  cursor: pointer;
+}
+.sb-crumb:hover { text-decoration: underline; }
+.sb-crumb[disabled] { color: #9aa3ad; cursor: default; text-decoration: none; }
+.sb-crumb-sep { color: #3f3f46; }
+.sb-crumb-count { margin-left: auto; color: #6b7280; }
+
+/* Sortable headers, matching the My Objects table so the two read the same. */
+.us-list thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #121212;
+  border-bottom: 1px solid #232323;
+  text-align: left;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #9aa3ad;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.us-list thead th:hover { color: #e5e7eb; }
+.us-list thead th.sb-th-act { cursor: default; text-align: right; }
+.us-list thead th.sb-th-act:hover { color: #9aa3ad; }
+.us-list thead th.sb-size, .us-list thead th.sb-status { text-align: right; }
+
+/* Folder and parent rows: navigational, so they read as links, and the whole
+   row is the target rather than a small caret. */
+.sb-dir-row, .sb-up-row { cursor: pointer; }
+.sb-dir-row:hover, .sb-up-row:hover { background: #141414; }
+.sb-dir-name { color: #a78bfa; font-family: var(--font-mono); font-size: 0.8rem; }
+.sb-up-row td { color: #6b7280; font-family: var(--font-mono); font-size: 0.8rem; }
+.sb-dir-meta { color: #6b7280; font-size: 0.75rem; white-space: nowrap; }
+
 .us-list {
   width: 100%;
   border-collapse: collapse;
@@ -1677,9 +1734,6 @@ progress::-moz-progress-bar {
 .us-action-desc strong { color: #c3cad3; }
 
 .us-field { margin-bottom: 0.85rem; }
-/* Occupies Share's Description row in the Publish card. No height of its own —
-   the subgrid row it sits in is sized by Share's field opposite it. */
-.us-field-spacer { margin-bottom: 0.85rem; }
 .us-field > label {
   display: block;
   font-size: 0.78rem;
@@ -1698,6 +1752,12 @@ progress::-moz-progress-bar {
   flex: 0 0 auto;
 }
 .us-field-row select { flex: 0 0 auto; }
+/* "(optional)" alongside a field label: same size, quieter, so the label still
+   reads as one phrase rather than two. */
+.us-field-opt {
+  color: #6b7280;
+  font-weight: 400;
+}
 .us-field-hint {
   font-size: 0.72rem;
   color: #6b7280;

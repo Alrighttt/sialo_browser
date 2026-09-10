@@ -33,16 +33,18 @@ import { uploadOptions } from './transfer-options.js';
 import { withKeepAlive } from './keep-alive.js';
 import {
   getActiveTab, trackAbort, tabStatusProxy, openOrActivateInternalTab,
+  openUrlInNewTab, makeOpenable,
 } from './tabs.js';
 import {
   encodeMetadata, sanitizeDisplayFilename, stripUploadUuid, extractUploadUuid,
   filenameForDisplay,
+  siteNameForDisplay,
 } from './object-metadata.js';
 import {
   getDraft, addFilesToDraft, materializeEntry, pendingFiles, removeFromDraft,
   clearDraft, updateFilename as updateDraftFilename, onDraftChange, KIND_FILE,
 } from './site-builder.js';
-import { buildSiaSiteManifest, publishedSiteLink } from './sia-site.js';
+import { buildSiaSiteManifest, publishedSiteLink, MANIFEST_NAME_MAX } from './sia-site.js';
 import {
   isVideoFile, checkVideoCompat, suggestFfmpegFix, describeFfmpegFix,
 } from './video-compat.js';
@@ -202,10 +204,115 @@ function siteDescription(count) {
 }
 
 /**
+ * Paths claimed by more than one entry, as `path -> entries`.
+ *
+ * A site is a path-to-file map, so two entries claiming one path is not a
+ * detail to resolve quietly: for a published site one manifest key wins, and
+ * for a shared site the loader builds `files[path] = obj` so the last object
+ * listed silently shadows the other — in an order the indexer's paging does
+ * not guarantee. Either way a file the author put in the site is not there,
+ * and nothing says so.
+ *
+ * It happens as soon as sources are mixed: a folder drop and an "Add to site"
+ * object both offering `index.html`.
+ */
+function duplicatePaths(entries) {
+  const byPath = new Map();
+  for (const e of entries) {
+    const path = (e.filename || '').replace(/^\/+/, '');
+    if (!path) continue;
+    const list = byPath.get(path) || [];
+    list.push(e);
+    byPath.set(path, list);
+  }
+  const clashes = new Map();
+  for (const [path, list] of byPath) {
+    if (list.length > 1) clashes.set(path, list);
+  }
+  return clashes;
+}
+
+/**
  * Draft paths, de-duplicated. Two entries can legitimately end up with the
  * same path (the same filename added from two folders, say); suffixing the
  * later one keeps manifest keys unique instead of silently overwriting.
  */
+/**
+ * The draft list's sortable columns. A folder row answers each one about its
+ * contents rather than about itself, which is the only reading that makes a
+ * folder comparable to a file: "how big" means the total inside it, and "what
+ * state" means whether anything inside is still to upload.
+ */
+const SB_COLUMNS = [
+  { key: 'name',   label: 'Name',      cls: 'sb-path' },
+  { key: 'id',     label: 'Object ID', cls: 'sb-id' },
+  { key: 'size',   label: 'Size',      cls: 'sb-size' },
+  { key: 'status', label: 'Status',    cls: 'sb-status' },
+];
+
+// Numeric collation, so `2021` sorts before `2023` and `part2` before
+// `part10`. A plain string sort puts `part10` first, which reads as broken on
+// exactly the kind of numbered folder these drafts are full of.
+const sbCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+function sbCompare(a, b, asc) {
+  const dir = asc ? 1 : -1;
+  if (typeof a === 'number' && typeof b === 'number') return (a - b) * dir;
+  return sbCollator.compare(String(a), String(b)) * dir;
+}
+
+/**
+ * Split a resolved draft into the folders and files directly inside `dir`.
+ *
+ * Grouping by the first path segment below the current folder is the same rule
+ * the site's own auto-index uses, so what the builder shows is what a visitor
+ * gets when the site has no index.html of its own.
+ *
+ * `statusOf` is passed in rather than read from the panel, so this stays a
+ * function of its arguments.
+ */
+function sbSplitFolder(resolved, dir, sort, statusOf) {
+  const dirs = new Map();
+  const files = [];
+  for (const r of resolved) {
+    if (!r.path.startsWith(dir)) continue;
+    const rest = r.path.slice(dir.length);
+    if (!rest) continue;
+    const slash = rest.indexOf('/');
+    if (slash < 0) {
+      files.push({ ...r, name: rest });
+      continue;
+    }
+    const name = rest.slice(0, slash + 1);
+    const agg = dirs.get(name) || { name, count: 0, bytes: 0, pending: 0 };
+    agg.count += 1;
+    agg.bytes += r.entry.size || 0;
+    if (statusOf(r.entry) === 'pending') agg.pending += 1;
+    dirs.set(name, agg);
+  }
+  const key = sort.key;
+  const dirValue = (d) => (
+    key === 'name' ? d.name : key === 'size' ? d.bytes : key === 'id' ? d.count : d.pending);
+  const fileValue = (f) => {
+    if (key === 'name') return f.name;
+    if (key === 'size') return f.entry.size || 0;
+    if (key === 'id') return f.entry.kind === KIND_FILE ? '' : f.entry.id;
+    return statusOf(f.entry) === 'pending' ? 1 : 0;
+  };
+  // Folders stay above files whichever column is sorted. Interleaving them by
+  // size or status would scatter the things you navigate through among the
+  // things you act on, and the sort is for finding a file, not for reordering
+  // the folder structure.
+  const dirsSorted = [...dirs.values()].sort((a, b) => sbCompare(dirValue(a), dirValue(b), sort.asc));
+  files.sort((a, b) => sbCompare(fileValue(a), fileValue(b), sort.asc));
+  return { dirs: dirsSorted, files };
+}
+
+/** The folder one level up from `dir`; '' at the root. */
+function sbParentDir(dir) {
+  return dir.replace(/[^/]+\/$/, '');
+}
+
 function resolvePaths(entries) {
   const seen = new Set();
   return entries.map((e) => {
@@ -226,6 +333,14 @@ function resolvePaths(entries) {
 export function initUploadSiteUI() {
   const dropzone  = document.getElementById('us-dropzone');
   const dirInput  = document.getElementById('us-dir');
+  const sbCrumbs  = document.getElementById('sb-crumbs');
+
+  // Which folder of the draft is on screen, '' for the root, otherwise a path
+  // with a trailing slash ('MSFC/2021/'). Held here rather than in the draft
+  // itself: it is where the reader is looking, not part of the site.
+  let sbDir = '';
+  let sbSort = { key: 'name', asc: true };
+
   const filesInput = document.getElementById('us-files');
   const pickFolderBtn = document.getElementById('us-pick-folder');
   const pickFilesBtn  = document.getElementById('us-pick-files');
@@ -248,6 +363,8 @@ export function initUploadSiteUI() {
   const sbVideoWarn  = document.getElementById('sb-video-warn');
 
   const publishBtn   = document.getElementById('us-publish-btn');
+  const siteNameEl   = document.getElementById('us-site-name');
+  const sbDupWarn    = document.getElementById('sb-dup-warn');
   const publishProg  = document.getElementById('us-publish-progress');
   const publishRes   = document.getElementById('us-publish-result');
   const resultId     = document.getElementById('us-result-id');
@@ -266,7 +383,6 @@ export function initUploadSiteUI() {
   const shareUrlEl      = document.getElementById('us-share-url');
   const shareCopyBtn    = document.getElementById('us-share-copy-btn');
   const shareOpenBtn    = document.getElementById('us-share-open-btn');
-  const shareDescInput  = document.getElementById('us-share-desc-input');
   const shareValNum     = document.getElementById('us-share-validity-num');
   const shareValUnit    = document.getElementById('us-share-validity-unit');
 
@@ -276,6 +392,8 @@ export function initUploadSiteUI() {
   let currentAbort = null;
   /** Guard so Publish and Share cannot run concurrently on one draft. */
   let busy = false;
+  /** Set by renderSiteBuilder; blocks both actions while true. */
+  let hasDuplicatePaths = false;
 
   // --- Step 1: reading a folder into the draft ---
 
@@ -365,18 +483,28 @@ export function initUploadSiteUI() {
   }
 
   /**
-   * Wipe both result blocks and their progress lines.
+   * Wipe result blocks and their progress lines.
    *
    * A published URL or sharing key belongs to the exact set of files it was
-   * made from. The moment the draft changes, or another action starts, the one
-   * on screen describes a different site than the one being assembled — and
-   * leaving it visible invites copying the wrong link.
+   * made from, so the moment the draft changes the one on screen describes a
+   * different site than the one being assembled, and leaving it visible invites
+   * copying the wrong link. That is what `kind` omitted means: the draft moved,
+   * so nothing on screen is true any more.
+   *
+   * Naming a `kind` clears only that block, for the case where the draft has
+   * not moved. Publishing and sharing are two ways to hand out the *same* site
+   * and users reasonably do both, so one starting must not erase the other's
+   * result — only its own previous one.
    */
-  function clearResults() {
-    for (const el of [publishRes, shareRes, publishProg, shareProg]) {
+  function clearResults(kind) {
+    const blocks = kind === 'publish' ? [[publishRes, publishProg], [resultId, resultUrl, resultLink]]
+      : kind === 'share' ? [[shareRes, shareProg], [shareKeyEl, shareUrlEl]]
+      : [[publishRes, shareRes, publishProg, shareProg],
+         [resultId, resultUrl, resultLink, shareKeyEl, shareUrlEl]];
+    for (const el of blocks[0]) {
       if (el) el.style.display = 'none';
     }
-    for (const el of [resultId, resultUrl, resultLink, shareKeyEl, shareUrlEl]) {
+    for (const el of blocks[1]) {
       if (el) el.textContent = '';
     }
   }
@@ -439,6 +567,8 @@ export function initUploadSiteUI() {
     if (entries.length === 0) {
       sbEmpty.style.display = '';
       sbListWrap.style.display = 'none';
+      sbCrumbs.style.display = 'none';
+      sbDir = '';
       sbActions.style.display = 'none';
       publishBtn.disabled = true;
       shareBtn.disabled = true;
@@ -447,18 +577,101 @@ export function initUploadSiteUI() {
     sbEmpty.style.display = 'none';
     sbListWrap.style.display = '';
     sbActions.style.display = 'flex';
-    publishBtn.disabled = busy;
-    shareBtn.disabled = busy;
+    // Duplicate paths block both actions. Suffixing them silently, which
+    // `resolvePaths` still does as a last resort, hands back a site whose
+    // `index.html` has quietly become `index-1.html`: the entry point is gone
+    // and the only clue is a number in a filename.
+    const clashes = duplicatePaths(entries);
+    hasDuplicatePaths = clashes.size > 0;
+    if (hasDuplicatePaths) {
+      const rows = [...clashes.entries()].map(([path, list]) =>
+        `<li><code>${_esc(path)}</code> &mdash; claimed by ${list.length} entries</li>`).join('');
+      sbDupWarn.innerHTML =
+        `<strong>${clashes.size} duplicate path${clashes.size === 1 ? '' : 's'}.</strong> `
+        + 'A site maps each path to one file, so these would shadow each other. '
+        + 'Rename one of each before publishing or sharing.'
+        + `<ul style="margin:0.5rem 0 0 1.1rem;">${rows}</ul>`;
+      sbDupWarn.style.display = '';
+    } else {
+      sbDupWarn.style.display = 'none';
+    }
+    publishBtn.disabled = busy || hasDuplicatePaths;
+    shareBtn.disabled = busy || hasDuplicatePaths;
 
-    let html = '<tbody>';
-    for (const e of resolvePaths(entries)) {
-      const { entry, path } = e;
+    const resolved = resolvePaths(entries);
+    // A rename or a removal can empty the folder being viewed. Climbing back
+    // to the root beats leaving the reader inside a folder that no longer has
+    // anything in it, with no indication of why it is blank.
+    if (sbDir && !resolved.some((r) => r.path.startsWith(sbDir))) sbDir = '';
+    const { dirs, files } = sbTree(resolved);
+    renderCrumbs(dirs.length + files.length);
+    sbList.innerHTML = sbTableHtml(dirs, files);
+  }
+
+  function sbTree(resolved) {
+    return sbSplitFolder(resolved, sbDir, sbSort, statusFor);
+  }
+
+
+  /** The path segments of `sbDir`, as clickable steps back up. */
+  function renderCrumbs(shown) {
+    if (!sbDir) {
+      sbCrumbs.style.display = 'none';
+      sbCrumbs.innerHTML = '';
+      return;
+    }
+    const parts = sbDir.replace(/\/$/, '').split('/');
+    let acc = '';
+    const steps = [`<button type="button" class="sb-crumb" data-dir="">All files</button>`];
+    parts.forEach((part, i) => {
+      acc += part + '/';
+      const last = i === parts.length - 1;
+      steps.push('<span class="sb-crumb-sep">/</span>');
+      steps.push(last
+        ? `<button type="button" class="sb-crumb" disabled>${_esc(part)}</button>`
+        : `<button type="button" class="sb-crumb" data-dir="${_esc(acc)}">${_esc(part)}</button>`);
+    });
+    steps.push(`<span class="sb-crumb-count">${shown} here</span>`);
+    sbCrumbs.innerHTML = steps.join('');
+    sbCrumbs.style.display = 'flex';
+  }
+
+  function sbTableHtml(dirs, files) {
+    const arrow = (key) => (sbSort.key === key ? (sbSort.asc ? ' \u25b2' : ' \u25bc') : '');
+    let html = '<thead><tr>';
+    for (const c of SB_COLUMNS) {
+      html += `<th class="${c.cls}" data-sb-sort="${c.key}"`
+        + ` title="Sort by ${c.label.toLowerCase()}">${c.label}${arrow(c.key)}</th>`;
+    }
+    html += '<th class="sb-th-act">Actions</th></tr></thead><tbody>';
+
+    // The same `..` the site's auto-index offers, for the same reason: the
+    // breadcrumb is above the list and the list is what the reader is in.
+    if (sbDir) {
+      const parent = sbParentDir(sbDir);
+      html += `<tr class="sb-up-row" data-sb-dir="${_esc(parent)}">`
+        + '<td colspan="5">..</td></tr>';
+    }
+
+    for (const d of dirs) {
+      const state = d.pending === 0
+        ? `<span style="color:${STATUS_STYLES.stored.color};">${STATUS_STYLES.stored.label}</span>`
+        : `<span style="color:${STATUS_STYLES.pending.color};">${d.pending} not uploaded</span>`;
+      html += `<tr class="sb-dir-row" data-sb-dir="${_esc(sbDir + d.name)}">
+        <td class="sb-dir-name">&#128193; ${_esc(d.name)}</td>
+        <td class="sb-dir-meta">${d.count} file${d.count === 1 ? '' : 's'}</td>
+        <td class="sb-size">${d.bytes ? formatSize(d.bytes) : ''}</td>
+        <td class="sb-status">${state}</td>
+        <td class="sb-act"></td>
+      </tr>`;
+    }
+
+    for (const f of files) {
+      const { entry, path, name } = f;
       const s = STATUS_STYLES[statusFor(entry)] || STATUS_STYLES.pending;
       const idLabel = entry.kind === KIND_FILE
         ? '<span class="sb-local">local file</span>'
         : `<span title="${_esc(entry.id)}">${_esc(entry.id.slice(0, 4))}…${_esc(entry.id.slice(-4))}</span>`;
-      // The de-duplicated path is what actually lands in the site, so show
-      // that rather than the raw filename it was derived from.
       // A path differing from the filename means resolvePaths de-duplicated
       // a collision, not that the user renamed anything.
       const renamed = path !== entry.filename
@@ -470,8 +683,10 @@ export function initUploadSiteUI() {
       const vwarn = compat && !compat.ok
         ? ' <span class="sb-vwarn" title="May not play back in a browser">&#9888;</span>'
         : '';
+      // Only the part of the path below the current folder. The full path is
+      // the cell's title, since that is what actually lands in the site.
       html += `<tr>
-        <td class="sb-path" title="${_esc(path)}">${_esc(path)}${renamed}${vwarn}</td>
+        <td class="sb-path" title="${_esc(path)}">${_esc(name)}${renamed}${vwarn}</td>
         <td class="sb-id">${idLabel}</td>
         <td class="sb-size">${entry.size ? formatSize(entry.size) : 'N/A'}</td>
         <td class="sb-status" style="color:${s.color};">${s.label}</td>
@@ -481,8 +696,7 @@ export function initUploadSiteUI() {
         </td>
       </tr>`;
     }
-    html += '</tbody>';
-    sbList.innerHTML = html;
+    return html + '</tbody>';
   }
 
   /**
@@ -746,22 +960,65 @@ export function initUploadSiteUI() {
     // Keep any existing upload-UUID grouping prefix so the object does not
     // jump around in My Objects just because it was renamed.
     const uuid = extractUploadUuid(full);
-    obj.updateMetadata(encodeMetadata({ filename: uuid ? `${uuid}/${path}` : path }));
+    // Carry the site name through. `encodeMetadata` writes exactly the fields
+    // it is handed, so renaming with filename alone dropped it — the same way
+    // My Objects' own Rename used to.
+    const existingSiteName = siteNameForDisplay(obj.metadata());
+    obj.updateMetadata(encodeMetadata({
+      filename: uuid ? `${uuid}/${path}` : path,
+      siteName: existingSiteName,
+    }));
     await sdk.updateObjectMetadata(obj);
     return true;
   }
 
   /** Runs one action end to end, with shared progress/lock/error handling. */
+  /** The site's name as typed, trimmed. Empty means unnamed. */
+  function siteName() {
+    return (siteNameEl && siteNameEl.value.trim()) || '';
+  }
+
+  /** The action running now, and one the user asked for while it was. */
+  let activeKind = null;
+  let queuedAction = null;
+
   async function runAction(kind, progressEl, body) {
-    if (busy) return;
+    if (busy) {
+      // The two actions cannot overlap: both upload the draft's pending files
+      // and rewrite those entries in place as they become real objects, and
+      // sharing additionally renames files on Sia. Running them at once would
+      // upload the same bytes twice and interleave those rewrites.
+      //
+      // But the click is intent, not a mistake, and users reasonably want both
+      // a link and a key. So it is remembered rather than dropped — the second
+      // run is cheap, because the first has already uploaded everything.
+      if (kind !== activeKind) {
+        queuedAction = { kind, progressEl, body };
+        progressEl.style.display = '';
+        progressEl.innerHTML = `<span class="muted">Queued — starts when ${
+          activeKind === 'publish' ? 'publishing' : 'sharing'} finishes.</span>`;
+      }
+      return;
+    }
     const entries = getDraft();
     if (entries.length === 0) {
       progressEl.style.display = '';
       progressEl.innerHTML = '<span class="fail">Add files to the site builder first.</span>';
       return;
     }
+    // Re-checked here, not just on the button: the draft can change from
+    // elsewhere — My Objects' "Add to site" — between a render and a click.
+    const clashing = duplicatePaths(entries);
+    if (clashing.size > 0) {
+      const first = [...clashing.keys()].slice(0, 3).join(', ');
+      progressEl.style.display = '';
+      progressEl.innerHTML = `<span class="fail">Two or more files claim the same path (${
+        _esc(first)}${clashing.size > 3 ? ', &hellip;' : ''}). Rename one of each before continuing.</span>`;
+      return;
+    }
     busy = true;
-    clearResults();
+    activeKind = kind;
+    clearResults(kind);
     publishBtn.disabled = true;
     shareBtn.disabled = true;
     const btn = kind === 'publish' ? publishBtn : shareBtn;
@@ -822,10 +1079,17 @@ export function initUploadSiteUI() {
       } finally {
         clearInterval(tick);
         busy = false;
+        activeKind = null;
         btn.textContent = label;
         renderSiteBuilder();
       }
     });
+
+    // Dispatched out here rather than from the `finally` so the queued run does
+    // not nest inside this one's keep-alive scope.
+    const next = queuedAction;
+    queuedAction = null;
+    if (next) await runAction(next.kind, next.progressEl, next.body);
   }
 
   // --- Publish ---
@@ -861,11 +1125,15 @@ export function initUploadSiteUI() {
       // one-off upload is fine.
       setStep('Uploading manifest…');
       const uploadId = crypto.randomUUID();
-      const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
+      const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest, siteName()), null, 2);
       const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
       const manifestPinned = new PinnedObject();
+      // The filename convention stays exactly as it was, because that is what
+      // marks an object as a site manifest everywhere else. The name rides
+      // alongside it so My Objects can label the row without fetching and
+      // parsing the manifest for every entry.
       manifestPinned.updateMetadata(
-        encodeMetadata({ filename: `${uploadId}/manifest.json` }),
+        encodeMetadata({ filename: `${uploadId}/manifest.json`, siteName: siteName() }),
       );
       const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
       setStep('Pinning manifest…');
@@ -883,15 +1151,9 @@ export function initUploadSiteUI() {
     });
   });
 
-  openBtn.addEventListener('click', () => {
-    const url = resultUrl.textContent.trim();
-    if (!url) return;
-    const bar = document.getElementById('chrome-address-bar');
-    if (bar) bar.value = url;
-    if (typeof window.handleChromeBarNavigation === 'function') {
-      window.handleChromeBarNavigation();
-    }
-  });
+  makeOpenable(resultUrl);
+
+  openBtn.addEventListener('click', () => openUrlInNewTab(resultUrl.textContent));
 
   copyBtn.addEventListener('click', async () => {
     const url = resultUrl.textContent.trim();
@@ -934,11 +1196,18 @@ export function initUploadSiteUI() {
       return;
     }
     runAction('share', shareProg, async (sdk, resolved, setStep, embeddedIds) => {
+      // The site name is the key's label. Asking for a separate description
+      // was asking the same question twice: both name the same set of files,
+      // and a key called something other than the site it grants access to is
+      // harder to recognise on the Sharing Keys page, not easier.
+      //
       // sanitizeDisplayFilename is the repo's text sanitizer: it strips
-      // invisible and control characters and caps length, which is what a
-      // free-text description needs too.
-      const typed = sanitizeDisplayFilename(shareDescInput.value || '').trim();
-      const description = typed || siteDescription(resolved.length);
+      // invisible and control characters and caps length, which is what
+      // free text heading for a key label needs too.
+      // Capped the same as the manifest's own `name`, so the key label and the
+      // site title cannot diverge for a long name.
+      const named = sanitizeDisplayFilename(siteName()).trim().slice(0, MANIFEST_NAME_MAX);
+      const description = named || siteDescription(resolved.length);
       setStep('Creating sharing key…');
       const key = await sdk.createSharingKey(description, expiresAt);
 
@@ -956,12 +1225,33 @@ export function initUploadSiteUI() {
       // because a published URL needs the viewer's own account to resolve.
       // Skip objects already attached above as site files.
       let extra = 0;
+      let shadowed = 0;
       const own = new Set(resolved.map(({ entry }) => String(entry.id).toLowerCase()));
+      // The site's own paths, to compare an embedded object's name against.
+      // These attachments are the one place a path is not chosen by the
+      // builder: the object keeps whatever name it already had, and the loader
+      // keys on that same stripped name. An embedded object called
+      // `index.html` would shadow the site's own, in an order nothing
+      // guarantees.
+      const sitePaths = new Set(resolved.map(({ path }) => path));
       for (const id of (embeddedIds || [])) {
         if (own.has(id)) continue;
         setStep(`Attaching embedded object ${id.slice(0, 12)}…`);
         try {
-          await sdk.shareObject(key, await sdk.object(id));
+          const obj = await sdk.object(id);
+          const embeddedPath = stripUploadUuid(filenameForDisplay(obj.metadata()) || '')
+            .replace(/^\/+/, '');
+          if (embeddedPath && sitePaths.has(embeddedPath)) {
+            // Left unattached rather than renamed: this object belongs to
+            // other arrangements too, and renaming it to make room here would
+            // move it in those as well.
+            shadowed += 1;
+            panelStatus().textContent =
+              `Skipped embedded object ${id.slice(0, 12)}…: its name "${embeddedPath}" `
+              + 'is already a file in this site.';
+            continue;
+          }
+          await sdk.shareObject(key, obj);
           extra += 1;
         } catch (err) {
           // Most likely not this account's object (someone else's published
@@ -978,6 +1268,9 @@ export function initUploadSiteUI() {
       const notes = [];
       if (renamed > 0) notes.push(`${renamed} file${renamed === 1 ? '' : 's'} renamed on Sia`);
       if (extra > 0) notes.push(`${extra} embedded object${extra === 1 ? '' : 's'} attached`);
+      if (shadowed > 0) {
+        notes.push(`${shadowed} embedded object${shadowed === 1 ? '' : 's'} skipped, name already taken`);
+      }
       return notes.length ? `Site shared (${notes.join(', ')})` : 'Site shared';
     });
   });
@@ -1077,6 +1370,24 @@ export function initUploadSiteUI() {
   sbList.addEventListener('click', (ev) => {
     const t = ev.target;
     if (!(t instanceof HTMLElement)) return;
+
+    const th = t.closest('th[data-sb-sort]');
+    if (th) {
+      const key = th.dataset.sbSort;
+      if (sbSort.key === key) sbSort.asc = !sbSort.asc;
+      else sbSort = { key, asc: true };
+      renderSiteBuilder();
+      return;
+    }
+
+    // Whole-row targets, so navigating does not depend on hitting the name.
+    const nav = t.closest('[data-sb-dir]');
+    if (nav) {
+      sbDir = nav.dataset.sbDir;
+      renderSiteBuilder();
+      return;
+    }
+
     const id = t.dataset.id;
     if (!id) return;
     if (t.classList.contains('sb-rename')) {
@@ -1098,6 +1409,13 @@ export function initUploadSiteUI() {
       videoCompatById.delete(id);
       removeFromDraft(id);
     }
+  });
+
+  sbCrumbs.addEventListener('click', (ev) => {
+    const btn = ev.target instanceof HTMLElement ? ev.target.closest('.sb-crumb') : null;
+    if (!btn || btn.disabled) return;
+    sbDir = btn.dataset.dir || '';
+    renderSiteBuilder();
   });
 
   sbClearBtn.addEventListener('click', () => {
@@ -1225,7 +1543,13 @@ export function initUploadSiteUI() {
   });
 
   renderSiteBuilder();
-  onDraftChange(renderSiteBuilder);
+  onDraftChange(() => {
+    // Not while an action is running: sharing renames files on Sia, which
+    // mutates the draft, and clearing here would erase the result the action is
+    // about to display.
+    if (!busy) clearResults();
+    renderSiteBuilder();
+  });
   refreshGate();
 }
 
