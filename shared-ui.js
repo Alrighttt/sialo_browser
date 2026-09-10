@@ -17,7 +17,7 @@ import {
   filenameForSave, filenameForDisplay, stripUploadUuid,
 } from './object-metadata.js';
 import { parseShareFragment } from './sharing-keys.js';
-import { siteUrl, parsePublishedSiteFragment, DEFAULT_INDEXER } from './sia-site.js';
+import { siteUrl, parsePublishedSiteFragment, canRenderInTab, DEFAULT_INDEXER } from './sia-site.js';
 import { tabStatusProxy, getActiveTab, openOrActivateInternalTab } from './tabs.js';
 import { pinHandle, describePinResult } from './pin.js';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
@@ -138,9 +138,6 @@ export function initSharedUI() {
     status.innerHTML = `<span class="pass">✓ ${objects.length} shared object${objects.length !== 1 ? 's' : ''}</span>`;
   }
 
-/** Extensions the app can render in a tab rather than only save to disk. */
-const VIEWABLE = /\.(?:x?html?|txt|md|json|css|js|png|jpe?g|gif|webp|avif|svg|ico|pdf|mp4|m4v|webm|mov|mp3|m4a|wav|ogg|flac)$/i;
-
 function renderObject(sdk, obj, highlight, seed) {
     const id = obj.id();
     const metadata = obj.metadata();
@@ -156,14 +153,26 @@ function renderObject(sdk, obj, highlight, seed) {
     // site machinery already resolves through the SharedSdk — so a video
     // streams with seeking and an HTML file renders in the sandboxed iframe,
     // with no account needed.
-    const canOpen = !!seed && VIEWABLE.test(name);
+    // Openability is asked of `canRenderInTab`, which reads the same table
+    // that decides the Content-Type the file would be served with. A private
+    // extension list here is what previously left ordinary videos with no
+    // Open button at all — and an absent button reads as a layout fault
+    // rather than a statement about the format, which is why an unrenderable
+    // file now gets a disabled button that says why instead of no button.
+    const renderable = canRenderInTab(name);
+    const canOpen = !!seed && renderable;
+    const openTitle = !seed
+      ? 'Opening needs the key itself, not just this listing'
+      : (renderable
+        ? 'Open in a tab'
+        : 'This format cannot be shown in a browser. Download it to view it locally.');
     row.innerHTML = `
       <div style="min-width:0; flex:1;">
         <div class="sh-name${canOpen ? ' sh-name--open' : ''}"
           title="${_esc(full)}${canOpen ? ' — click to open' : ''}">${_esc(name)}</div>
         <div style="font-size:0.8rem; color:#666; font-family:monospace;">${_esc(id.slice(0, 8))}…${_esc(id.slice(-8))} · ${_esc(formatSize(obj.size()))}</div>
       </div>
-      ${canOpen ? '<button data-act="open" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#059669; color:white; flex-shrink:0;">Open</button>' : ''}
+      <button data-act="open" title="${_esc(openTitle)}"${canOpen ? '' : ' disabled'} style="padding:0.3rem 0.7rem; font-size:0.85rem; background:${canOpen ? '#059669' : '#1f2937'}; color:${canOpen ? 'white' : '#6b7280'}; flex-shrink:0;">Open</button>
       <button data-act="download" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#3b82f6; color:white; flex-shrink:0;">Download</button>
       <button data-act="pin" title="Keep this on your own account, so it stays after the key is revoked or its owner stops paying" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#7c3aed; color:white; flex-shrink:0;">&#128204; Pin</button>
     `;
@@ -268,23 +277,49 @@ function renderObject(sdk, obj, highlight, seed) {
     }
   } catch (_) { /* nothing to offer */ }
 
-  const publishedSite = parsePublishedSiteFragment(location.hash);
-  if (publishedSite) {
-    openSiteTab(publishedSite.url);
-    return;
-  }
-
-  const fromFragment = parseShareFragment(location.hash);
-  if (fromFragment) {
-    if (fromFragment.site) {
-      // A site link renders in a browser tab through the sandboxed iframe,
-      // not in this panel. Everything the tab needs is in the address, so
-      // hand it over and let the normal site path take it from here.
-      openSiteTab(siteUrl(fromFragment.seed, fromFragment.path));
-    } else {
-      openOrActivateInternalTab('shared');
-      seedEl().value = fromFragment.seed;
-      open(fromFragment.seed, fromFragment.objectId);
+  // Registered as the module-level entry point so registering can repeat it;
+  // the body needs this scope's `open` and `seedEl`, so it stays a closure.
+  openFromLocationImpl = () => {
+    const publishedSite = parsePublishedSiteFragment(location.hash);
+    if (publishedSite) {
+      openSiteTab(publishedSite.url);
+      return true;
     }
-  }
+
+    const fromFragment = parseShareFragment(location.hash);
+    if (fromFragment) {
+      if (fromFragment.site) {
+        // A site link renders in a browser tab through the sandboxed iframe,
+        // not in this panel. Everything the tab needs is in the address, so
+        // hand it over and let the normal site path take it from here.
+        openSiteTab(siteUrl(fromFragment.seed, fromFragment.path));
+      } else {
+        openOrActivateInternalTab('shared');
+        seedEl().value = fromFragment.seed;
+        open(fromFragment.seed, fromFragment.objectId);
+      }
+      return true;
+    }
+    return false;
+  };
+  openFromLocationImpl();
+}
+
+/** Set by `initSharedUI`; a no-op before the panel has been wired up. */
+let openFromLocationImpl = () => false;
+
+/**
+ * Opens whatever the address fragment points at, if anything.
+ *
+ * Exported because registering has to be able to repeat it. A visitor following
+ * a published-site or sharing link with no account is sent to the registration
+ * wizard first, and finishing there used to drop them on the homepage — losing
+ * the link that brought them, which is the only thing they were trying to open.
+ * The fragment is still in the address at that point, so the destination can
+ * simply be resolved again.
+ *
+ * Returns whether it found somewhere to go, so a caller can fall back.
+ */
+export function openFromLocation() {
+  return openFromLocationImpl();
 }
