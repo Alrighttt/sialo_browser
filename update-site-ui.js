@@ -31,7 +31,7 @@ import {
   encodeMetadata, sanitizeDisplayFilename, filenameForDisplay, stripUploadUuid,
 } from './object-metadata.js';
 import { PinnedObject, SharingKey } from './pkg/sia_storage_wasm.js';
-import { buildSiaSiteManifest, publishedSiteLink } from './sia-site.js';
+import { buildSiaSiteManifest, publishedSiteLink, MANIFEST_NAME_MAX } from './sia-site.js';
 import { siteLink } from './sharing-keys.js';
 import {
   isVideoFile, checkVideoCompat, suggestFfmpegFix, describeFfmpegFix,
@@ -101,6 +101,9 @@ async function loadKeySiteFiles(sdk, input) {
 const MANIFEST_TYPE = 'sia-site';
 const MANIFEST_VERSION = 1;
 
+/** The loaded site's name, preserved across an update. */
+let loadedName = '';
+
 function parseManifestBytes(bytes) {
   const text = new TextDecoder().decode(bytes);
   let m;
@@ -114,7 +117,11 @@ function parseManifestBytes(bytes) {
       throw new Error(`manifest entry \`${k}\` is not a sia:// published URL`);
     }
   }
-  return m.files;
+  // The name is optional and rides alongside the files. Returned so an update
+  // can put it back: republishing without it would quietly rename the site to
+  // nothing.
+  const name = typeof m.name === 'string' ? m.name.trim().slice(0, MANIFEST_NAME_MAX) : '';
+  return { files: m.files, name };
 }
 
 async function readStreamFully(stream) {
@@ -393,8 +400,9 @@ export function initUpdateSiteUI() {
       } else {
         const { obj } = await resolveObject(input, sdk);
         const bytes = await readStreamFully(sdk.download(obj));
-        const files = parseManifestBytes(bytes);
-        entries = Object.entries(files).map(([path, url]) => [path, { obj: null, publishUrl: url }]);
+        const parsed = parseManifestBytes(bytes);
+        loadedName = parsed.name;
+        entries = Object.entries(parsed.files).map(([path, url]) => [path, { obj: null, publishUrl: url }]);
         sourceLabel = 'manifest';
         loadedSeed = null;
       }
@@ -691,7 +699,7 @@ export function initUpdateSiteUI() {
         }
 
         panelStatus().textContent = 'Uploading manifest…';
-        const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
+        const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest, loadedName), null, 2);
         const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
         const manifestPinned = new PinnedObject();
         manifestPinned.updateMetadata(encodeMetadata({ filename: `${uploadId}/manifest.json` }));
