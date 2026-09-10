@@ -264,26 +264,74 @@ export function sharingIndexerCandidates() {
  * Returns the handle and the indexer it belongs to, so a caller that caches
  * per indexer can key on the one that actually answered.
  */
+/**
+ * How long one indexer gets to answer before the search moves on.
+ *
+ * Without this an indexer that accepts the connection and then goes quiet
+ * holds the whole search open, and the panel sits on "Connecting…" with no
+ * indication that anything is wrong — the symptom that made a missing key look
+ * like a hang rather than an answer.
+ */
+const PROBE_TIMEOUT_MS = 12000;
+
+/**
+ * Whether an indexer answered "I do not hold this key", rather than failing to
+ * answer at all.
+ *
+ * The distinction is the whole difference between a negative result and no
+ * result: a key absent from every indexer that replied is a key that does not
+ * exist, while one that could not be checked everywhere may simply be
+ * somewhere we could not reach.
+ */
+function saysKeyNotFound(err) {
+  return /sharing key not found|\b401\b/i.test(String((err && err.message) || err));
+}
+
 export async function connectSharedSdk(seed) {
   const candidates = sharingIndexerCandidates();
-  const errors = [];
+  const tried = [];
   for (const indexer of candidates) {
     let sdk = null;
     try {
-      sdk = await SharedSdk.connect(indexer, seed);
+      sdk = await Promise.race([
+        SharedSdk.connect(indexer, seed),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error(`no answer within ${PROBE_TIMEOUT_MS / 1000}s`)),
+          PROBE_TIMEOUT_MS,
+        )),
+      ]);
+      // Connecting fetches the key's hosts, so reaching this point is already
+      // the indexer confirming it holds the key. `stats()` is kept as the
+      // explicit check rather than relying on that: the search is only correct
+      // if a wrong guess is rejected, and one request per link opened is not a
+      // price worth trading that for.
       await sdk.stats();
       _dbg(`Sharing key resolved on ${indexer}`);
       return { sdk, indexer };
     } catch (e) {
-      errors.push(`${indexer}: ${e.message || e}`);
-      // A handle that failed its probe is of no use to anyone.
+      tried.push({ indexer, message: (e && e.message) || String(e), notFound: saysKeyNotFound(e) });
+      // A handle that failed its check is of no use to anyone.
       try { if (sdk && sdk.free) sdk.free(); } catch (_) { /* already gone */ }
     }
   }
-  if (errors.length === 1) throw new Error(errors[0]);
+
+  const detail = tried.map((t) => `  ${t.indexer}: ${t.message}`).join('\n');
+  const unreachable = tried.filter((t) => !t.notFound);
+  if (!unreachable.length) {
+    throw new Error(
+      'This sharing key does not exist on any indexer this browser knows about. '
+      + 'It may have been revoked, or created on an indexer that is not in the list.\n'
+      + detail,
+    );
+  }
+  const answered = tried.filter((t) => t.notFound).map((t) => t.indexer);
   throw new Error(
-    'No indexer this browser knows about recognises this sharing key. Tried:\n'
-    + errors.map((e) => '  ' + e).join('\n'),
+    (answered.length
+      ? `This sharing key is not on ${answered.join(' or ')}, and `
+      : 'This sharing key could not be looked up: ')
+    + `${unreachable.map((t) => t.indexer).join(' and ')} could not be reached, `
+    + 'so it may be there. Retrying may resolve it.\n'
+    + detail,
   );
 }
 
