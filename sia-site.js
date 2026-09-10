@@ -261,6 +261,16 @@ async function onMessage(e) {
       const prev = stack[stack.length - 2];
       if (subpath === prev) stack.pop();           // backward nav
       else if (subpath !== top) stack.push(subpath); // new forward nav
+      // Freeze the depth the reader arrived at, once the landing burst goes
+      // quiet. Landing announces come in a rapid group — a redirect, a
+      // bootstrap rewriting the path — and none of them are navigations the
+      // reader made. A click arrives long after the group has settled, so a
+      // debounce separates the two without having to ask the page.
+      if (!tab.iframeBaseSettled) {
+        tab.iframeBaseDepth = stack.length;
+        clearTimeout(tab.iframeBaseTimer);
+        tab.iframeBaseTimer = setTimeout(() => { tab.iframeBaseSettled = true; }, 1200);
+      }
       return;
     }
 
@@ -421,6 +431,24 @@ async function onMessage(e) {
   }
 }
 
+/**
+ * The site was reached and answered: it simply does not hold this path.
+ *
+ * Flagged `needsAccount: false` so the account gate cannot blame it on
+ * registration. That matters most for a sharing key, whose content is
+ * readable *because* it needs no account — offering to register there sends
+ * the reader off to fix something that was never wrong.
+ *
+ * The flag alone is not enough: this error crosses a postMessage boundary as
+ * a bare string and is rebuilt on the far side, losing it. `isAccountError`
+ * therefore also recognises the wording.
+ */
+function notInThisSite(path) {
+  const err = new Error('not in this site: ' + path);
+  err.needsAccount = false;
+  return err;
+}
+
 function findIframeForSource(source) {
   if (!source) return null;
   const all = document.querySelectorAll('iframe');
@@ -445,7 +473,7 @@ async function resolveSitePath(siteId, path, mode) {
       const body = new TextEncoder().encode(injected).buffer;
       return { body, contentType: 'text/html' };
     }
-    throw new Error('not in this site: ' + path);
+    throw notInThisSite(path);
   }
   // A large file cannot be served by value: site.read() buffers the whole
   // object and this resolve is capped, so the request times out however
@@ -534,6 +562,18 @@ function rewriteSiaUrlsInHtml(html) {
     /style\s*=\s*(["'])([^"']*)\1/gi,
     (_m, q, css) => 'style=' + q + rewriteSiaUrlsInCss(css) + q,
   );
+  // A bare object ID used as a file name. An object ID is the one address that
+  // needs neither a manifest entry nor a signed URL, so authors reach for it
+  // when embedding something that is not part of the site's own file list —
+  // `<video src="6ae7…4af8">`. Left alone it looks like a relative path, and
+  // the site's manifest has no such file, so the embed fails with "not in this
+  // site" and nothing explains why. Routed through the streaming route it
+  // behaves like any other media source, Range seeking included.
+  html = html.replace(
+    /\b(src|poster|data|formaction)\s*=\s*(["'])([0-9a-f]{64})\2/gi,
+    (_, attr, q, id) => attr + '=' + q + '/_sia-ext/'
+      + encodeURIComponent('sialo://' + id.toLowerCase()) + q,
+  );
   // <source srcset> / <img srcset> — comma-separated list.
   html = html.replace(
     /\bsrcset\s*=\s*(["'])([^"']*)\1/gi,
@@ -541,6 +581,12 @@ function rewriteSiaUrlsInHtml(html) {
       const rewritten = set.replace(
         /((?:sia|sialo):\/\/[^\s,]+)/gi,
         (u) => '/_sia-ext/' + encodeURIComponent(u),
+      ).replace(
+        // A bare object id in a srcset entry, same as above. Anchored on the
+        // entry boundary so a descriptor like `2x` is left alone.
+        /(^|,\s*)([0-9a-f]{64})(?=\s|,|$)/gi,
+        (_m, lead, id) => lead + '/_sia-ext/'
+          + encodeURIComponent('sialo://' + id.toLowerCase()),
       );
       return 'srcset=' + q + rewritten + q;
     },
@@ -718,17 +764,35 @@ function rewriteAbsolutePathsInCss(css, manifest) {
  * would demand an indexer URL and app key they were never given. Everything
  * else is an ordinary published object and resolves as before.
  */
+/**
+ * The object id in a bare `sialo://<id>` address, or null.
+ *
+ * Only the bare form. A published address carries a signature in its query and
+ * its decryption key in its fragment, so reducing one to an id would throw
+ * away both and the bytes would not decrypt.
+ *
+ * A bare 64-hex address is ambiguous by design — the same shape names a site,
+ * a sharing key and an object — but not here: a site cannot be the source of a
+ * `<video>`, so inside a subresource fetch this can only mean the object.
+ */
+function bareObjectAddress(siaUrl) {
+  const m = /^sialo:\/\/([0-9a-f]{64})\/?$/i.exec(String(siaUrl || ''));
+  return m ? m[1].toLowerCase() : null;
+}
+
 async function resolveStreamSource(siaUrl, siteId) {
   /** Object ID that a key-backed site referenced but does not actually hold. */
   let unattached = null;
   const asSite = parseSiteUrl(siaUrl);
-  if (asSite && /^[0-9a-f]{64}$/i.test(asSite.siteId)) {
+  const bare = bareObjectAddress(siaUrl);
+  if (!bare && asSite && /^[0-9a-f]{64}$/i.test(asSite.siteId)) {
     const site = await getSite(asSite.siteId.toLowerCase());
     if (site && site.kind === 'sharing-key' && site.sdk) {
       const path = (asSite.path || '/').replace(/^\/+/, '');
-      const obj = site.files[path];
-      if (obj) return { sdk: site.sdk, obj };
-      throw new Error('not in this site: ' + path);
+      for (const p of pathForms(path)) {
+        if (site.files[p]) return { sdk: site.sdk, obj: site.files[p] };
+      }
+      throw notInThisSite(path);
     }
   }
 
@@ -743,14 +807,18 @@ async function resolveStreamSource(siaUrl, siteId) {
   // site readable by someone with no account, which is the entire point of
   // handing out a key.
   if (siteId && /^[0-9a-f]{64}$/i.test(siteId)) {
-    const embedded = siaUrl.match(/\/objects\/([0-9a-f]{64})/i);
+    // Either spelling of "this object": the id on its own, or the id inside a
+    // published URL's path. Both are served from the key's own objects when it
+    // holds them, which is what lets an embed work with no account at all.
+    const published = siaUrl.match(/\/objects\/([0-9a-f]{64})/i);
+    const embedded = bare || (published && published[1].toLowerCase());
     if (embedded) {
       let site = null;
       try {
         site = await getSite(String(siteId).toLowerCase());
       } catch (_) { /* fall through to the account path */ }
       if (site && site.kind === 'sharing-key' && site.sdk) {
-        const want = embedded[1].toLowerCase();
+        const want = embedded;
         for (const candidate of Object.values(site.files)) {
           try {
             if (candidate && candidate.id && candidate.id().toLowerCase() === want) {
@@ -790,7 +858,9 @@ async function resolveStreamSource(siaUrl, siteId) {
       throw e2;
     }
   }
-  const { obj } = await resolveObject(siaUrl, sdk);
+  // `resolveObject` understands published URLs and bare object ids, but not a
+  // `sialo://` address — so hand it the id when that is all the address was.
+  const { obj } = await resolveObject(bare || siaUrl, sdk);
   return { sdk, obj };
 }
 
@@ -984,19 +1054,44 @@ function guessMimeFromSiaUrl(url) {
   return 'application/octet-stream';
 }
 
+/**
+ * The spellings of a path to try against a site's file map, in order.
+ *
+ * Paths reach us from the sandbox service worker, which derives them from a
+ * real HTTP request URL, so a space is already `%20` and an apostrophe may be
+ * `%27` by the time we see one. The file maps are keyed by the name the owner
+ * uploaded, punctuation and all, so a raw comparison misses every file whose
+ * name is not already URL-safe.
+ *
+ * The raw form is tried first, so a name that genuinely contains `%20`
+ * resolves to itself rather than to its decoded neighbour. Decoding is allowed
+ * to fail: `decodeURIComponent` throws on a lone `%`, which is a legal
+ * character in a filename.
+ */
+function pathForms(path) {
+  const raw = (path || '').replace(/^\/+/, '');
+  const forms = [raw];
+  try {
+    const decoded = decodeURIComponent(raw);
+    if (decoded !== raw) forms.push(decoded);
+  } catch (_) { /* not valid encoding — the raw form is all we have */ }
+  return forms;
+}
+
 function resolveManifestKey(manifest, path) {
-  // Normalise: drop any leading slashes; empty path means the root.
-  const p = (path || '').replace(/^\/+/, '');
-  const candidates = [
-    p,
-    p + '/index.html',
-    p.replace(/\/$/, '') + '/index.html',
-    p + '.html',
-    'index.html',
-  ];
-  for (const key of candidates) {
-    if (manifest[key]) return { key, objectId: manifest[key] };
+  const forms = pathForms(path);
+  // Exact matches across every spelling first. The root-index fallback below
+  // matches any path at all, so running it per-spelling would let the raw
+  // form's fallback swallow a decoded name that really is in the site.
+  for (const p of forms) {
+    if (manifest[p]) return { key: p, objectId: manifest[p] };
   }
+  for (const p of forms) {
+    for (const key of [p + '/index.html', p.replace(/\/$/, '') + '/index.html', p + '.html']) {
+      if (manifest[key]) return { key, objectId: manifest[key] };
+    }
+  }
+  if (manifest['index.html']) return { key: 'index.html', objectId: manifest['index.html'] };
   return null;
 }
 
@@ -1157,13 +1252,23 @@ async function renderAutoIndex(site, dirPath) {
     );
   }
 
-  const title = `Index of /${_esc(dirPath)}`;
+  // A named site leads with its name and demotes the path to the subtitle: the
+  // name is what a visitor recognises, and for the root directory "Index of /"
+  // tells them nothing they did not already know. Unnamed sites are unchanged.
+  const siteName = typeof site.name === 'string' ? site.name : '';
+  const path = `/${_esc(dirPath)}`;
+  const title = siteName ? _esc(siteName) : `Index of ${path}`;
+  const docTitle = siteName
+    ? `${_esc(siteName)} — ${path}`
+    : `Index of ${path}`;
   const count = files.length + subdirs.size;
 
   // The subtitle carries the link's own expiry for a shared site. Saying
   // nothing when the lookup failed is deliberate: a wrong date here is worse
   // than no date, because the reader would plan around it.
-  let sub = `${count} entr${count === 1 ? 'y' : 'ies'}`;
+  let sub = siteName
+    ? `<span class="path">${path}</span> &middot; ${count} entr${count === 1 ? 'y' : 'ies'}`
+    : `${count} entr${count === 1 ? 'y' : 'ies'}`;
   if (!perFileExpiry) {
     if (linkExpiry === null) {
       sub += ' &middot; this link does not expire';
@@ -1179,7 +1284,7 @@ async function renderAutoIndex(site, dirPath) {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>${title}</title>
+<title>${docTitle}</title>
 <style>
   * { box-sizing: border-box; }
   body { margin: 0; padding: 2rem 1.5rem; background: #0a0a0a; color: #d0d0d0; font-family: system-ui, -apple-system, sans-serif; min-height: 100vh; }
@@ -1187,6 +1292,8 @@ async function renderAutoIndex(site, dirPath) {
   header { border-bottom: 1px solid #1e1e1e; padding-bottom: 1rem; margin-bottom: 1.25rem; }
   h1 { font-size: 1.4rem; font-weight: 600; color: #e5e5e5; margin: 0 0 0.35rem; font-family: var(--font-mono, ui-monospace, monospace); }
   .sub { color: #6b7280; font-size: 0.85rem; }
+  .sub .path { font-family: var(--font-mono, ui-monospace, monospace); }
+  h1.named { font-family: system-ui, -apple-system, sans-serif; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { border-bottom: 1px solid #141414; }
   li:last-child { border-bottom: 0; }
@@ -1209,7 +1316,7 @@ async function renderAutoIndex(site, dirPath) {
 <body>
   <div class="wrap">
     <header>
-      <h1>${title}</h1>
+      <h1${siteName ? ' class="named"' : ''}>${title}</h1>
       <div class="sub">${sub}</div>
     </header>
     <ul>
@@ -1406,10 +1513,13 @@ export async function siteEntries(siteId) {
 
 /** A site backed by a legacy manifest object of `{ path -> publishUrl }`. */
 async function manifestSite(manifestId) {
-  const files = await getManifest(manifestId);
+  const { files, name } = await getManifest(manifestId);
   return {
     kind: 'manifest',
     files,
+    // What the site calls itself, for the generated index heading. Empty for
+    // every manifest written before names existed.
+    name,
     read: (publishUrl) => fetchObject(publishUrl),
     sizeOf: (publishUrl) => resolvePublishUrlSize(publishUrl),
     // Published URLs are absolute; the injected bridge turns a `sia://`
@@ -1461,9 +1571,24 @@ const MANIFEST_VERSION = 1;
  * produced by this client. Exposed so the CLI / other callers use the
  * same shape.
  */
-export function buildSiaSiteManifest(files) {
-  return { type: MANIFEST_TYPE, version: MANIFEST_VERSION, files };
+export function buildSiaSiteManifest(files, name) {
+  const manifest = { type: MANIFEST_TYPE, version: MANIFEST_VERSION };
+  // Omitted when absent rather than written as an empty string, so a site with
+  // no name serialises exactly as it did before this field existed.
+  if (typeof name === 'string' && name.trim().length > 0) {
+    manifest.name = name.trim().slice(0, MANIFEST_NAME_MAX);
+  }
+  manifest.files = files;
+  return manifest;
 }
+
+/**
+ * Cap on a site name, applied when writing and again when reading.
+ *
+ * A manifest is fetched from the network and its name is rendered into a
+ * generated page's heading, so its length is not something to take on trust.
+ */
+export const MANIFEST_NAME_MAX = 120;
 
 /**
  * Parse and validate a v1 sia-site manifest. Returns the flat
@@ -1494,7 +1619,10 @@ function parseManifest(data) {
       throw new Error(`manifest entry \`${k}\` is not a sia:// published URL`);
     }
   }
-  return m.files;
+  // Read back defensively: `name` comes off the network, so a non-string or an
+  // over-long value is ignored rather than propagated into a page heading.
+  const name = typeof m.name === 'string' ? m.name.trim().slice(0, MANIFEST_NAME_MAX) : '';
+  return { files: m.files, name };
 }
 
 async function getManifest(manifestId) {
@@ -1510,10 +1638,11 @@ async function getManifest(manifestId) {
     const { obj } = await resolveObject(manifestId, sdk);
     return await readStreamFully(sdk.download(obj));
   });
-  const files = parseManifest(data);
-  manifestCache.set(manifestId, files);
-  _dbg('[sia-site] loaded manifest', manifestId.slice(0, 16), 'entries:', Object.keys(files).length);
-  return files;
+  const parsed = parseManifest(data);
+  manifestCache.set(manifestId, parsed);
+  _dbg('[sia-site] loaded manifest', manifestId.slice(0, 16),
+    'entries:', Object.keys(parsed.files).length, parsed.name ? `name: ${parsed.name}` : '');
+  return parsed;
 }
 
 async function readStreamFully(stream) {
@@ -1671,13 +1800,47 @@ function guessMime(path) {
     webp: 'image/webp', avif: 'image/avif',
     svg: 'image/svg+xml', ico: 'image/x-icon',
     woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf', otf: 'font/otf',
-    mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+    mp4: 'video/mp4', m4v: 'video/x-m4v', webm: 'video/webm', mov: 'video/quicktime',
+    ogv: 'video/ogg',
+    mpeg: 'video/mpeg', mpg: 'video/mpeg', m2v: 'video/mpeg',
+    mkv: 'video/x-matroska', avi: 'video/x-msvideo', wmv: 'video/x-ms-wmv',
     mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+    flac: 'audio/flac', aac: 'audio/aac', opus: 'audio/opus', weba: 'audio/webm',
+    bmp: 'image/bmp', tif: 'image/tiff', tiff: 'image/tiff', heic: 'image/heic',
     wasm: 'application/wasm',
     txt: 'text/plain', md: 'text/markdown', pdf: 'application/pdf',
+    csv: 'text/csv', log: 'text/plain', yml: 'text/plain', yaml: 'text/plain',
+    vtt: 'text/vtt', srt: 'text/plain',
     zip: 'application/zip',
   };
   return m[ext] || 'application/octet-stream';
+}
+
+/**
+ * Formats a browser is handed happily but cannot actually decode, so a tab
+ * shows a black video frame or a broken-image icon rather than the file.
+ * Knowing the Content-Type is not the same as being able to play it, which is
+ * why this is a separate list from `guessMime` rather than a filter over it.
+ */
+const UNDECODABLE = new Set([
+  'video/mpeg', 'video/x-matroska', 'video/x-msvideo', 'video/x-ms-wmv',
+  'image/tiff', 'image/heic',
+]);
+
+/**
+ * Whether the app can show this filename in a tab rather than only save it.
+ *
+ * Callers use this to decide whether to offer opening. It is derived from the
+ * same table that decides the Content-Type the file would be served with, so
+ * the two cannot drift — a divergent second list is what previously left
+ * ordinary videos with no way to open them.
+ */
+export function canRenderInTab(path) {
+  const mime = guessMime(path || '');
+  if (mime === 'application/octet-stream') return false;
+  if (mime === 'application/zip' || mime === 'application/wasm') return false;
+  if (mime.startsWith('font/')) return false;
+  return !UNDECODABLE.has(mime);
 }
 
 /**
@@ -1795,7 +1958,7 @@ export function unloadSite(iframeEl) {
  *     { path: 'assets/logo.png', data: pngBytes },
  *   ]);
  */
-export async function uploadSite(sdk, files) {
+export async function uploadSite(sdk, files, name) {
   const manifest = {};
   const validUntil = new Date(Date.now() + SITE_PUBLISH_VALIDITY_MS);
   // UUID-prefix every object's filename metadata so all artifacts from a
@@ -1812,10 +1975,12 @@ export async function uploadSite(sdk, files) {
     manifest[path] = sdk.objectShareUrl(obj, validUntil);
     _dbg('[sia-site] uploaded', path, '→', obj.id());
   }
-  const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest), null, 2);
+  const manifestJson = JSON.stringify(buildSiaSiteManifest(manifest, name), null, 2);
   const manifestBlob = new Blob([new TextEncoder().encode(manifestJson)]);
   const manifestPinned = new PinnedObject();
-  manifestPinned.updateMetadata(encodeMetadata({ filename: `${uploadId}/manifest.json` }));
+  manifestPinned.updateMetadata(
+    encodeMetadata({ filename: `${uploadId}/manifest.json`, siteName: name }),
+  );
   const manifestObj = await sdk.upload(manifestPinned, manifestBlob.stream());
   await sdk.pinObject(manifestObj);
   const manifestId = manifestObj.id();
