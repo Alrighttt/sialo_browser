@@ -1224,6 +1224,10 @@ async function loadContentWithAutoDetect() {
       // the in-app back button to decide if delegating to the iframe's
       // history.back() is safe.
       tab.iframePathStack = [];
+      // The arrival depth belongs to this load, not the previous one.
+      clearTimeout(tab.iframeBaseTimer);
+      tab.iframeBaseDepth = null;
+      tab.iframeBaseSettled = false;
       loadSiaSiteIntoIframe(iframe, parsed.resolvable, subpath);
       const shortId = (parsed.objectId || parsed.resolvable).slice(0, 12);
       tab.label = 'Sia site: ' + shortId + '…';

@@ -1752,6 +1752,15 @@ progress::-moz-progress-bar {
   word-break: break-all;
   margin-bottom: 0.7rem;
 }
+/* A result address that opens on click. Underlined only on hover so the
+   resting state still reads as the plain, selectable text it is. */
+.link-openable { cursor: pointer; }
+.link-openable:hover { text-decoration: underline; }
+.link-openable:focus-visible {
+  outline: 2px solid #4ade80;
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 .us-result-id    { color: #60a5fa; }
 .us-result-url   { color: #4ade80; }
 .us-result-share { color: #34d399; }

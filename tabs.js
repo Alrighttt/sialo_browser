@@ -377,6 +377,59 @@ export function openOrActivateInternalTab(panelName) {
   return tab;
 }
 
+/**
+ * Loads `url` in a fresh browser tab.
+ *
+ * A new tab rather than the current one because the places that call this are
+ * showing a link the user may still want to copy: navigating in place takes
+ * the link away with it.
+ *
+ * `sia://` is the SDK's publish scheme and `sialo://` is the app's address
+ * scheme. Only the latter reaches the site loader, which converts it back
+ * internally — so the two name the same destination and the difference is one
+ * the caller should not have to know.
+ */
+export function openUrlInNewTab(url) {
+  const address = String(url || '').trim();
+  if (!address) return;
+  const normalised = address.startsWith('sia://')
+    ? `sialo://${address.slice('sia://'.length)}`
+    : address;
+  const tab = createTab({ type: 'browser', label: 'New Tab' });
+  activateTab(tab.id);
+  const bar = document.getElementById('chrome-address-bar');
+  if (bar) bar.value = normalised;
+  if (typeof window.handleChromeBarNavigation === 'function') {
+    window.handleChromeBarNavigation();
+  }
+}
+
+/**
+ * Makes an element that displays a URL open it on click.
+ *
+ * The element stays ordinary selectable text, because these are long addresses
+ * people copy by hand: a click that ended a selection is a drag, not a click,
+ * and is ignored. `role`/`tabindex` and the Enter handler are what make it
+ * reachable without a mouse, since a bare div is not.
+ */
+export function makeOpenable(el) {
+  if (!el || el.dataset.openableBound) return;
+  el.dataset.openableBound = '1';
+  el.setAttribute('role', 'link');
+  el.setAttribute('tabindex', '0');
+  el.title = 'Open in a new tab';
+  el.classList.add('link-openable');
+  const go = () => openUrlInNewTab(el.textContent);
+  el.addEventListener('click', () => {
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    go();
+  });
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); go(); }
+  });
+}
+
 export function getOrCreateActiveBrowserTab() {
   const active = getActiveTab();
   if (active && active.type === 'browser') return active;
@@ -756,6 +809,26 @@ export function backCloseTarget(tab) {
   return tabs.find((t) => t.id === tab.openerId) || null;
 }
 
+/**
+ * How deep inside a site the reader was when the tab arrived there.
+ *
+ * Intra-site history exists only above this: a site's landing page announces
+ * its path more than once (a redirect, a bootstrap that rewrites it), so a
+ * stack with two entries does not mean the reader went anywhere. Treating it
+ * as history is what left Back delegating to the iframe forever, so a tab
+ * opened from My Objects or Sharing Keys never unwound to the panel it came
+ * from and Back looked broken. Defaults to 1 for a tab that never reported.
+ */
+function iframeArrivalDepth(tab) {
+  return Number.isFinite(tab.iframeBaseDepth) ? tab.iframeBaseDepth : 1;
+}
+
+/** Whether the reader has navigated inside the site since arriving. */
+function hasIntraSiteHistory(tab) {
+  return !!(Array.isArray(tab.iframePathStack)
+    && tab.iframePathStack.length > iframeArrivalDepth(tab));
+}
+
 /** Whether this tab can navigate back inside itself. */
 function hasOwnHistory(tab) {
   if (!tab) return false;
@@ -763,10 +836,7 @@ function hasOwnHistory(tab) {
   if (tab.navIndex > 0) return true;
   // A site tab also has intra-site depth, tracked from the iframe's own page
   // announces. More than one entry means there is a page to go back to.
-  if (isSiaSiteTab(tab)
-      && Array.isArray(tab.iframePathStack) && tab.iframePathStack.length > 1) {
-    return true;
-  }
+  if (isSiaSiteTab(tab) && hasIntraSiteHistory(tab)) return true;
   // A failed navigation leaves tab.url pointing at the broken address while
   // navHistory still holds the last good page; that counts as somewhere to go.
   const cur = tab.navHistory && tab.navHistory[tab.navIndex];
@@ -804,8 +874,7 @@ export function goBack() {
     // sia-bridge-page announces in sia-site.js); only delegate while
     // there's at least one frame above the initial entry. Otherwise
     // no-op so the user stays on sialo.io.
-    if (Array.isArray(tab.iframePathStack) && tab.iframePathStack.length > 1
-        && tab.iframeEl && tab.iframeEl.contentWindow) {
+    if (hasIntraSiteHistory(tab) && tab.iframeEl && tab.iframeEl.contentWindow) {
       try {
         let targetOrigin = '*';
         try { if (tab.iframeEl.src) targetOrigin = new URL(tab.iframeEl.src).origin; } catch (_) {}
