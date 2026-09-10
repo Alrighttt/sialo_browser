@@ -11,6 +11,8 @@
 // handlers. The helpers object provides WASM SDK classes and tab-system
 // functions so this module stays decoupled from index.html.
 
+import { openFromLocation } from './shared-ui.js';
+
 export function initRegistrationWizard(helpers) {
   const {
     Builder,
@@ -227,7 +229,10 @@ export function initRegistrationWizard(helpers) {
     // Find the Homepage browser tab
     const homepageTab = tabs.find(t => t.type === 'browser' && t.label === 'Homepage');
 
-    if (homepageTab) {
+    // Whoever arrived by following a link came here to open that link, not the
+    // homepage. The fragment is still in the address, so resolve it again and
+    // only fall back to the homepage when there was nothing to return to.
+    if (!openFromLocation() && homepageTab) {
       activateTab(homepageTab.id);
     }
     if (registerTab) {
