@@ -2046,3 +2046,253 @@ a.addr-chip--link:hover {
   cursor: pointer;
   accent-color: #10b981;
 }
+
+/* ── My Objects list ───────────────────────────────────────────────────────
+   A single card: a header for what acts on the whole list, a table, and a
+   footer for paging. Everything that acts on one object lives in that row's
+   menu, because nine buttons per row could not be scanned and pushed the
+   columns that matter off the side. */
+
+.obj-panel { padding: 0; border: 0; background: transparent; }
+
+.obj-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.obj-head-title h2 { margin: 0 0 0.15rem; }
+.obj-head-sub { color: #6b7280; font-size: 0.85rem; }
+.obj-head-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+.obj-indexer {
+  background: #141414;
+  color: #e5e7eb;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.85rem;
+  min-width: 11rem;
+}
+
+.obj-btn {
+  background: #1c1c1c;
+  color: #e5e7eb;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.obj-btn:hover:not(:disabled) { background: #242424; border-color: #383838; }
+.obj-btn:disabled { opacity: 0.45; cursor: default; }
+/* A destructive bulk action. Coloured only on hover so a row of buttons does
+   not lead with the one you least want to press by accident. */
+.obj-btn--danger { color: #f87171; border-color: #3a2020; }
+.obj-btn--danger:hover:not(:disabled) { background: #2a1414; border-color: #5b2626; color: #fca5a5; }
+.obj-btn--primary { background: #2563eb; border-color: #2563eb; color: #fff; font-weight: 500; }
+.obj-btn--primary:hover:not(:disabled) { background: #1d4ed8; border-color: #1d4ed8; }
+
+.obj-selbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: #101820;
+  border: 1px solid #1e3a5f;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  color: #9aa3ad;
+}
+
+.obj-table-wrap {
+  border: 1px solid #1f1f1f;
+  border-radius: 10px;
+  overflow-y: auto;
+  /* Nothing in the table needs horizontal reach any more: the fixed layout
+     below sizes every column to fit and truncates the name that does not.
+     What is left is a 2px sliver from this element's own border, which the
+     table's `width: 100%` does not discount, and which was enough to leave a
+     scrollbar sitting under the list permanently. */
+  overflow-x: hidden;
+  max-height: 62vh;
+  background: #0d0d0d;
+}
+
+/* Below this the fixed columns genuinely cannot all fit, so give the pane its
+   horizontal scroll back rather than clipping the Actions menu out of reach. */
+@media (max-width: 640px) {
+  .obj-table-wrap { overflow-x: auto; }
+}
+
+/* The table itself is emitted by objects-ui.js; these style it by class so
+   the render stays free of inline style strings. */
+/* `table-layout: fixed` is what makes the ellipsis on `.obj-name-text` below
+   actually fire. Under the default auto layout the table is sized to its
+   widest unbreakable cell, and these names are one nowrap string hundreds of
+   characters long — so the Name column grew past the viewport, pushing Size,
+   Updated, Sharing Keys and Actions out of sight behind a horizontal
+   scrollbar. Fixed layout takes the widths below as given and hands Name
+   whatever is left, so a long name truncates instead of displacing the
+   columns that tell you about it. */
+.obj-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.9rem; }
+.obj-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #121212;
+  border-bottom: 1px solid #232323;
+  text-align: left;
+  padding: 0.7rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #9aa3ad;
+  white-space: nowrap;
+}
+.obj-table thead th[data-sort] { cursor: pointer; user-select: none; }
+.obj-table thead th[data-sort]:hover { color: #e5e7eb; }
+.obj-table tbody td { padding: 0.65rem 0.75rem; border-bottom: 1px solid #191919; vertical-align: middle; }
+.obj-table tbody tr:last-child td { border-bottom: 0; }
+.obj-table tbody tr:hover { background: #121212; }
+.obj-col-check { width: 2.5rem; }
+/* Name is deliberately the only column with no width: it takes the remainder. */
+.obj-col-size { width: 6.5rem; }
+.obj-col-updated { width: 10.5rem; }
+.obj-col-keys { width: 9rem; }
+.obj-col-actions { width: 3.5rem; text-align: right; }
+.obj-num { font-variant-numeric: tabular-nums; color: #cbd5e1; white-space: nowrap; }
+.obj-dim { color: #6b7280; }
+
+/* Name cell: a type tile, then the name. The tile is what makes a long list
+   scannable by kind without reading any of it. */
+.obj-name { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.obj-icon {
+  flex: 0 0 auto;
+  width: 1.9rem;
+  height: 1.9rem;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  background: #1a1a1a;
+  color: #9aa3ad;
+}
+.obj-icon--video { background: #10233b; color: #60a5fa; }
+.obj-icon--image { background: #0f2a23; color: #34d399; }
+.obj-icon--site  { background: #251c34; color: #a78bfa; }
+.obj-icon--text  { background: #1a1a1a; color: #9aa3ad; }
+.obj-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e5e7eb;
+}
+.obj-name-text.is-dim { color: #555; }
+/* The name is the row's title, and clicking a title opens the thing. */
+.obj-name-text { cursor: pointer; }
+.obj-name-text:hover { color: #fff; text-decoration: underline; }
+.obj-name-text.is-dim { cursor: default; text-decoration: none; }
+
+/* Only deleted rows are marked. There is no "Active" badge: it would have
+   been on every row but the ones the list hides by default. */
+.obj-deleted-chip {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid #4c1d1d;
+  border-radius: 999px;
+  background: #1f1010;
+  color: #f87171;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+/* ── Row menu ──
+   One menu element reused by every row, positioned next to whichever button
+   opened it. Per-row menus would mean one hidden subtree per object, which at
+   five hundred rows is five hundred subtrees for the one that gets used. */
+.obj-kebab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #9aa3ad;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+.obj-kebab:hover, .obj-kebab[aria-expanded="true"] { background: #1f1f1f; border-color: #2f2f2f; color: #e5e7eb; }
+
+.obj-menu {
+  position: fixed;
+  z-index: 1200;
+  min-width: 13rem;
+  padding: 0.35rem;
+  background: #161616;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+.obj-menu[hidden] { display: none; }
+.obj-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.5rem 0.6rem;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+.obj-menu-item:hover, .obj-menu-item:focus-visible { background: #212121; outline: none; }
+.obj-menu-item--danger { color: #f87171; }
+.obj-menu-item--danger:hover { background: #2a1414; }
+.obj-menu-icon { width: 1.1rem; text-align: center; opacity: 0.8; }
+.obj-menu-sep { height: 1px; margin: 0.35rem 0.25rem; background: #262626; }
+
+.obj-foot {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: #9aa3ad;
+}
+.obj-foot-field { display: inline-flex; align-items: center; gap: 0.4rem; }
+.obj-foot-deleted { cursor: pointer; }
+.obj-pagesize {
+  background: #141414;
+  color: #e5e7eb;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 0.3rem 0.45rem;
+}
+.obj-pages { display: flex; align-items: center; gap: 0.25rem; margin-left: auto; }
+.obj-page-btn {
+  background: #161616;
+  color: #cbd5e1;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
+  padding: 0.25rem 0.55rem;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.obj-page-btn:hover:not(:disabled) { background: #202020; }
+.obj-page-btn:disabled { opacity: 0.35; cursor: default; }
+.obj-page-num {
+  min-width: 2rem;
+  text-align: center;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #2563eb;
+  border-radius: 6px;
+  color: #93c5fd;
+  font-variant-numeric: tabular-nums;
+}

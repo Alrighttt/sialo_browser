@@ -5,16 +5,17 @@ import { parallelDownloadToDisk } from './download.js';
 import { withKeepAlive } from './keep-alive.js';
 import { loadContentWithAutoDetect } from './browser.js';
 import {
-  openOrActivateInternalTab, getOrCreateActiveBrowserTab,
+  openOrActivateInternalTab, getOrCreateActiveBrowserTab, makeOpenable,
   setLastBrowserUrl, renderTabBar, getActiveTab, trackAbort,
   tabStatusProxy,
 } from './tabs.js';
 import {
   filenameForDisplay, sanitizeFilename, sanitizeDisplayFilename, encodeMetadata,
-  stripUploadUuid, extractUploadUuid,
+  stripUploadUuid, extractUploadUuid, siteNameForDisplay,
 } from './object-metadata.js';
 import { addToDraft, removeFromDraft, isInDraft, onDraftChange } from './site-builder.js';
-import { shareObjectToKey } from './sharing-keys.js';
+import { shareObjectToKey, pickSharingKey, showShareLinkModal } from './sharing-keys.js';
+import { migrateObjectPrompt } from './object-migrate.js';
 import { objectHealth, healthSummary, usableHostKeys } from './object-health.js';
 
 // Status proxy for the currently-active tab. Writes land in the
@@ -39,6 +40,155 @@ function isManifestFilename(filename) {
 // already give plenty of entropy for a nice spread around the wheel,
 // and using the same bytes every render means the same upload
 // session always shows the same color.
+/**
+ * The kind of thing a row is, for its type tile.
+ *
+ * Keyed off the filename because that is all the list has — the indexer stores
+ * no content type. A wrong guess costs a misleading icon and nothing else, so
+ * the extension list is deliberately short rather than exhaustive.
+ */
+function objectKind(obj) {
+  if (obj.isManifest) return { kind: 'site', glyph: '&#9635;' };
+  const name = (obj.filename || '').toLowerCase();
+  const ext = name.slice(name.lastIndexOf('.') + 1);
+  if (['mp4', 'webm', 'mkv', 'mov', 'avi', 'm4v'].includes(ext)) return { kind: 'video', glyph: '&#9654;' };
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp'].includes(ext)) return { kind: 'image', glyph: '&#9707;' };
+  return { kind: 'text', glyph: '&#9647;' };
+}
+
+/**
+ * Every per-object action, as one menu.
+ *
+ * The row used to carry nine buttons. They pushed Size and Updated off the
+ * side, and no two rows could be compared without reading a wall of coloured
+ * labels first. The set is unchanged — only where it lives.
+ *
+ * `[label, handler, icon, danger?]`, with null for a separator. Handlers are
+ * the same `window.*` functions the buttons called, so behaviour is identical.
+ */
+function rowMenuItems(obj) {
+  const id = obj.id;
+  const items = [
+    ['View', () => window.viewObjectById(id), '&#128065;'],
+  ];
+  if (obj.isManifest) {
+    items.push(['Open Site', () => window.viewObjectById(id), '&#8599;']);
+  }
+  items.push(
+    ['Publish', () => window.publishObjectById(id), '&#127760;'],
+    null,
+    // Named for what it does: it attaches this object to a key, which is why
+    // it reads like the "Add to Site" beneath it. Managing the keys themselves
+    // is the Sharing Keys page.
+    ['Add to Sharing Key', () => window.shareObjectToSharingKey(id), '&#128273;'],
+    ['Rename', () => window.renameObjectById(id), '&#9998;'],
+    // Only for an object still carrying an upload batch's prefix. For anything
+    // else there is no group to leave, and an item that does nothing is worse
+    // than an absent one.
+    ...(extractUploadUuid(obj.filename || '')
+      ? [['Remove from Group', () => window.ungroupObjectById(id), '&#9986;']]
+      : []),
+    isInDraft(id)
+      ? ['Remove from Site', () => window.removeFromSiteBuilder(id), '&#10003;']
+      : ['Add to Site', () => window.addToSiteBuilder(id), '&#128193;'],
+    ['Migrate', () => window.migrateObjectById(id), '&#9729;'],
+    ['Download', () => window.downloadObjectById(id), '&#8595;'],
+    null,
+    ['Details', () => window.showObjectInfo(id), '&#8505;'],
+    ['Copy object ID', () => window.copyToClipboard(id), '&#9112;'],
+    null,
+    ['Delete', () => window.deleteObjectById(id), '&#128465;', true],
+  );
+  return items;
+}
+
+/**
+ * The one menu element every row shares, created on first use.
+ *
+ * Anchored to the button that opened it and closed by anything that would make
+ * its position wrong: a click elsewhere, Escape, a scroll, a resize. It lives
+ * on `body` and is `position: fixed`, so the table's own overflow cannot clip
+ * it — which is what happens to a menu rendered inside a scrolling cell.
+ */
+let rowMenuEl = null;
+let rowMenuOwner = null;
+
+function closeRowMenu() {
+  if (rowMenuEl) rowMenuEl.hidden = true;
+  if (rowMenuOwner) rowMenuOwner.setAttribute('aria-expanded', 'false');
+  rowMenuOwner = null;
+}
+
+function ensureRowMenu() {
+  if (rowMenuEl) return rowMenuEl;
+  rowMenuEl = document.createElement('div');
+  rowMenuEl.id = 'obj-menu';
+  rowMenuEl.className = 'obj-menu';
+  rowMenuEl.setAttribute('role', 'menu');
+  rowMenuEl.hidden = true;
+  document.body.appendChild(rowMenuEl);
+  document.addEventListener('click', (e) => {
+    if (rowMenuEl.hidden) return;
+    if (rowMenuEl.contains(e.target) || (rowMenuOwner && rowMenuOwner.contains(e.target))) return;
+    closeRowMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !rowMenuEl.hidden) closeRowMenu();
+  });
+  // Capture, so a scroll inside the table is caught as well as one on the page.
+  window.addEventListener('scroll', closeRowMenu, true);
+  window.addEventListener('resize', closeRowMenu);
+  return rowMenuEl;
+}
+
+function openRowMenu(button, obj) {
+  const menu = ensureRowMenu();
+  if (rowMenuOwner === button && !menu.hidden) {
+    closeRowMenu();
+    return;
+  }
+  closeRowMenu();
+  menu.textContent = '';
+  for (const item of rowMenuItems(obj)) {
+    if (!item) {
+      const sep = document.createElement('div');
+      sep.className = 'obj-menu-sep';
+      menu.appendChild(sep);
+      continue;
+    }
+    const [label, run, icon, danger] = item;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'obj-menu-item' + (danger ? ' obj-menu-item--danger' : '');
+    btn.setAttribute('role', 'menuitem');
+    btn.innerHTML = `<span class="obj-menu-icon" aria-hidden="true">${icon}</span>`;
+    btn.appendChild(document.createTextNode(label));
+    btn.addEventListener('click', () => {
+      closeRowMenu();
+      run();
+    });
+    menu.appendChild(btn);
+  }
+
+  menu.hidden = false;
+  rowMenuOwner = button;
+  button.setAttribute('aria-expanded', 'true');
+
+  // Right-aligned under the button, nudged back inside the viewport when it
+  // would otherwise hang off the bottom or the right edge.
+  const r = button.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  const left = Math.max(8, Math.min(r.right - m.width, window.innerWidth - m.width - 8));
+  const below = r.bottom + 4;
+  const top = below + m.height > window.innerHeight - 8
+    ? Math.max(8, r.top - m.height - 4)
+    : below;
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+  const first = menu.querySelector('.obj-menu-item');
+  if (first) first.focus();
+}
+
 function uuidToColor(uuid) {
   let h = 0;
   for (let i = 0; i < 12 && i < uuid.length; i++) {
@@ -219,13 +369,29 @@ async function indexSharingKeyLabels(sdk) {
             // a strong-enough signal to mark them so the View action can
             // open them as a site rather than dumping raw JSON.
             const isManifest = isManifestFilename(filename);
+            // A site's manifest is the object its `sialo://` address points
+            // at, so this row is the site as far as anyone handing the link
+            // out is concerned. "manifest.json" says nothing about which site
+            // that is, so the name recorded at publish time is shown instead
+            // when there is one. Older sites have none and keep the filename.
+            const siteName = (isManifest && ev.object)
+              ? siteNameForDisplay(ev.object.metadata())
+              : '';
             latest.set(ev.id, {
               id: ev.id,
               updatedAt: ev.updatedAt,
               deleted: ev.deleted,
               size: ev.object ? Number(ev.object.size()) : 0,
               filename,
-              displayName,
+              // The row keeps the file's own name. A site's name belongs to the
+              // upload group, and the group header carries it — printing it on
+              // the manifest row as well says the same thing twice and hides
+              // what the file is actually called.
+              //
+              // Ungrouped is the exception: with no header there is nothing
+              // else showing the name, so the row is the only place it can go.
+              displayName: uploadUuid ? displayName : (siteName || displayName),
+              siteName,
               uploadUuid,
               isManifest,
               ms,
@@ -267,10 +433,38 @@ async function indexSharingKeyLabels(sdk) {
     }
   }
 
+  /**
+   * Upload UUID → the site name recorded on that group's manifest.
+   *
+   * A group is an upload session, and its UUID is meaningless to anyone. When
+   * the session published a site, the manifest carries the name the user gave
+   * it, which is what the group should be called — in the header and in the
+   * sort, so the list orders by what is actually on screen.
+   *
+   * A live manifest wins over a deleted one, matching how the group's Open
+   * Site / Publish actions pick theirs.
+   */
+  function groupNames() {
+    const names = new Map();
+    for (const o of allObjects) {
+      if (!o.uploadUuid || !o.isManifest || !o.siteName) continue;
+      if (!o.deleted) {
+        names.set(o.uploadUuid, o.siteName);
+      } else if (!names.has(o.uploadUuid)) {
+        names.set(o.uploadUuid, o.siteName);
+      }
+    }
+    return names;
+  }
+
   function sortValue(obj) {
     switch (sortState.column) {
       case 'id':       return obj.id;
-      case 'filename': return obj.filename || '';
+      // `displayName` is the UUID prefix stripped, and the site name for a
+      // manifest. Sorting on the raw filename sorted on the UUID prefix
+      // instead, which is invisible and arbitrary. Case-folded so `apple`
+      // and `Apple` land together rather than in separate blocks.
+      case 'filename': return (obj.displayName || obj.filename || '').toLowerCase();
       case 'size':     return obj.size;
       case 'status':   return obj.deleted ? 'deleted' : 'active';
       case 'updated':
@@ -323,6 +517,14 @@ async function indexSharingKeyLabels(sdk) {
       if (sortState.asc ? v < prev : v > prev) groupKey.set(o.uploadUuid, v);
     }
 
+    if (sortState.column === 'filename') {
+      // Otherwise a group would take its position from whichever member
+      // happened to sort first, which is not what its header says.
+      for (const [uuid, name] of groupNames()) {
+        if (groupKey.has(uuid)) groupKey.set(uuid, name.toLowerCase());
+      }
+    }
+
     const sorted = visible.slice();
     sorted.sort((a, b) => {
       const agv = a.uploadUuid ? groupKey.get(a.uploadUuid) : sortValue(a);
@@ -357,6 +559,7 @@ async function indexSharingKeyLabels(sdk) {
     // Publish / Delete" actions for site uploads. A non-deleted
     // manifest takes priority over a deleted one if there are stale
     // entries lying around.
+    const names = groupNames();
     const aggregates = new Map();
     for (const o of allObjects) {
       if (!o.uploadUuid) continue;
@@ -377,6 +580,7 @@ async function indexSharingKeyLabels(sdk) {
           out.push({
             kind: 'header',
             uuid: o.uploadUuid,
+            name: names.get(o.uploadUuid) || '',
             count: agg.count,
             totalSize: agg.totalSize,
             manifestId: agg.manifestId,
@@ -417,17 +621,19 @@ async function indexSharingKeyLabels(sdk) {
     }
 
     const objectsList = document.getElementById('objects-list');
+    // The object ID no longer has a column: it was a truncated hash in the
+    // widest position on the row and the name is what identifies an object to
+    // a person. It stays one click away, as "Copy object ID" in the row menu.
     let html = `
-        <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+        <table class="obj-table">
           <thead>
-            <tr style="border-bottom:2px solid #333; text-align:left;">
-              <th style="padding:0.5rem; width:2rem;"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
-              <th data-sort="filename" style="padding:0.5rem; cursor:pointer; user-select:none;">Name<span class="sort-arrow"></span></th>
-              <th data-sort="id"      style="padding:0.5rem; cursor:pointer; user-select:none;">Object ID<span class="sort-arrow"></span></th>
-              <th data-sort="size"    style="padding:0.5rem; cursor:pointer; user-select:none;">Size<span class="sort-arrow"></span></th>
-              <th data-sort="updated" style="padding:0.5rem; cursor:pointer; user-select:none;">Updated<span class="sort-arrow"></span></th>
-              <th data-sort="status"  style="padding:0.5rem; cursor:pointer; user-select:none;">Status<span class="sort-arrow"></span></th>
-              <th style="padding:0.5rem;">Actions</th>
+            <tr>
+              <th class="obj-col-check"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
+              <th data-sort="filename">Name<span class="sort-arrow"></span></th>
+              <th class="obj-col-size" data-sort="size">Size<span class="sort-arrow"></span></th>
+              <th class="obj-col-updated" data-sort="updated">Updated<span class="sort-arrow"></span></th>
+              <th class="obj-col-keys">Sharing Keys</th>
+              <th class="obj-col-actions">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -438,6 +644,11 @@ async function indexSharingKeyLabels(sdk) {
         const color = uuidToColor(item.uuid);
         const caret = item.collapsed ? '▶' : '▼';
         const shortUuid = item.uuid.substring(0, 8);
+        // The site's name when it has one; the UUID is the fallback for an
+        // upload that was never published as a site. Either way the UUID stays
+        // reachable in the tooltip, since it is what groups these rows.
+        const groupLabel = item.name || shortUuid;
+        const labelIsName = Boolean(item.name);
         const suffix = item.continuation ? ' (continued)' : '';
         const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
         // Site-level action buttons. Only render when the group has a
@@ -452,10 +663,12 @@ async function indexSharingKeyLabels(sdk) {
           </span>` : '';
         html += `
           <tr class="obj-group-header" data-uuid="${item.uuid}" style="cursor:pointer; background:#0f0f0f; border-bottom:1px solid #222; border-left:4px solid ${color};">
-            <td colspan="7" style="padding:0.45rem 0.75rem;">
+            <td colspan="6" style="padding:0.45rem 0.75rem;">
               <span style="display:inline-block; width:1rem; color:#9ca3af; font-size:0.75rem;">${caret}</span>
               <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${color}; margin-right:0.5rem; vertical-align:middle;"></span>
-              <span style="font-family:var(--font-mono); color:#cbd5e1; font-size:0.8rem;">${shortUuid}</span>
+              <span title="Upload ${_esc(item.uuid)}" style="${labelIsName
+                ? 'color:#e5e7eb; font-size:0.85rem; font-weight:500;'
+                : 'font-family:var(--font-mono); color:#cbd5e1; font-size:0.8rem;'}">${_esc(groupLabel)}</span>
               <span style="color:#6b7280; font-size:0.8rem; margin-left:0.75rem;">${item.count} file${item.count === 1 ? '' : 's'}${sizeLabel ? ' · ' + sizeLabel : ''}${suffix}</span>
               ${siteActions}
             </td>
@@ -464,11 +677,13 @@ async function indexSharingKeyLabels(sdk) {
         continue;
       }
       const obj = item.obj;
-      const shortId = obj.id.substring(0, 4) + '…' + obj.id.substring(obj.id.length - 4);
       const sizeBytes = obj.size;
       const size = sizeBytes ? formatSize(sizeBytes) : 'N/A';
       const date = new Date(obj.updatedAt).toLocaleString();
-      const objStatus = obj.deleted ? '<span class="fail">Deleted</span>' : '<span class="pass">Active</span>';
+      // Marked on the row rather than in a column of its own: all but one
+      // value would have read "Active", and deleted rows are hidden unless
+      // asked for.
+      const deletedChip = obj.deleted ? '<span class="obj-deleted-chip">Deleted</span>' : '';
       const checked = selectedIds.has(obj.id) ? 'checked' : '';
       // Filename cell. Objects with no metadata show an em-dash;
       // upload-UUID-prefixed filenames have their prefix stripped for
@@ -477,7 +692,6 @@ async function indexSharingKeyLabels(sdk) {
       // the group header.
       const fnameFull = obj.filename || '';
       const fnameDisplay = obj.displayName || fnameFull;
-      const fnameShort = fnameDisplay.length > 40 ? fnameDisplay.slice(0, 40) + '…' : fnameDisplay;
       const indent = obj.uploadUuid ? 'padding-left:2rem;' : '';
       // Sharing-key descriptions this object is reachable through. Untrusted
     // text — untrustedLabel pre-escapes both the visible text and the
@@ -489,9 +703,16 @@ async function indexSharingKeyLabels(sdk) {
       + (shared.length > 2
         ? `<span class="obj-key-chip obj-key-chip--more" title="${shared.length - 2} more">+${shared.length - 2}</span>`
         : '');
-    const filenameCell = fnameFull
-        ? `<td style="padding:0.5rem; ${indent} font-size:0.85rem; color:#d4d4d4;" title="${_esc(fnameFull)}">${_esc(fnameShort)}${sharedChips}</td>`
-        : `<td style="padding:0.5rem; ${indent} color:#555;">—${sharedChips}</td>`;
+    const kind = objectKind(obj);
+    const nameCell = `
+        <td style="${indent}">
+          <div class="obj-name">
+            <span class="obj-icon obj-icon--${kind.kind}" aria-hidden="true">${kind.glyph}</span>
+            <span class="obj-name-text${fnameFull ? '' : ' is-dim'}" title="${_esc(fnameFull || obj.id)}">${
+              fnameFull ? _esc(fnameDisplay) : '—'}</span>
+            ${deletedChip}
+          </div>
+        </td>`;
       // Ungrouped rows keep a transparent left-border so horizontal
       // alignment stays stable. Grouped rows reuse the group's color
       // as a thinner accent, echoing the header bar.
@@ -499,25 +720,16 @@ async function indexSharingKeyLabels(sdk) {
         ? `border-left:4px solid ${uuidToColor(obj.uploadUuid)};`
         : 'border-left:4px solid transparent;';
       html += `
-          <tr data-upload-uuid="${obj.uploadUuid || ''}" style="border-bottom:1px solid #222; ${rowAccent}">
-            <td style="padding:0.5rem;">${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" ${checked}/>` : ''}</td>
-            ${filenameCell}
-            <td onclick="copyToClipboard('${obj.id}')" style="padding:0.5rem; font-family:monospace; font-size:0.85rem; cursor:pointer;" title="Click to copy: ${obj.id}">${shortId}</td>
-            <td style="padding:0.5rem;">${size}</td>
-            <td style="padding:0.5rem;">${date}</td>
-            <td style="padding:0.5rem;">${objStatus}</td>
-            <td style="padding:0.5rem;">
+          <tr data-upload-uuid="${obj.uploadUuid || ''}" style="${rowAccent}">
+            <td>${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" ${checked}/>` : ''}</td>
+            ${nameCell}
+            <td class="obj-num">${size}</td>
+            <td class="obj-num obj-dim">${date}</td>
+            <td>${sharedChips || '<span class="obj-dim">—</span>'}</td>
+            <td class="obj-col-actions">
               ${!obj.deleted ? `
-                <button onclick="viewObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open in browser viewer">View</button>
-                <button onclick="publishObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Publish as a URL that carries the encryption key and expires">Publish</button>
-                <button onclick="shareObjectToSharingKey('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#059669; color:white; margin-left:0.25rem;" title="Attach to a sharing key, which you can revoke and which bills downloads to you">Sharing Key</button>
-                <button onclick="renameObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Rename or set the object's filename">Rename</button>
-                ${isInDraft(obj.id)
-                  ? `<button onclick="removeFromSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#0d9488; color:white; margin-left:0.25rem;" title="Remove from the site being built on the Upload Site page">✓ In site</button>`
-                  : `<button onclick="addToSiteBuilder('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;" title="Add to the site being built on the Upload Site page">Add to site</button>`}
-                <button onclick="showObjectInfo('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#8b5cf6; color:white; margin-left:0.25rem;" title="Show details">Info</button>
-                <button onclick="downloadObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem;">Download</button>
-                <button onclick="deleteObjectById('${obj.id}')" style="padding:0.25rem 0.5rem; font-size:0.85rem; margin-left:0.25rem; background:#dc2626; color:white;">Delete</button>
+                <button class="obj-kebab" data-menu-for="${obj.id}" aria-haspopup="menu"
+                  aria-expanded="false" title="Actions">&#8942;</button>
               ` : ''}
             </td>
           </tr>
@@ -529,6 +741,8 @@ async function indexSharingKeyLabels(sdk) {
         </table>
       `;
 
+    // A menu anchored to a button that is about to be replaced has to go.
+    closeRowMenu();
     objectsList.innerHTML = html;
 
     // Refresh sort-arrow indicators on the headers.
@@ -556,10 +770,18 @@ async function indexSharingKeyLabels(sdk) {
     // read the first time it happened.
     const hiddenDeleted = showDeleted ? 0 : allObjects.filter((o) => o.deleted).length;
     pageInfoEl.textContent = `${start + 1}–${Math.min(start + pageSize, displayList.length)} of ${displayList.length}`;
-    if (hiddenDeleted > 0) {
-      pageInfoEl.textContent +=
-        ` · ${hiddenDeleted} deleted hidden`;
+    // The totals belong in the header, beside the title they describe; the
+    // footer says which slice of them is on screen. Naming what the filter
+    // hides stays important: a count that silently drops rows is
+    // indistinguishable from data going missing.
+    const summaryEl = document.getElementById('objects-summary');
+    if (summaryEl) {
+      const shown = allObjects.filter((o) => showDeleted || !o.deleted).length;
+      summaryEl.textContent = `${shown} object${shown === 1 ? '' : 's'}`
+        + (hiddenDeleted > 0 ? ` · ${hiddenDeleted} deleted hidden` : '');
     }
+    const pageNumEl = document.getElementById('objects-page-num');
+    if (pageNumEl) pageNumEl.textContent = String(pageIndex + 1);
     document.getElementById('objects-page-first').disabled = pageIndex === 0;
     document.getElementById('objects-page-prev').disabled  = pageIndex === 0;
     document.getElementById('objects-page-next').disabled  = pageIndex >= pageCount - 1;
@@ -602,6 +824,15 @@ async function indexSharingKeyLabels(sdk) {
     function updateSelectionCount() {
       document.getElementById('zip-selected-count').textContent = `${selectedIds.size} selected`;
       document.getElementById('btn-download-zip').disabled = selectedIds.size === 0;
+      // Hidden when nothing is selected: these act on a selection, and a
+      // permanent row of disabled buttons is just noise.
+      const bar = document.getElementById('obj-selection-bar');
+      if (bar) bar.style.display = selectedIds.size > 0 ? 'flex' : 'none';
+      for (const id of ['btn-share-selected', 'btn-copy-selected-ids', 'btn-delete-selected',
+        'btn-ungroup-selected']) {
+        const b = document.getElementById(id);
+        if (b) b.disabled = selectedIds.size === 0;
+      }
       const addSelBtn = document.getElementById('btn-add-selected-to-site');
       if (addSelBtn) addSelBtn.disabled = selectedIds.size === 0;
       const selectAll = document.getElementById('obj-select-all');
@@ -694,6 +925,158 @@ async function indexSharingKeyLabels(sdk) {
     if (skippedMissing) parts.push(`${skippedMissing} not found`);
     const cls = added > 0 ? 'pass' : 'fail';
     panelStatus().innerHTML = `<span class="${cls}">${parts.join(' · ')}</span>`;
+  });
+
+  /**
+   * The selection as objects, in the list's current order.
+   *
+   * `selectedIds` is a Set and survives paging, so it has no order of its own;
+   * taking the order from `allObjects` means a bulk action processes things in
+   * the order they are shown, which is what a progress counter has to agree
+   * with to make sense.
+   */
+  function selectedObjects() {
+    return allObjects.filter((o) => selectedIds.has(o.id));
+  }
+
+  // Take the selected objects out of their upload batch.
+  //
+  // The heading a batch sits under is not a site and holds nothing: the
+  // folder-upload flows prefix each filename with one `crypto.randomUUID()`
+  // so a batch stays together when the list is sorted, and My Objects groups
+  // rows by that prefix. Dropping it from the name is all it takes to make
+  // them ordinary objects, which is the whole of what the grouping was.
+  //
+  // The usual reason to want this is an upload that stopped part way — out of
+  // space, closed tab — leaving a batch with no manifest, because the
+  // manifest is written last, once every file is up. Those objects are
+  // perfectly good on their own; only the shared prefix suggests otherwise.
+  document.getElementById('btn-ungroup-selected').addEventListener('click', async () => {
+    if (selectedIds.size === 0) return;
+    const status = panelStatus();
+    const targets = ungroupTargets(selectedObjects());
+    if (!targets.length) {
+      status.innerHTML = '<span style="color:#888;">Nothing selected is in an upload batch.</span>';
+      return;
+    }
+    if (!confirm(
+      `Remove ${targets.length} object${targets.length !== 1 ? 's' : ''} from their upload batch?\n\n`
+      + 'The batch prefix comes off their names and they list as ordinary objects. '
+      + 'Nothing is re-uploaded, deleted, or moved, and the files themselves do not '
+      + 'change. Names no longer carry the batch, so two files that shared a name '
+      + 'inside it will now show the same name.',
+    )) return;
+    await ungroupObjects(targets);
+  });
+
+  /**
+   * The selected objects that are actually in an upload batch, paired with the
+   * name they would end up with. Anything already ungrouped is dropped rather
+   * than written back unchanged.
+   */
+  function ungroupTargets(objs) {
+    return objs
+      .map((o) => ({ o, stripped: stripUploadUuid(o.filename || '') }))
+      .filter(({ o, stripped }) => stripped && stripped !== o.filename);
+  }
+
+  /**
+   * Rewrite each object's filename metadata without its batch prefix.
+   *
+   * Sequential, and a failure is counted rather than thrown, so one object the
+   * indexer refuses does not hide the fact that the rest were rewritten.
+   */
+  async function ungroupObjects(targets) {
+    const status = panelStatus();
+    const sdk = await connectSdk(status);
+    if (!sdk) return;
+    let done = 0;
+    const failed = [];
+    for (const { o, stripped } of targets) {
+      if (targets.length > 1) status.textContent = `Removing from batch ${done + 1} of ${targets.length}…`;
+      try {
+        const obj = await sdk.object(o.id);
+        obj.updateMetadata(encodeMetadata({ filename: stripped, siteName: o.siteName }));
+        await sdk.updateObjectMetadata(obj);
+        o.filename = stripped;
+        done += 1;
+      } catch (e) {
+        failed.push(`${stripped}: ${e.message || e}`);
+      }
+    }
+    render();
+    if (failed.length) {
+      status.innerHTML = `<span style="color:#f59e0b">Removed ${done}, ${failed.length} failed: ${_esc(failed[0])}</span>`;
+    } else if (done === 1) {
+      status.innerHTML = `<span class="pass">\u2713 Removed from its upload batch</span>`;
+    } else {
+      status.innerHTML = `<span class="pass">\u2713 Removed ${done} from their upload batch</span>`;
+    }
+  }
+
+  // Attach every selected object to one sharing key. The key is chosen once
+  // rather than per object: picking it fifty times is the thing that makes
+  // doing this one row at a time unusable.
+  document.getElementById('btn-share-selected').addEventListener('click', async () => {
+    if (selectedIds.size === 0) return;
+    const status = panelStatus();
+    const sdk = await connectSdk(status);
+    if (!sdk) return;
+    const chosen = selectedObjects();
+    const row = await pickSharingKey(sdk, `${chosen.length} selected object${chosen.length === 1 ? '' : 's'}`);
+    if (!row) return;
+    let done = 0;
+    let failed = 0;
+    for (const o of chosen) {
+      done++;
+      status.innerHTML = `<span style="color:#f59e0b;">⏳ Attaching ${done} / ${chosen.length}…</span>`;
+      try {
+        await sdk.shareObject(row.key, await sdk.object(o.id));
+      } catch (e) {
+        failed++;
+        console.warn('shareObject failed for', o.id, e);
+      }
+    }
+    // Sequentially, and reporting failures rather than throwing on the first:
+    // one object that cannot be attached must not hide that the other forty
+    // nine were.
+    status.innerHTML = failed === 0
+      ? `<span class="pass">✓ Attached ${chosen.length} object${chosen.length === 1 ? '' : 's'} to ${_esc(row.description || 'the key')}.</span>`
+      : `<span class="fail">Attached ${chosen.length - failed} / ${chosen.length}; ${failed} failed.</span>`;
+    // The link is worth offering even after a partial run: what did attach is
+    // reachable through it.
+    if (failed < chosen.length) showShareLinkModal(row, chosen[0].id, 'Objects attached');
+    indexSharingKeyLabels(sdk).catch(() => {});
+  });
+
+  document.getElementById('btn-copy-selected-ids').addEventListener('click', async () => {
+    if (selectedIds.size === 0) return;
+    const ids = selectedObjects().map((o) => o.id).join('\n');
+    const status = panelStatus();
+    try {
+      await navigator.clipboard.writeText(ids);
+      status.innerHTML = `<span class="pass">✓ Copied ${selectedIds.size} object ID${selectedIds.size === 1 ? '' : 's'}.</span>`;
+    } catch (e) {
+      status.innerHTML = `<span class="fail">Could not copy: ${_esc(e.message || String(e))}</span>`;
+    }
+  });
+
+  document.getElementById('btn-delete-selected').addEventListener('click', async () => {
+    if (selectedIds.size === 0) return;
+    const chosen = selectedObjects();
+    const sites = chosen.filter((o) => o.isManifest).length;
+    // Named counts rather than "are you sure": the number is the thing worth
+    // checking, and a site manifest among them deletes the site's entry point
+    // while leaving its files behind, which is worth knowing before agreeing.
+    let warn = `Delete ${chosen.length} object${chosen.length === 1 ? '' : 's'}? This cannot be undone.`;
+    if (sites > 0) {
+      warn += `\n\n${sites} of them ${sites === 1 ? 'is a site manifest' : 'are site manifests'}.`
+        + ' Deleting a manifest breaks the site but leaves its files in your objects.';
+    }
+    if (!confirm(warn)) return;
+    const ids = chosen.map((o) => o.id);
+    selectedIds.clear();
+    await deleteObjects(ids, `${ids.length} selected`);
   });
 
   // Open ZIP builder with the currently-selected objects (across all pages).
@@ -985,7 +1368,10 @@ async function indexSharingKeyLabels(sdk) {
       const sdk = await connectSdk(status);
       if (!sdk) return;
       const obj = await sdk.object(objectId);
-      obj.updateMetadata(encodeMetadata({ filename: clean }));
+      // Carry the site name through. `encodeMetadata` writes exactly the
+      // fields it is handed, so renaming with filename alone dropped it and
+      // quietly detached the object from its site.
+      obj.updateMetadata(encodeMetadata({ filename: clean, siteName: match && match.siteName }));
       await sdk.updateObjectMetadata(obj);
       if (match) match.filename = clean;
       render();
@@ -993,6 +1379,30 @@ async function indexSharingKeyLabels(sdk) {
     } catch (e) {
       status.innerHTML = `<span class="fail">Failed to rename: ${_esc(e.message || String(e))}</span>`;
     }
+  };
+
+  /**
+   * Take one object out of its upload batch.
+   *
+   * Offered on a row only when that object still carries a batch prefix, so
+   * reaching this with nothing to do means the list is stale rather than the
+   * menu being wrong — say so instead of silently doing nothing.
+   */
+  window.ungroupObjectById = async (objectId) => {
+    const match = allObjects.find((o) => o.id === objectId);
+    const [target] = ungroupTargets(match ? [match] : []);
+    if (!target) {
+      panelStatus().innerHTML =
+        '<span style="color:#888;">This object is not in an upload batch. Refresh to update the list.</span>';
+      return;
+    }
+    const batch = extractUploadUuid(target.o.filename).slice(0, 8);
+    if (!confirm(
+      `Remove this object from upload batch ${batch}?\n\n`
+      + `Its name becomes:\n${target.stripped}\n\n`
+      + 'Nothing is re-uploaded, deleted, or moved. Only the name changes.',
+    )) return;
+    await ungroupObjects([target]);
   };
 
   // Helper function to download an object by ID
@@ -1352,9 +1762,7 @@ async function indexSharingKeyLabels(sdk) {
           <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:600px; width:90%; border:1px solid #333;">
             <h3 style="margin:0 0 1rem 0; color:#10b981;">${isManifest ? '🌐 Sia Site URL' : '🔗 Object published'}</h3>
             <p style="color:#888; margin-bottom:1rem;">${isManifest ? 'Site' : 'Object'}: ${shortId}</p>
-            <div style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem; word-break:break-all; font-family:monospace; font-size:0.9rem;">
-              ${publishUrl}
-            </div>
+            <div id="publish-result-url" style="background:#0a0a0a; padding:1rem; border-radius:4px; margin-bottom:1rem; word-break:break-all; font-family:monospace; font-size:0.9rem;">${publishUrl}</div>
             <p style="color:#888; font-size:0.9rem; margin-bottom:1rem;">
               ⏰ Valid for ${durationText}<br>
               🔒 Includes encryption key in URL
@@ -1371,6 +1779,10 @@ async function indexSharingKeyLabels(sdk) {
         `;
 
         document.body.appendChild(resultModal);
+        // The address is the whole point of this dialog, so it opens on click.
+        // `sia://` is normalised to the app's own scheme by the opener; both
+        // name the same object.
+        makeOpenable(resultModal.querySelector('#publish-result-url'));
 
         // Close on background click
         resultModal.addEventListener('click', (e) => {
@@ -1396,6 +1808,55 @@ async function indexSharingKeyLabels(sdk) {
       await shareObjectToKey(sdk, obj, name);
     } catch (e) {
       alert(`Could not attach to a sharing key: ${e.message || e}`);
+    }
+  };
+
+  // Row menus. Bound once, on the container, which survives every render:
+  // binding inside render() added one listener per render, and because a
+  // second call for the same button toggles, an even number of listeners
+  // opened the menu and closed it again inside the same click. The button
+  // looked dead.
+  document.getElementById('objects-list').addEventListener('click', (e) => {
+    const button = e.target.closest('.obj-kebab');
+    if (!button) return;
+    e.stopPropagation();
+    const obj = allObjects.find((o) => o.id === button.dataset.menuFor);
+    if (obj) openRowMenu(button, obj);
+  });
+
+  // Clicking the name opens the object, which is what a row's title should do.
+  document.getElementById('objects-list').addEventListener('click', (e) => {
+    const name = e.target.closest('.obj-name-text');
+    if (!name) return;
+    const row = name.closest('tr');
+    const id = row && row.querySelector('.obj-kebab')?.dataset.menuFor;
+    // No kebab means a deleted row: nothing to open.
+    if (id) window.viewObjectById(id);
+  });
+
+  // Header Upload: the list's own entry point to putting something in it.
+  const uploadBtn = document.getElementById('btn-objects-upload');
+  if (uploadBtn) {
+    uploadBtn.addEventListener('click', () => openOrActivateInternalTab('upload-file'));
+  }
+
+  window.migrateObjectById = async (objectId) => {
+    const status = panelStatus();
+    const sdk = await connectSdk(status);
+    if (!sdk) return;
+    try {
+      const obj = await sdk.object(objectId);
+      const name = filenameForDisplay(obj.metadata()) || objectId.slice(0, 16);
+      const destination = await migrateObjectPrompt(sdk, obj, name);
+      // The object is unchanged on this indexer either way — migration copies —
+      // so there is nothing to reload here. The confirmation matters most when
+      // the user sent the migration to the background and the dialog reporting
+      // it is already gone.
+      if (destination) {
+        status.innerHTML = `<span class="pass">✓ Copied ${_esc(name)} to ${_esc(destination.name)}</span>`;
+      }
+    } catch (e) {
+      alert(`Could not migrate: ${e.message || e}`);
     }
   };
 
@@ -1519,10 +1980,12 @@ async function indexSharingKeyLabels(sdk) {
                 A shard on a host this indexer cannot use is not necessarily lost — the
                 host may simply have no live contract here. "Portable" means another
                 indexer would accept the slab, which is what migrating requires.
-                Repairing is the indexer's own job: it re-uploads shards from unusable
-                hosts onto good ones on a background pass, so there is nothing to press
-                here. If an object stays unhealthy, slab migrations may be turned off on
-                that indexer. A shard counts as unusable here on exactly the terms
+                A shard on a host this indexer cannot use cannot be repointed from
+                here: indexd keys a sector to one host and its pin route only fills an
+                empty binding, so only the indexer's own migrator moves one, on a
+                backoff measured in hours. Migrate is the exception — another indexer
+                has no binding to preserve, so shards can be placed on hosts it accepts
+                and pinned there. A shard counts as unusable here on exactly the terms
                 that stop another indexer accepting it: this list comes from the
                 indexer's own usable-hosts query, whose contract test is the same one
                 the pin rule applies.

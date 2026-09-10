@@ -959,43 +959,68 @@
       <!-- Panel: My Objects -->
       <div id="panel-objects" class="viewport-panel internal-page" data-panel="objects">
         <div class="internal-page-content">
-          <div class="panel-section">
-            <h2>My Objects</h2>
-            <label class="label">Active Indexer Profile</label>
-            <select id="objects-profile-select" style="width:100%; margin-bottom:0.5rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.4rem;"></select>
-            <div class="row" style="align-items:center; gap:0.75rem;">
-              <button id="btn-list-objects">Refresh</button>
-              <button id="btn-download-zip" style="padding:0.4rem 0.75rem; font-size:0.85rem; background:#3b82f6; color:white;" disabled>Download Selected as ZIP</button>
-              <button id="btn-add-selected-to-site" style="padding:0.4rem 0.75rem; font-size:0.85rem;" title="Add every selected object to the Site Builder on the Upload Site page" disabled>Add Selected to Site</button>
-              <span id="zip-selected-count" style="font-size:0.8rem; color:#888;">0 selected</span>
-              <span id="zip-status" style="font-size:0.8rem; color:#888;"></span>
+          <div class="panel-section obj-panel">
+            <!-- Header: what the list is, and the three things done to the list
+                 as a whole. Per-object actions live in each row's menu. -->
+            <div class="obj-head">
+              <div class="obj-head-title">
+                <h2>My Objects</h2>
+                <div class="obj-head-sub" id="objects-summary">&nbsp;</div>
+              </div>
+              <div class="obj-head-actions">
+                <select id="objects-profile-select" class="obj-indexer"
+                  title="Which indexer this list comes from"></select>
+                <button id="btn-list-objects" class="obj-btn">Refresh</button>
+                <button id="btn-objects-upload" class="obj-btn obj-btn--primary">
+                  <span aria-hidden="true">&#8593;</span> Upload
+                </button>
+              </div>
             </div>
-            <div id="objects-list-scroll" style="margin-top:1rem; max-height:60vh; overflow-y:auto; border:1px solid #222; border-radius:6px;">
+
+            <!-- Only present while something is selected: these act on the
+                 selection, not on the list or on one object. -->
+            <div id="obj-selection-bar" class="obj-selbar" style="display:none;">
+              <span id="zip-selected-count">0 selected</span>
+              <button id="btn-download-zip" class="obj-btn"
+                title="Download every selected object as a single ZIP archive" disabled>Download as ZIP</button>
+              <button id="btn-add-selected-to-site" class="obj-btn"
+                title="Add every selected object to the Site Builder on the Upload Site page" disabled>Add to Site</button>
+              <button id="btn-share-selected" class="obj-btn"
+                title="Attach every selected object to one sharing key" disabled>Add to Sharing Key</button>
+              <button id="btn-copy-selected-ids" class="obj-btn"
+                title="Copy every selected object's ID, one per line" disabled>Copy IDs</button>
+              <button id="btn-ungroup-selected" class="obj-btn"
+                title="Drop the upload-batch prefix from every selected name, so they list as ordinary objects" disabled>Remove from Group</button>
+              <button id="btn-delete-selected" class="obj-btn obj-btn--danger"
+                title="Delete every selected object" disabled>Delete</button>
+              <span id="zip-status"></span>
+            </div>
+
+            <div id="objects-list-scroll" class="obj-table-wrap">
               <div id="objects-list"><!-- Objects will be displayed here --></div>
             </div>
-            <div id="objects-pager" style="display:none; margin-top:0.5rem; justify-content:space-between; align-items:center; gap:0.5rem; font-size:0.85rem; color:#aaa;">
-              <div style="display:flex; align-items:center; gap:0.75rem;">
-                <span id="objects-page-info">—</span>
-                <label style="font-size:0.85rem; color:#aaa;">Per page
-                  <select id="list-page-size"
-                    style="margin-left:0.25rem; background:#1a1a1a; color:#e0e0e0; border:1px solid #333; border-radius:4px; padding:0.25rem;">
-                    <option value="50" selected>50</option>
-                    <option value="100">100</option>
-                    <option value="250">250</option>
-                    <option value="500">500</option>
-                  </select>
-                </label>
-                <label style="font-size:0.85rem; color:#aaa; display:inline-flex; align-items:center; gap:0.35rem; cursor:pointer;"
-                  title="Deleted objects are hidden by default. They are kept in the indexer's event log, so they can still be listed.">
-                  <input type="checkbox" id="objects-show-deleted" class="inline-check" />
-                  Show deleted
-                </label>
-              </div>
-              <div style="display:flex; gap:0.25rem;">
-                <button id="objects-page-first" style="padding:0.25rem 0.5rem;">« First</button>
-                <button id="objects-page-prev"  style="padding:0.25rem 0.5rem;">‹ Prev</button>
-                <button id="objects-page-next"  style="padding:0.25rem 0.5rem;">Next ›</button>
-                <button id="objects-page-last"  style="padding:0.25rem 0.5rem;">Last »</button>
+
+            <div id="objects-pager" class="obj-foot" style="display:none;">
+              <label class="obj-foot-field">Rows per page:
+                <select id="list-page-size" class="obj-pagesize">
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="250">250</option>
+                  <option value="500">500</option>
+                </select>
+              </label>
+              <span id="objects-page-info">&mdash;</span>
+              <label class="obj-foot-field obj-foot-deleted"
+                title="Deleted objects are hidden by default. They are kept in the indexer's event log, so they can still be listed.">
+                <input type="checkbox" id="objects-show-deleted" class="inline-check" />
+                Show deleted
+              </label>
+              <div class="obj-pages">
+                <button id="objects-page-first" class="obj-page-btn" title="First page">&laquo;</button>
+                <button id="objects-page-prev"  class="obj-page-btn" title="Previous page">&lsaquo;</button>
+                <span id="objects-page-num" class="obj-page-num">1</span>
+                <button id="objects-page-next"  class="obj-page-btn" title="Next page">&rsaquo;</button>
+                <button id="objects-page-last"  class="obj-page-btn" title="Last page">&raquo;</button>
               </div>
             </div>
           </div><!-- /panel-section: My Objects -->
