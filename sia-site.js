@@ -32,10 +32,11 @@
 // Still loadable so sites published before sharing keys keep working, but
 // nothing writes this format any more.
 
-import { PinnedObject, SharedSdk } from './pkg/sia_storage_wasm.js';
+import { PinnedObject } from './pkg/sia_storage_wasm.js';
 import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
   connectSdk, resolveObject, invalidateSdk, getLastConnectError, getUrl, getKeyHex,
+  connectSharedSdk,
 } from './config.js';
 import {
   findTabByIframeWindow, tabStatusProxy, getActiveTab, setChromeCollapsed,
@@ -1406,15 +1407,6 @@ async function getSite(siteId) {
  * to go looking for them the way the manifest path does.
  */
 /**
- * Where to read a shared site from when this browser has no indexer
- * configured. A sharing key is a bearer credential: the recipient needs an
- * indexer to *ask*, but no account and no app key of their own, so a link
- * has to work in a browser that has never been set up. Mirrors the default
- * in share.js, which serves the same purpose for the standalone page.
- */
-export const DEFAULT_INDEXER = 'https://storage.sia.dev';
-
-/**
  * Above this, a site file is streamed through /_sia-ext/ rather than served by
  * value. The by-value path buffers the whole object before replying and its
  * resolve is capped at 30s, so anything that cannot be fetched and held in
@@ -1424,10 +1416,12 @@ export const DEFAULT_INDEXER = 'https://storage.sia.dev';
 const STREAM_MIN_BYTES = 8 * 1024 * 1024;
 
 async function keySite(seed) {
-  // Prefer the configured indexer, but never require one: demanding setup
-  // here would defeat the point of handing someone a sharing link.
-  const indexer = getUrl() || DEFAULT_INDEXER;
-  const sdk = await SharedSdk.connect(indexer, seed);
+  // Asked of every indexer this browser knows, not just the configured one. A
+  // key exists on one indexer and the link cannot say which, so a link created
+  // on production has to open for a reader whose settings point at staging —
+  // and for a reader with no settings at all, which is the common case for
+  // someone following a link they were sent.
+  const { sdk } = await connectSharedSdk(seed);
 
   const PAGE = 100;
   const objects = [];

@@ -10,14 +10,13 @@
 // hostile one point the SDK wherever it liked.
 
 import { _esc, _dbg, formatSize } from './utils.js';
-import { getUrl } from './config.js';
-import { SharedSdk } from './pkg/sia_storage_wasm.js';
+import { getUrl, connectSharedSdk } from './config.js';
 import { streamingDownload } from './download.js';
 import {
   filenameForSave, filenameForDisplay, stripUploadUuid,
 } from './object-metadata.js';
 import { parseShareFragment } from './sharing-keys.js';
-import { siteUrl, parsePublishedSiteFragment, canRenderInTab, DEFAULT_INDEXER } from './sia-site.js';
+import { siteUrl, parsePublishedSiteFragment, canRenderInTab } from './sia-site.js';
 import { tabStatusProxy, getActiveTab, openOrActivateInternalTab } from './tabs.js';
 import { pinHandle, describePinResult } from './pin.js';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
@@ -57,11 +56,14 @@ export function initSharedUI() {
 
   async function connect(seed) {
     // A sharing link never carries an indexer, and its holder is not required
-    // to have an account here — so fall back to the default rather than
-    // demanding setup before they can open what they were sent.
-    const indexer = getUrl() || DEFAULT_INDEXER;
-    if (connected && connected.seed === seed && connected.indexer === indexer) return connected.sdk;
-    const sdk = await SharedSdk.connect(indexer, seed);
+    // to have an account here — so every indexer this browser knows is asked
+    // in turn rather than demanding setup, or guessing one, before they can
+    // open what they were sent.
+    if (connected && connected.seed === seed
+        && connected.indexer === (getUrl() || connected.indexer)) {
+      return connected.sdk;
+    }
+    const { sdk, indexer } = await connectSharedSdk(seed);
     connected = { sdk, seed, indexer };
     return sdk;
   }

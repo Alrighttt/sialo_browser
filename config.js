@@ -3,7 +3,7 @@
 import { _dbg, _dbgWarn, fromHex, formatSize } from './utils.js';
 import { downloadOptions } from './transfer-options.js';
 import { updateConnectionStatus } from './tabs.js';
-import { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
+import { AppKey, Builder, SharedSdk, setLogger } from './pkg/sia_storage_wasm.js';
 
 // Install the SDK logger once — writes WASM-side `log::debug!` /
 // `log::warn!` messages to the browser console when debug logging is on.
@@ -198,6 +198,93 @@ export async function connectProfile(profile) {
       15000,
     )),
   ]);
+}
+
+/**
+ * Indexers a sharing link may be resolved against when this browser has none
+ * configured, which is the ordinary case for someone opening a link they were
+ * sent.
+ *
+ * The list lives here rather than coming from the link on purpose. A link is
+ * an untrusted string; letting it name the server would let a hostile one
+ * point the SDK wherever it liked. So candidates are always this app's own.
+ */
+export const KNOWN_INDEXERS = [
+  'https://sia.storage',
+  'https://storage.sia.dev',
+];
+
+/** Every profile's indexer URL, whether or not it has an app key. */
+function profileUrls() {
+  let store;
+  try { store = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* none */ }
+  if (!store?.profiles) return [];
+  return Object.values(store.profiles).map((p) => p && p.url).filter(Boolean);
+}
+
+/**
+ * Where to look for a sharing key, in order.
+ *
+ * The configured indexer first, so a reader who has chosen one is asked
+ * nothing extra and the common case still costs a single request. Then their
+ * other profiles, then the built-in list — which is what makes a link work in
+ * a browser that has never been set up.
+ */
+export function sharingIndexerCandidates() {
+  const seen = new Set();
+  const out = [];
+  const add = (url) => {
+    const u = (url || '').trim().replace(/\/+$/, '');
+    if (!u || seen.has(u)) return;
+    seen.add(u);
+    out.push(u);
+  };
+  add(getUrl());
+  profileUrls().forEach(add);
+  KNOWN_INDEXERS.forEach(add);
+  return out;
+}
+
+/**
+ * Connect as the holder of `seed`, against whichever known indexer has it.
+ *
+ * A sharing key exists on one indexer and a link cannot say which, so the
+ * candidates are asked in turn. That is what lets one link work for a reader
+ * whose settings point at staging and a reader with no settings at all,
+ * without either of them having to know where the key was created.
+ *
+ * `stats()` is the probe, not `connect()` alone: connecting does not prove the
+ * indexer holds the key, and a handle that 401s on first use would turn a
+ * wrong guess into a failure the caller has no way to retry.
+ *
+ * Worth being explicit that probing discloses the seed to every indexer asked.
+ * That is the reason the candidate list is this app's own configuration and
+ * built-ins, and never a host the link supplied.
+ *
+ * Returns the handle and the indexer it belongs to, so a caller that caches
+ * per indexer can key on the one that actually answered.
+ */
+export async function connectSharedSdk(seed) {
+  const candidates = sharingIndexerCandidates();
+  const errors = [];
+  for (const indexer of candidates) {
+    let sdk = null;
+    try {
+      sdk = await SharedSdk.connect(indexer, seed);
+      await sdk.stats();
+      _dbg(`Sharing key resolved on ${indexer}`);
+      return { sdk, indexer };
+    } catch (e) {
+      errors.push(`${indexer}: ${e.message || e}`);
+      // A handle that failed its probe is of no use to anyone.
+      try { if (sdk && sdk.free) sdk.free(); } catch (_) { /* already gone */ }
+    }
+  }
+  if (errors.length === 1) throw new Error(errors[0]);
+  throw new Error(
+    'No indexer this browser knows about recognises this sharing key. Tried:\n'
+    + errors.map((e) => '  ' + e).join('\n'),
+  );
 }
 
 export async function resolveObject(input, primarySdk) {
