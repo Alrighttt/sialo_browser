@@ -121,11 +121,23 @@ export function refreshAllGates() {
  */
 export function isAccountError(err) {
   if (!err) return false;
+  // An explicit denial outranks everything below, including the catch-all. A
+  // truthiness test alone does not do this: `needsAccount: false` is falsy, so
+  // it fell through to that catch-all and was reported as an account problem
+  // anyway, which is the opposite of what setting it means.
+  if (err.needsAccount === false) return false;
   if (err.needsAccount) return true;
   const msg = String(err.message || err);
   if (/Set Indexer URL and App Key|App key not recognized|SDK not connected/i.test(msg)) {
     return true;
   }
+  // Definitely not about the account: the content was reached and answered.
+  // Matched on wording because the flag above does not survive the trip — a
+  // site-path failure crosses a postMessage boundary as a bare string and is
+  // rebuilt on the far side. Checked before the catch-all, which would
+  // otherwise offer registration for a file that is simply not in the site,
+  // sending the reader off to fix something that was never wrong.
+  if (/not in this site/i.test(msg)) return false;
   // Anything at all, if this browser simply has no account to try with.
   return !configured();
 }
