@@ -144,6 +144,62 @@ export async function connectSdk(statusEl) {
  * first, then fall back through all other configured indexer profiles.
  * Returns { sdk, obj } for the first profile that succeeds.
  */
+/**
+ * The configured indexer profiles, minus the one currently active.
+ *
+ * Exclusion is by profile identity, not by indexer URL. Two profiles can point
+ * at the same indexer with different app keys — one account on a paid plan and
+ * one on a free tier is the ordinary reason — and the second is a perfectly
+ * good destination. An earlier version filtered on URL, which hid exactly that
+ * case behind an argument that only holds for the same *account*: it is
+ * pinning onto the account that already owns the object that provably does
+ * nothing, since that is the only thing an object row is keyed by.
+ *
+ * `sameIndexer` is carried through because it makes the transfer trivial. The
+ * slab and sector rows are indexer-wide, keyed by digest and root with no
+ * account column, and the good-host set comes from the indexer's contracts
+ * with no account filter — so a second account on the same indexer sees
+ * identical health and needs no byte moved. All that is missing is its own
+ * `account_slabs` rows and an object row, which is what a pin writes.
+ */
+export function otherProfiles() {
+  let store;
+  try { store = JSON.parse(localStorage.getItem(PROFILES_KEY)); } catch { /* none */ }
+  if (!store?.profiles) return [];
+  const activeUrl = getUrl();
+  const activeKey = getKeyHex();
+  return Object.entries(store.profiles)
+    .filter(([name, p]) => {
+      if (!p.url || !p.key) return false;
+      if (name === store.active) return false;
+      // The same account under a second name is still the same account.
+      return !(p.url === activeUrl && p.key === activeKey);
+    })
+    .map(([name, p]) => ({ name, url: p.url, key: p.key, sameIndexer: p.url === activeUrl }));
+}
+
+/**
+ * Connects to one named profile, independently of the active one.
+ *
+ * Separate from `connectSdk` because that caches a single handle keyed on the
+ * active configuration; a migration needs two live handles at once, and the
+ * destination must not displace the source.
+ *
+ * Returns null when the indexer answers but does not recognise the key, which
+ * is a different failure from being unreachable and worth reporting as such.
+ */
+export async function connectProfile(profile) {
+  const key = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(profile.key)));
+  const builder = new Builder(profile.url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
+  return await Promise.race([
+    builder.connected(key),
+    new Promise((_, reject) => setTimeout(
+      () => reject(new Error(`Indexer unreachable at ${profile.url} (timed out after 15s)`)),
+      15000,
+    )),
+  ]);
+}
+
 export async function resolveObject(input, primarySdk) {
   const isPublishUrl = input.startsWith('sia://') || input.startsWith('https://');
 
@@ -173,9 +229,7 @@ export async function resolveObject(input, primarySdk) {
     if (!profile.url || !profile.key || profile.url === activeUrl) continue;
     try {
       _dbg(`Trying profile "${name}" (${profile.url})...`);
-      const key = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(profile.key)));
-      const builder = new Builder(profile.url, { appId: APP_ID, name: APP_NAME, description: APP_DESCRIPTION, serviceUrl: APP_SERVICE_URL });
-      const sdk = await builder.connected(key);
+      const sdk = await connectProfile({ url: profile.url, key: profile.key });
       if (!sdk) continue;
       const obj = await sdk.object(input);
       _dbg(`Resolved object via profile "${name}"`);
