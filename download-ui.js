@@ -23,6 +23,26 @@ function panelStatus() {
   return tabStatusProxy(getActiveTab()).status;
 }
 
+/**
+ * A promise that also rejects when `signal` aborts.
+ *
+ * Every await below is waiting on a message from the download worker, and
+ * cancelling terminates that worker — after which it delivers no messages at
+ * all, so nothing is left to settle the promise. Without this the cancel path
+ * never unwinds: the progress interval is never cleared, the catch that reports
+ * "Download cancelled" never runs, and the finally that re-enables the page
+ * never runs either. The already-aborted case is checked first so a cancel that
+ * lands between constructing the promise and subscribing is not missed.
+ */
+function abortable(signal, executor) {
+  return new Promise((resolve, reject) => {
+    const cancelled = () => reject(new DOMException('Download cancelled', 'AbortError'));
+    if (signal.aborted) { cancelled(); return; }
+    signal.addEventListener('abort', cancelled, { once: true });
+    executor(resolve, reject);
+  });
+}
+
 export function initDownloadUI() {
   let _downloadInProgress = false;
   let _currentAbort = null;
@@ -169,10 +189,15 @@ export function initDownloadUI() {
       panelStatus().textContent = 'Starting download worker…';
       worker = new Worker('./single-download-worker.js', { type: 'module' });
       abortCtrl.signal.addEventListener('abort', () => {
+        // `panelStatus()` resolves to the tab that is active when it is called,
+        // so an interval left running after a cancel does not just report a
+        // dead download — it overwrites the status bar of whatever panel the
+        // user opens next.
+        if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         try { worker.terminate(); } catch (_) {}
       }, { once: true });
 
-      const workerReady = new Promise((resolve, reject) => {
+      const workerReady = abortable(abortCtrl.signal, (resolve, reject) => {
         const handler = (e) => {
           if (e.data.type === 'ready') { worker.removeEventListener('message', handler); resolve(); }
           if (e.data.type === 'error') { worker.removeEventListener('message', handler); reject(new Error(e.data.message)); }
@@ -212,7 +237,7 @@ export function initDownloadUI() {
         progress.max = size;
       }, 200);
 
-      await new Promise((resolve, reject) => {
+      await abortable(abortCtrl.signal, (resolve, reject) => {
         worker.onmessage = (e) => {
           if (e.data.type === 'metadata') {
             size = e.data.size;
@@ -298,6 +323,12 @@ export function initDownloadUI() {
         `<span class="pass">✓ Saved ${_esc(filename)} (${formatSize(bytesDownloaded)}) in ${elapsed}s</span>`;
     } catch (e) {
       if (progressInterval) clearInterval(progressInterval);
+      // The write chain reports failures by rejecting the promise we were
+      // awaiting, which has already settled by the time we get here. Claim the
+      // rejection so aborting the stream below does not surface every queued
+      // write as an unhandled rejection; this path only became reachable once
+      // cancelling stopped hanging.
+      writeQueue.catch(() => {});
       if (writable) { try { await writable.abort(); } catch (_) {} }
       if (worker) { try { worker.terminate(); } catch (_) {} }
       if (swMode && swMode.started) {
