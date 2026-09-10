@@ -41,12 +41,31 @@ const textEncoder = new TextEncoder();
  * Encode a metadata object to bytes suitable for `PinnedObject.updateMetadata`.
  * The shape is fixed: envelope + a single optional `filename` field for now.
  */
-export function encodeMetadata({ filename } = {}) {
+export function encodeMetadata({ filename, siteName } = {}) {
   const envelope = { type: METADATA_TYPE, version: METADATA_VERSION };
   if (typeof filename === 'string' && filename.length > 0) {
     envelope.filename = filename;
   }
+  // Carried on a site's manifest object so My Objects can show what the site
+  // is called without downloading and parsing the manifest for every row.
+  // Additive: readers that predate it ignore the field, and it is omitted
+  // entirely when absent so unnamed sites encode exactly as before.
+  if (typeof siteName === 'string' && siteName.length > 0) {
+    envelope.siteName = siteName;
+  }
   return textEncoder.encode(JSON.stringify(envelope));
+}
+
+/**
+ * The site name recorded on a manifest object, sanitized for display, or ''.
+ *
+ * Sanitized the same way filenames are, because it is user-supplied text that
+ * ends up in the objects table and in a generated page's heading.
+ */
+export function siteNameForDisplay(bytes) {
+  const meta = decodeMetadata(bytes);
+  if (!meta || !meta.siteName) return '';
+  return sanitizeDisplayFilename(meta.siteName);
 }
 
 /**
@@ -70,9 +89,14 @@ export function decodeMetadata(bytes) {
         parsed.type === METADATA_TYPE &&
         Number.isInteger(parsed.version)
       ) {
+        // A whitelist, deliberately: these bytes come off the network, so
+        // nothing is carried through that a caller has not been taught to
+        // expect. Any new field has to be added here as well as to
+        // `encodeMetadata`, or it silently vanishes on read.
         return {
           version: parsed.version,
           filename: typeof parsed.filename === 'string' ? parsed.filename : undefined,
+          siteName: typeof parsed.siteName === 'string' ? parsed.siteName : undefined,
         };
       }
     } catch { /* fall through to legacy treatment */ }
