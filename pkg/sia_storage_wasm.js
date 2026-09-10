@@ -399,6 +399,84 @@ export class KeyRecord {
 if (Symbol.dispose) KeyRecord.prototype[Symbol.dispose] = KeyRecord.prototype.free;
 
 /**
+ * The outcome of [`Sdk::migrateObject`]: the object as the destination now
+ * holds it, and an account of what moved.
+ */
+export class MigratedObject {
+    static __wrap(ptr) {
+        const obj = Object.create(MigratedObject.prototype);
+        obj.__wbg_ptr = ptr;
+        MigratedObjectFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        MigratedObjectFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_migratedobject_free(ptr, 0);
+    }
+    /**
+     * Whether anything moved. When false, the object is unchanged and there
+     * is nothing to pin.
+     * @returns {boolean}
+     */
+    get changed() {
+        const ret = wasm.migratedobject_changed(this.__wbg_ptr);
+        return ret !== 0;
+    }
+    /**
+     * Shards that could not be moved, and are still on unusable hosts.
+     * @returns {number}
+     */
+    get failed() {
+        const ret = wasm.migratedobject_failed(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Shards copied verbatim onto a usable host.
+     * @returns {number}
+     */
+    get moved() {
+        const ret = wasm.migratedobject_moved(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * The object as it now stands on the destination, with the ID it had.
+     * Already pinned there; nothing further is required.
+     * @returns {PinnedObject}
+     */
+    get object() {
+        const ret = wasm.migratedobject_object(this.__wbg_ptr);
+        return PinnedObject.__wrap(ret);
+    }
+    /**
+     * Shards rebuilt from the rest of their slab because no host would serve
+     * the original.
+     * @returns {number}
+     */
+    get rebuilt() {
+        const ret = wasm.migratedobject_rebuilt(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Per-slab, per-shard detail of what happened.
+     * @returns {RepairReport}
+     */
+    get report() {
+        const ret = wasm.migratedobject_report(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+}
+if (Symbol.dispose) MigratedObject.prototype[Symbol.dispose] = MigratedObject.prototype.free;
+
+/**
  * An object event from the indexer.
  */
 export class ObjectEvent {
@@ -810,6 +888,37 @@ export class Sdk {
         return ret;
     }
     /**
+     * Rebinds an object's shards away from hosts this indexer can no longer
+     * use, onto hosts it can. The object's ID does not change.
+     *
+     * Returns the repaired object for you to pass to `pinObject`; repairing
+     * without pinning leaves the indexer none the wiser. Repair is partial by
+     * nature, so inspect the report rather than assuming every shard moved.
+     *
+     * Copies `object` onto this indexer, moving any shard this indexer would
+     * not accept onto a host it will, then pins the result here. The object
+     * keeps its ID, so links, sites and sharing keys pointing at it still
+     * resolve.
+     *
+     * `source` is the Sdk for the indexer that currently holds the object, and
+     * is used for reads only: shards can only be read through the host list of
+     * the indexer that knows where they live. The source keeps its own pin —
+     * this makes the object available here, it does not remove it there.
+     *
+     * `onProgress`, if given, is called with a `RepairEvent` as each shard
+     * starts and finishes, since one shard can take seconds.
+     * @param {PinnedObject} object
+     * @param {Sdk} source
+     * @param {Function | null} [on_progress]
+     * @returns {Promise<MigratedObject>}
+     */
+    migrateObject(object, source, on_progress) {
+        _assertClass(object, PinnedObject);
+        _assertClass(source, Sdk);
+        const ret = wasm.sdk_migrateObject(this.__wbg_ptr, object.__wbg_ptr, source.__wbg_ptr, isLikeNone(on_progress) ? 0 : addToExternrefTable0(on_progress));
+        return ret;
+    }
+    /**
      * Retrieves an object from the indexer by its hex ID.
      * Returns a `PinnedObject` handle for use with download, share, seal, etc.
      * @param {string} key_hex
@@ -843,6 +952,27 @@ export class Sdk {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.sdk_objectFromShareUrl(this.__wbg_ptr, ptr0, len0);
         return ret;
+    }
+    /**
+     * Which of an object's shards sit on hosts this indexer cannot currently
+     * use, and whether that leaves the object readable and/or portable.
+     *
+     * Answered from the host list the SDK refreshes in the background, so this
+     * makes no request. Reading and pinning are different bars and the gap is
+     * wide: a ten-of-thirty slab reads with ten shards on usable hosts but
+     * pins only with twenty-six, so an object can download perfectly and
+     * still be refused by every other indexer. `repairObject` is what closes
+     * that gap.
+     * @param {PinnedObject} object
+     * @returns {ObjectHealth}
+     */
+    objectHealth(object) {
+        _assertClass(object, PinnedObject);
+        const ret = wasm.sdk_objectHealth(this.__wbg_ptr, object.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Generates a signed share URL for an object. Anyone with the URL can
@@ -972,7 +1102,7 @@ export class Sdk {
         return ret;
     }
     /**
-     * Updates an object's metadata on the indexer.
+     * Updates an object's metadata on the indexer.    /// Updates an object's metadata on the indexer.
      * @param {PinnedObject} object
      * @returns {Promise<void>}
      */
@@ -1584,6 +1714,10 @@ function __wbg_get_imports() {
             const ret = arg0.message;
             return ret;
         },
+        __wbg_migratedobject_new: function(arg0) {
+            const ret = MigratedObject.__wrap(arg0);
+            return ret;
+        },
         __wbg_new_0_3da9e97f24fc69be: function() {
             const ret = new Date();
             return ret;
@@ -1875,32 +2009,32 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1041, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1090, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h49ec6f65ef036f9a);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 512, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 558, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h974f75b89d7d167a);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 575, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 622, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h024f055591f3b03c);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 575, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 622, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h024f055591f3b03c_3);
             return ret;
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 575, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 622, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h024f055591f3b03c_4);
             return ret;
         },
         __wbindgen_cast_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 856, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 905, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h5b20af5a26492950);
             return ret;
         },
@@ -2028,6 +2162,9 @@ const IntoUnderlyingSourceFinalization = (typeof FinalizationRegistry === 'undef
 const KeyRecordFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_keyrecord_free(ptr, 1));
+const MigratedObjectFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_migratedobject_free(ptr, 1));
 const ObjectEventFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_objectevent_free(ptr, 1));
