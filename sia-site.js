@@ -148,11 +148,36 @@ export function initSiaSiteHandler() {
  * wired by a delegated listener in page-gate.js — status text is replaced
  * wholesale on every update, so per-element listeners would be lost.
  */
+/**
+ * Whether the content in this frame is backed by a sharing key.
+ *
+ * A key holder has no account and needs none — that is the entire point of
+ * being handed a key — so nothing that fails inside such a frame is fixed by
+ * registering. Asked of the loaded site rather than of the error text, because
+ * that is the only way to get this right for a message nobody thought to
+ * special-case: the reader's situation is what decides it, not the wording of
+ * whatever went wrong.
+ */
+function isKeyBackedSource(source) {
+  const iframe = findIframeForSource(source);
+  const siteId = iframe && iframeSites.get(iframe);
+  if (!siteId) return false;
+  const site = siteCache.get(siteId) || siteCache.get(String(siteId).toLowerCase());
+  return !!(site && site.kind === 'sharing-key');
+}
+
 function showTabFailure(source, err) {
   const tab = findTabByIframeWindow(source);
   if (!tab) return;
   const msg = (err && err.message) || String(err);
-  const action = err && err.needsAccount
+  // An account cannot help a key holder, so the offer is withheld even when
+  // the error would otherwise be classified as one. This has now misfired
+  // three times — a missing file, an unreachable indexer, and hosts that
+  // would not answer — each time sending someone with a perfectly good
+  // sharing link off to register for something they do not need.
+  const keyBacked = isKeyBackedSource(source);
+  const offerAccount = !keyBacked && isAccountError(err);
+  const action = !keyBacked && err && err.needsAccount
     ? ' <button type="button" data-sialo-action="register" class="status-action">Register / Log In</button>'
       + ' <button type="button" data-sialo-action="settings" class="status-action">Settings</button>'
     : '';
@@ -161,7 +186,7 @@ function showTabFailure(source, err) {
   // Status text alone is not enough for a failed content load: the iframe
   // renders its own error and the reader never looks down here. Cover the
   // viewport with the prompt instead, which is where they are looking.
-  if (isAccountError(err)) showAccountPrompt(msg);
+  if (offerAccount) showAccountPrompt(msg);
 }
 
 async function onMessage(e) {
@@ -898,7 +923,17 @@ async function streamExternalObject(source, id, siaUrl, offset, length, siteId) 
       return { reader, totalSize, firstChunk, done };
     }),
     new Promise((_, reject) => setTimeout(
-      () => reject(new Error("Sia network unreachable (can't fetch first shard)")),
+      // Names what to look for rather than only what failed. The usual cause
+      // is the browser's own cap on concurrent WebTransport sessions being
+      // exhausted — Chrome allows 64 — which the console reports plainly while
+      // this layer sees only silence. A firewall dropping UDP looks identical
+      // from here, and so does a genuinely unreachable set of hosts.
+      () => reject(new Error(
+        'No data from any storage host within 30s. Files are fetched over '
+        + 'WebTransport; if the console shows "Too many pending WebTransport '
+        + 'sessions", the browser ran out of connection slots — reload the tab. '
+        + 'A network that blocks UDP produces the same result.',
+      )),
       30000,
     )),
   ]);
