@@ -965,7 +965,50 @@ async function indexSharingKeyLabels(sdk) {
   // space, closed tab — leaving a batch with no manifest, because the
   // manifest is written last, once every file is up. Those objects are
   // perfectly good on their own; only the shared prefix suggests otherwise.
-  document.getElementById('btn-ungroup-selected').addEventListener('click', async () => {
+  /**
+   * Every button in the selection bar, so a running action can lock the lot.
+   */
+  const BULK_BUTTONS = [
+    'btn-download-zip', 'btn-add-selected-to-site', 'btn-share-selected',
+    'btn-copy-selected-ids', 'btn-ungroup-selected', 'btn-delete-selected',
+  ];
+  let bulkBusy = false;
+
+  /**
+   * Run a bulk action with the selection bar locked and its progress on the
+   * button that started it.
+   *
+   * Sixty objects attach one at a time and take seconds. The status bar at the
+   * foot of the window said so all along, but that is not where someone is
+   * looking just after pressing a button, so the page appeared to have done
+   * nothing — and the reasonable response to that is to press something else,
+   * starting a second pass over the same objects. The count now goes on the
+   * button itself, and the rest of the bar is inert until it finishes.
+   *
+   * State is restored from the selection rather than from what the buttons
+   * looked like before, because `updateSelectionCount` is scoped to the
+   * renderer and a re-render during the run would have moved it anyway.
+   */
+  async function runBulk(buttonId, fn) {
+    if (bulkBusy) return undefined;
+    bulkBusy = true;
+    const btn = document.getElementById(buttonId);
+    const label = btn ? btn.textContent : '';
+    const bar = BULK_BUTTONS.map((id) => document.getElementById(id)).filter(Boolean);
+    for (const b of bar) b.disabled = true;
+    // Called with nothing, this puts the original label back — useful for an
+    // action that has finished its counted part but is still working.
+    const progress = (text) => { if (btn) btn.textContent = text || label; };
+    try {
+      return await fn(progress);
+    } finally {
+      bulkBusy = false;
+      if (btn) btn.textContent = label;
+      for (const b of bar) b.disabled = selectedIds.size === 0;
+    }
+  }
+
+  document.getElementById('btn-ungroup-selected').addEventListener('click', () => runBulk('btn-ungroup-selected', async () => {
     if (selectedIds.size === 0) return;
     const status = panelStatus();
     const targets = ungroupTargets(selectedObjects());
@@ -981,7 +1024,7 @@ async function indexSharingKeyLabels(sdk) {
       + 'inside it will now show the same name.',
     )) return;
     await ungroupObjects(targets);
-  });
+  }));
 
   /**
    * The selected objects that are actually in an upload batch, paired with the
@@ -1031,7 +1074,7 @@ async function indexSharingKeyLabels(sdk) {
   // Attach every selected object to one sharing key. The key is chosen once
   // rather than per object: picking it fifty times is the thing that makes
   // doing this one row at a time unusable.
-  document.getElementById('btn-share-selected').addEventListener('click', async () => {
+  document.getElementById('btn-share-selected').addEventListener('click', () => runBulk('btn-share-selected', async (progress) => {
     if (selectedIds.size === 0) return;
     const status = panelStatus();
     const sdk = await connectSdk(status);
@@ -1043,7 +1086,7 @@ async function indexSharingKeyLabels(sdk) {
     let failed = 0;
     for (const o of chosen) {
       done++;
-      status.innerHTML = `<span style="color:#f59e0b;">⏳ Attaching ${done} / ${chosen.length}…</span>`;
+      progress(`Attaching ${done} / ${chosen.length}…`);
       try {
         await sdk.shareObject(row.key, await sdk.object(o.id));
       } catch (e) {
@@ -1059,9 +1102,13 @@ async function indexSharingKeyLabels(sdk) {
       : `<span class="fail">Attached ${chosen.length - failed} / ${chosen.length}; ${failed} failed.</span>`;
     // The link is worth offering even after a partial run: what did attach is
     // reachable through it.
-    if (failed < chosen.length) showShareLinkModal(row, chosen[0].id, 'Objects attached');
+    //
+    // No object id on it. The link is to the key, which is what was just added
+    // to — naming one of the objects would open the listing focused on whichever
+    // happened to be selected first, and imply the link was about that file.
+    if (failed < chosen.length) showShareLinkModal(row, null, 'Objects attached');
     indexSharingKeyLabels(sdk).catch(() => {});
-  });
+  }));
 
   document.getElementById('btn-copy-selected-ids').addEventListener('click', async () => {
     if (selectedIds.size === 0) return;
@@ -1075,7 +1122,7 @@ async function indexSharingKeyLabels(sdk) {
     }
   });
 
-  document.getElementById('btn-delete-selected').addEventListener('click', async () => {
+  document.getElementById('btn-delete-selected').addEventListener('click', () => runBulk('btn-delete-selected', async () => {
     if (selectedIds.size === 0) return;
     const chosen = selectedObjects();
     const sites = chosen.filter((o) => o.isManifest).length;
@@ -1091,7 +1138,7 @@ async function indexSharingKeyLabels(sdk) {
     const ids = chosen.map((o) => o.id);
     selectedIds.clear();
     await deleteObjects(ids, `${ids.length} selected`);
-  });
+  }));
 
   // Open ZIP builder with the currently-selected objects (across all pages).
   document.addEventListener('click', (e) => {
