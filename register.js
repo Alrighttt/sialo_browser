@@ -23,6 +23,7 @@ export function initRegistrationWizard(helpers) {
     closeTab,
     activateTab,
     tabs,
+    adoptRegisteredKey,
   } = helpers;
 
   let regBuilder = null;
