@@ -111,6 +111,45 @@ export function refreshAllGates() {
 }
 
 /**
+ * Wait until a freshly registered account can actually fetch anything.
+ *
+ * Registering does not make an account usable. The indexer funds host accounts
+ * on its own schedule and only counts the account ready once enough of them
+ * are funded, so for the first few minutes a new account exists but every
+ * download fails. Someone who arrived by following a published link is exactly
+ * the person who meets this: they register *because* the link needed an
+ * account, and the first thing they do is go back to content that cannot load
+ * yet.
+ *
+ * Reported rather than enforced. `onTick` is called with the current state
+ * after every check, so a caller can say what is happening and leave the
+ * reader free to go and look around. Resolves true once ready, false if the
+ * wait is given up on.
+ */
+export async function awaitAccountReady(sdk, onTick, { timeoutMs = 300000, intervalMs = 5000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let ready = false;
+    try {
+      ready = !!(await sdk.account()).ready;
+    } catch (_) {
+      // A failed check is not a verdict: the account may be fine and the
+      // request merely unlucky. Keep waiting until the deadline.
+    }
+    if (ready) {
+      if (onTick) onTick({ ready: true, waiting: false });
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      if (onTick) onTick({ ready: false, waiting: false, timedOut: true });
+      return false;
+    }
+    if (onTick) onTick({ ready: false, waiting: true });
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+/**
  * Whether a failure is really "you have no indexer account".
  *
  * Several layers produce their own wording for the same underlying cause —

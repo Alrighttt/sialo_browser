@@ -216,6 +216,11 @@
               <div id="wiz-key-display" class="wizard-key-display"></div>
               <p style="color:#fbbf24; font-size:0.85rem; margin-bottom:1.5rem; text-align:center;">Save your recovery
                 phrase and app key seed securely!</p>
+              <!-- Shown only while the indexer is still funding the account.
+                   Registering creates it; funding is what makes it able to
+                   fetch anything, and that runs on the indexer's own schedule. -->
+              <div id="wiz-funding" class="wizard-status"
+                style="display:none; text-align:center; margin-bottom:1.25rem;"></div>
               <div style="text-align:center;">
                 <button id="wiz-btn-start" class="wizard-btn">Start Browsing</button>
               </div>

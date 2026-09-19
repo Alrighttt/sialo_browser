@@ -12,6 +12,7 @@
 // functions so this module stays decoupled from index.html.
 
 import { openFromLocation } from './shared-ui.js';
+import { awaitAccountReady } from './page-gate.js';
 
 export function initRegistrationWizard(helpers) {
   const {
@@ -201,6 +202,7 @@ export function initRegistrationWizard(helpers) {
 
       regBuilder = null;
       showStep(5);
+      reportFunding(sdk);
 
       // Set after showStep so the status-clear doesn't wipe it
       const keyDisplay = document.getElementById('wiz-key-display');
@@ -217,6 +219,36 @@ export function initRegistrationWizard(helpers) {
       setStatus(status, 'Error: ' + (e.message || String(e)), 'fail');
     }
   });
+
+  /**
+   * Say whether the new account can fetch anything yet.
+   *
+   * An account is registered long before it is funded, and until the indexer
+   * has funded enough hosts every download fails. Someone who registered in
+   * order to open a published link is about to do exactly that, so the wait is
+   * named here rather than left to surface as a download error a minute later.
+   *
+   * Not a gate. Start Browsing stays live throughout: being held behind a
+   * button with nothing to do is worse than arriving early, and whatever they
+   * came for may be a site whose pages are already cached.
+   */
+  function reportFunding(sdk) {
+    const el = document.getElementById('wiz-funding');
+    if (!el || !sdk) return;
+    el.style.display = '';
+    el.textContent = 'Checking whether your account is ready\u2026';
+    awaitAccountReady(sdk, (state) => {
+      if (state.ready) {
+        el.innerHTML = '<span class="pass">\u2713 Your account is funded and ready.</span>';
+      } else if (state.timedOut) {
+        el.innerHTML = '<span style="color:#f59e0b;">Your account is registered but still being funded. '
+          + 'Downloads will fail until that finishes. Nothing is wrong and nothing needs doing.</span>';
+      } else {
+        el.innerHTML = '<span style="color:#f59e0b;">Setting up your account with storage hosts\u2026 '
+          + 'This usually takes a few minutes, and downloads will fail until it finishes.</span>';
+      }
+    }).catch(() => { el.style.display = 'none'; });
+  }
 
   // --- Step 5: Start Browsing ---
 
