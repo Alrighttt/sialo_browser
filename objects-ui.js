@@ -1848,12 +1848,6 @@ async function indexSharingKeyLabels(sdk) {
     if (id) window.viewObjectById(id);
   });
 
-  // Header Upload: the list's own entry point to putting something in it.
-  const uploadBtn = document.getElementById('btn-objects-upload');
-  if (uploadBtn) {
-    uploadBtn.addEventListener('click', () => openOrActivateInternalTab('upload-file'));
-  }
-
   window.migrateObjectById = async (objectId) => {
     const status = panelStatus();
     const sdk = await connectSdk(status);
