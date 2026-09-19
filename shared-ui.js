@@ -174,9 +174,9 @@ function renderObject(sdk, obj, highlight, seed) {
           title="${_esc(full)}${canOpen ? ' — click to open' : ''}">${_esc(name)}</div>
         <div style="font-size:0.8rem; color:#666; font-family:monospace;">${_esc(id.slice(0, 8))}…${_esc(id.slice(-8))} · ${_esc(formatSize(obj.size()))}</div>
       </div>
-      <button data-act="open" title="${_esc(openTitle)}"${canOpen ? '' : ' disabled'} style="padding:0.3rem 0.7rem; font-size:0.85rem; background:${canOpen ? '#059669' : '#1f2937'}; color:${canOpen ? 'white' : '#6b7280'}; flex-shrink:0;">Open</button>
-      <button data-act="download" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#3b82f6; color:white; flex-shrink:0;">Download</button>
-      <button data-act="pin" title="Keep this on your own account, so it stays after the key is revoked or its owner stops paying" style="padding:0.3rem 0.7rem; font-size:0.85rem; background:#7c3aed; color:white; flex-shrink:0;">&#128204; Pin</button>
+      <button data-act="open" class="sh-act sh-act--open" title="${_esc(openTitle)}"${canOpen ? '' : ' disabled'}>Open</button>
+      <button data-act="download" class="sh-act sh-act--download">Download</button>
+      <button data-act="pin" class="sh-act sh-act--pin" title="Keep this on your own account, so it stays after the key is revoked or its owner stops paying">Pin</button>
     `;
     if (canOpen) {
       const open = () => openSiteTab(siteUrl(seed, name));

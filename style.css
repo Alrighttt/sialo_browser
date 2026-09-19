@@ -2086,6 +2086,24 @@ a.addr-chip--link:hover {
 
 /* Offered at the top of a shared file listing when the key holds a root
    index.html — otherwise there is nothing to reveal that the share renders. */
+/* Row actions in Shared With Me. One class for all three so they cannot drift
+   apart in height, which is what happened while each carried its own copy of
+   the same inline padding. The explicit line-height ties each box to its label
+   rather than to whichever glyph in it happens to be tallest: Pin used to
+   carry an emoji, drawn from a colour-emoji font with a taller glyph box than
+   the surrounding text, and that button alone grew. */
+.sh-act {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.85rem;
+  line-height: 1.35;
+  flex-shrink: 0;
+  color: #fff;
+}
+.sh-act--open { background: #059669; }
+.sh-act--open:disabled { background: #1f2937; color: #6b7280; }
+.sh-act--download { background: #3b82f6; }
+.sh-act--pin { background: #7c3aed; }
+
 .sh-site-banner {
   display: flex;
   align-items: center;
