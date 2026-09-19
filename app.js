@@ -380,7 +380,7 @@ function initGearMenu() {
         if (!window._wizardInitialized) {
           initRegistrationWizard({
             Builder, generateRecoveryPhrase, hex, fromHex,
-            closeTab, activateTab, tabs,
+            closeTab, activateTab, tabs, adoptRegisteredKey,
           });
           window._wizardInitialized = true;
         }
@@ -565,6 +565,49 @@ function activateProfile(data, name) {
   // connectSdk keys its cache on url|key so it reconnects on its own, but
   // nothing tells the panels that the account underneath them changed.
   if (changed) window.dispatchEvent(new CustomEvent('profile-updated'));
+}
+
+/**
+ * Give a freshly registered app key a profile of its own, and switch to it.
+ *
+ * Registration used to write the new key over the active profile, which was
+ * survivable only because the SDK refused to register a second key against an
+ * indexer account that already had one. It no longer refuses, and overwriting
+ * in place would quietly cost the reader everything the previous key held: the
+ * objects stay on the indexer, but nothing in the app can reach them again
+ * without the old recovery phrase, which someone who has just generated a new
+ * one has no particular reason to have kept.
+ *
+ * The name has to tell two keys on one indexer apart, and the hostname no
+ * longer can. What differs is the account's own public key, so a short prefix
+ * of it names the profile after the thing that makes it distinct.
+ *
+ * Re-registering a key that already has a profile reuses it rather than making
+ * a second: that is idempotent on the indexer, where re-auth is always allowed,
+ * and it should be idempotent here too.
+ */
+function adoptRegisteredKey(url, key, publicKey) {
+  let host;
+  try {
+    host = new URL(url).hostname;
+  } catch (_) {
+    host = url || 'indexer';
+  }
+  const existing = Object.entries(profileData.profiles)
+    .find(([, p]) => p && p.url === url && p.key === key);
+  let name = existing ? existing[0] : host;
+  if (!existing && profileData.profiles[name]) {
+    const tag = String(publicKey || '').replace(/^ed25519:/, '').slice(0, 6);
+    name = tag ? `${host} · ${tag}` : host;
+    for (let n = 2; profileData.profiles[name]; n += 1) {
+      name = `${host} · ${tag || 'key'} (${n})`;
+    }
+  }
+  profileData.profiles[name] = { url, key };
+  saveProfiles(profileData);
+  renderProfileSelect(profileData);
+  activateProfile(profileData, name);
+  return name;
 }
 
 function saveActiveProfile(data) {
@@ -1042,7 +1085,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
       if (saved.panelName === 'register' && !window._wizardInitialized) {
         initRegistrationWizard({
           Builder, generateRecoveryPhrase, hex, fromHex,
-          closeTab, activateTab, tabs,
+          closeTab, activateTab, tabs, adoptRegisteredKey,
         });
         window._wizardInitialized = true;
       }
@@ -1071,7 +1114,7 @@ if (savedState && savedState.tabs && savedState.tabs.length > 0) {
   // First run, no saved tabs: show registration wizard + Homepage
   initRegistrationWizard({
     Builder, generateRecoveryPhrase, hex, fromHex,
-    closeTab, activateTab, tabs,
+    closeTab, activateTab, tabs, adoptRegisteredKey,
   });
   window._wizardInitialized = true;
   openOrActivateInternalTab('register');

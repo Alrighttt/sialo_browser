@@ -192,11 +192,12 @@ export function initRegistrationWizard(helpers) {
       const seed = hex(appKey.export());
       const pubkey = appKey.publicKey();
 
-      // Save to config fields + localStorage + profile system
-      document.getElementById('cfg-key').value = seed;
-      localStorage.setItem('app-key', seed);
-      // Notify the profile system to update the active profile
-      window.dispatchEvent(new CustomEvent('profile-updated'));
+      // A profile of its own, made active, rather than written over whichever
+      // profile happened to be selected. An account is its app key, so
+      // overwriting one in place is how a reader loses access to everything
+      // the previous key held.
+      const indexer = document.getElementById('wiz-url').value.trim();
+      adoptRegisteredKey(indexer, seed, pubkey);
 
       regBuilder = null;
       showStep(5);
