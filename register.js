@@ -241,6 +241,16 @@ export function initRegistrationWizard(helpers) {
     awaitAccountReady(sdk, (state) => {
       if (state.ready) {
         el.innerHTML = '<span class="pass">\u2713 Your account is funded and ready.</span>';
+        // Someone who followed a link registered in order to open that link, so
+        // take them to it rather than making them press a button to get what
+        // they already asked for. Waiting for `ready` is the whole point of
+        // checking: arriving earlier only means arriving at content that cannot
+        // load yet.
+        //
+        // The Register tab is deliberately left open. It is the only place the
+        // recovery phrase is ever shown, and a generated one that nobody wrote
+        // down is an account nobody can recover.
+        openFromLocation();
       } else if (state.timedOut) {
         el.innerHTML = '<span style="color:#f59e0b;">Your account is registered but still being funded. '
           + 'Downloads will fail until that finishes. Nothing is wrong and nothing needs doing.</span>';
