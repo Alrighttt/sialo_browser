@@ -776,9 +776,23 @@ async function indexSharingKeyLabels(sdk) {
     // indistinguishable from data going missing.
     const summaryEl = document.getElementById('objects-summary');
     if (summaryEl) {
-      const shown = allObjects.filter((o) => showDeleted || !o.deleted).length;
+      const visible = allObjects.filter((o) => showDeleted || !o.deleted);
+      const shown = visible.length;
+      // Summed over exactly the rows the count describes, so turning "Show
+      // deleted" on moves both numbers together rather than leaving a total
+      // that quietly disagrees with the count beside it.
+      //
+      // This is the objects' own size, not what they cost to store: an object
+      // occupies whole 4 MiB sectors across a slab however small it is, so the
+      // billed figure is larger and stating this one as storage would misread
+      // a bill.
+      const totalBytes = visible.reduce((n, o) => n + (Number(o.size) || 0), 0);
       summaryEl.textContent = `${shown} object${shown === 1 ? '' : 's'}`
+        + (totalBytes > 0 ? ` · ${formatSize(totalBytes)}` : '')
         + (hiddenDeleted > 0 ? ` · ${hiddenDeleted} deleted hidden` : '');
+      summaryEl.title = totalBytes > 0
+        ? `${Math.round(totalBytes).toLocaleString()} bytes across ${shown} object${shown === 1 ? '' : 's'}`
+        : '';
     }
     const pageNumEl = document.getElementById('objects-page-num');
     if (pageNumEl) pageNumEl.textContent = String(pageIndex + 1);
