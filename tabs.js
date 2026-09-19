@@ -715,6 +715,12 @@ export function updateNavButtons() {
   const save = document.getElementById('btn-external-tab');
   if (save) {
     const savable = !!(tab && tab.type === 'browser' && tab.url);
+    // Hidden rather than dimmed: a control that cannot do anything here is
+    // noise, and the toolbar reads more cleanly without it. `disabled` is
+    // still set so the button is inert even if the attribute is somehow
+    // styled away, and so a press during an in-flight save dims it instead
+    // of making it vanish mid-action.
+    save.hidden = !savable;
     save.disabled = !savable;
     save.title = savable
       ? 'Download this object to disk regardless of file type'
@@ -729,6 +735,7 @@ export function updateNavButtons() {
   if (pin) {
     const url = tab && tab.type === 'browser' ? String(tab.url || '') : '';
     const pinnable = /^sia:\/\//i.test(url) || isSiteAddress(url);
+    pin.hidden = !pinnable;
     pin.disabled = !pinnable;
     pin.title = pinnable
       ? 'Pin this to your own account so it stays available after the person sharing it stops'
