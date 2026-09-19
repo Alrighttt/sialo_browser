@@ -335,6 +335,59 @@ export async function connectSharedSdk(seed) {
   );
 }
 
+/**
+ * Page through a listing, backing off when the indexer refuses a page.
+ *
+ * The page size counts objects, but the indexer's cost is dominated by what
+ * sits behind them: listing hydrates every slab and every sector of every
+ * object on the page. A hundred three-gigabyte objects is roughly a quarter of
+ * a million sector rows in one request, which the indexer answers with a 500 —
+ * and the reader is shown nothing at all, for a key that is perfectly healthy.
+ *
+ * So start large, because a key of small files should still list in one or two
+ * round trips, and back off when a page is refused instead of giving up. A
+ * refused page is retried at the same offset, so nothing is skipped on the way
+ * down. The floor is what stops an unusable key looping forever: without it the
+ * size clamps at the minimum and the retry never gives up.
+ *
+ * Note this only softens the symptom. The cost belongs to the indexer, which
+ * hydrates every slab and sector of every object on the page — for objects of a
+ * few gigabytes that is thousands of sector rows each — and a listing has no
+ * use for any of it.
+ */
+const LIST_PAGE_MAX = 100;
+const LIST_PAGE_MIN = 5;
+
+export async function listAllPages(fetchPage) {
+  const out = [];
+  let page = LIST_PAGE_MAX;
+  for (let offset = 0; ;) {
+    let batch;
+    try {
+      batch = await fetchPage(offset, page);
+    } catch (e) {
+      if (page <= LIST_PAGE_MIN) throw e;
+      page = Math.max(LIST_PAGE_MIN, Math.floor(page / 4));
+      _dbgWarn(`[listing] page at ${offset} refused; retrying with limit=${page}`);
+      continue;
+    }
+    out.push(...batch);
+    if (batch.length < page) break;
+    offset += batch.length;
+  }
+  return out;
+}
+
+/** Every object a sharing key grants, as its holder. */
+export function listSharedObjects(sdk) {
+  return listAllPages((offset, limit) => sdk.objects(offset, limit));
+}
+
+/** Every object attached to one of your own keys, as its owner. */
+export function listOwnedSharedObjects(sdk, key) {
+  return listAllPages((offset, limit) => sdk.sharedObjects(key, offset, limit));
+}
+
 export async function resolveObject(input, primarySdk) {
   const isPublishUrl = input.startsWith('sia://') || input.startsWith('https://');
 

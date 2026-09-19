@@ -24,7 +24,7 @@
 // invisible / BiDi-override codepoints.
 
 import { _esc, formatSize } from './utils.js';
-import { connectSdk, resolveObject } from './config.js';
+import { connectSdk, resolveObject, listOwnedSharedObjects} from './config.js';
 import { withKeepAlive } from './keep-alive.js';
 import { getActiveTab, tabStatusProxy } from './tabs.js';
 import {
@@ -75,16 +75,11 @@ async function loadKeySiteFiles(sdk, input) {
   } catch (_) {
     return null;
   }
-  const PAGE = 100;
   const out = [];
   try {
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await sdk.sharedObjects(key, offset, PAGE);
-      for (const obj of page) {
-        const name = stripUploadUuid(filenameForDisplay(obj.metadata()) || '');
-        if (name) out.push({ path: name, obj });
-      }
-      if (page.length < PAGE) break;
+    for (const obj of await listOwnedSharedObjects(sdk, key)) {
+      const name = stripUploadUuid(filenameForDisplay(obj.metadata()) || '');
+      if (name) out.push({ path: name, obj });
     }
   } catch (_) {
     // Not one of this account's sharing keys; fall back to the manifest.

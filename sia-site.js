@@ -37,6 +37,7 @@ import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
   connectSdk, resolveObject, invalidateSdk, getLastConnectError, getUrl, getKeyHex,
   connectSharedSdk,
+  listSharedObjects,
 } from './config.js';
 import {
   findTabByIframeWindow, tabStatusProxy, getActiveTab, setChromeCollapsed,
@@ -1458,13 +1459,7 @@ async function keySite(seed) {
   // someone following a link they were sent.
   const { sdk } = await connectSharedSdk(seed);
 
-  const PAGE = 100;
-  const objects = [];
-  for (let offset = 0; ; offset += PAGE) {
-    const page = await sdk.objects(offset, PAGE);
-    objects.push(...page);
-    if (page.length < PAGE) break;
-  }
+  const objects = await listSharedObjects(sdk);
 
   const files = {};
   for (const obj of objects) {

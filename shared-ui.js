@@ -10,7 +10,7 @@
 // hostile one point the SDK wherever it liked.
 
 import { _esc, _dbg, formatSize } from './utils.js';
-import { getUrl, connectSharedSdk } from './config.js';
+import { getUrl, connectSharedSdk, listSharedObjects } from './config.js';
 import { streamingDownload } from './download.js';
 import {
   filenameForSave, filenameForDisplay, stripUploadUuid,
@@ -95,13 +95,7 @@ export function initSharedUI() {
     list.innerHTML = '<div style="padding:1rem; color:#888;">Loading objects…</div>';
     let objects;
     try {
-      const PAGE = 100;
-      objects = [];
-      for (let offset = 0; ; offset += PAGE) {
-        const page = await sdk.objects(offset, PAGE);
-        objects.push(...page);
-        if (page.length < PAGE) break;
-      }
+      objects = await listSharedObjects(sdk);
     } catch (e) {
       list.innerHTML = `<div style="padding:1rem; color:#f87171;">Could not list shared objects: ${_esc(e.message || e)}</div>`;
       return;

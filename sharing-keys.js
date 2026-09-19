@@ -14,7 +14,7 @@
 // show-once and this module can always rebuild one.
 
 import { _esc, formatSize } from './utils.js';
-import { connectSdk } from './config.js';
+import { connectSdk, listOwnedSharedObjects} from './config.js';
 import { SharingKey } from './pkg/sia_storage_wasm.js';
 import { filenameForDisplay } from './object-metadata.js';
 import { siteUrl } from './sia-site.js';
@@ -397,13 +397,7 @@ export function initSharingKeysUI() {
   }
 
   async function renderAttachedObjects(sdk, row, container, onChange) {
-    const PAGE = 100;
-    const objects = [];
-    for (let offset = 0; ; offset += PAGE) {
-      const page = await sdk.sharedObjects(row.key, offset, PAGE);
-      objects.push(...page);
-      if (page.length < PAGE) break;
-    }
+    const objects = await listOwnedSharedObjects(sdk, row.key);
     if (!objects.length) {
       container.innerHTML = '<div style="color:#888; font-size:0.85rem;">Nothing attached yet.</div>';
       return;
