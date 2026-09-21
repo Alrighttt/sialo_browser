@@ -498,8 +498,40 @@ async function indexSharingKeyLabels(sdk) {
   })();
 
   /** The objects the list should show, before sorting or grouping. */
+  /** Name filter from the header box; empty means no filter. */
+  let searchQuery = '';
+
+  /**
+   * What the object's name is, for matching purposes.
+   *
+   * `displayName` is what the row shows, which for a grouped object is the
+   * path with its batch prefix stripped and for a site manifest is the site's
+   * name. Both are searched, along with the raw filename, so a query matches
+   * whatever the reader can see as well as what is actually stored — a batch
+   * prefix is invisible in the list, and someone who pastes a full path should
+   * still find the file.
+   */
+  function searchableName(o) {
+    return `${o.displayName || ''}\n${o.filename || ''}\n${o.siteName || ''}`.toLowerCase();
+  }
+
+  /**
+   * The objects the list is currently showing.
+   *
+   * One chokepoint for both filters, because everything downstream derives
+   * from it: sorting, grouping, paging, the header totals and what Select all
+   * selects. Filtering anywhere later would leave those disagreeing with each
+   * other, which is how a count ends up describing rows nobody can see.
+   *
+   * The search runs over the whole dataset rather than the page on screen. A
+   * list long enough to want searching is one where the thing being looked for
+   * is, by definition, usually not on the current page.
+   */
   function listedObjects() {
-    return showDeleted ? allObjects : allObjects.filter((o) => !o.deleted);
+    const base = showDeleted ? allObjects : allObjects.filter((o) => !o.deleted);
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return base;
+    return base.filter((o) => searchableName(o).includes(q));
   }
 
   function sortedObjects() {
@@ -776,7 +808,7 @@ async function indexSharingKeyLabels(sdk) {
     // indistinguishable from data going missing.
     const summaryEl = document.getElementById('objects-summary');
     if (summaryEl) {
-      const visible = allObjects.filter((o) => showDeleted || !o.deleted);
+      const visible = listedObjects();
       const shown = visible.length;
       // Summed over exactly the rows the count describes, so turning "Show
       // deleted" on moves both numbers together rather than leaving a total
@@ -787,8 +819,16 @@ async function indexSharingKeyLabels(sdk) {
       // billed figure is larger and stating this one as storage would misread
       // a bill.
       const totalBytes = visible.reduce((n, o) => n + (Number(o.size) || 0), 0);
+      // Naming what the filter hides, for the same reason the deleted count is
+      // named: a total that silently drops rows is indistinguishable from data
+      // going missing.
+      const beforeSearch = showDeleted
+        ? allObjects.length
+        : allObjects.filter((o) => !o.deleted).length;
+      const filteredOut = searchQuery.trim() ? beforeSearch - shown : 0;
       summaryEl.textContent = `${shown} object${shown === 1 ? '' : 's'}`
         + (totalBytes > 0 ? ` · ${formatSize(totalBytes)}` : '')
+        + (filteredOut > 0 ? ` · ${filteredOut} filtered out` : '')
         + (hiddenDeleted > 0 ? ` · ${hiddenDeleted} deleted hidden` : '');
       summaryEl.title = totalBytes > 0
         ? `${Math.round(totalBytes).toLocaleString()} bytes across ${shown} object${shown === 1 ? '' : 's'}`
@@ -831,8 +871,11 @@ async function indexSharingKeyLabels(sdk) {
 
     // Selection survives paging and applies to every non-deleted object
     // across the whole dataset — not just the current page.
+    // Scoped to what the filter is showing. Select all reaching objects the
+    // reader cannot see, and Delete then acting on them, is the kind of
+    // surprise that costs data.
     function eligibleIds() {
-      return allObjects.filter(o => !o.deleted).map(o => o.id);
+      return listedObjects().filter(o => !o.deleted).map(o => o.id);
     }
 
     function updateSelectionCount() {
@@ -1188,6 +1231,29 @@ async function indexSharingKeyLabels(sdk) {
   });
 
   // Manual refresh button.
+  // Typing filters as you go. No debounce: the work is a substring test over
+  // a list already in memory, and waiting for a pause makes it feel slower
+  // than it is.
+  const searchEl = document.getElementById('objects-search');
+  if (searchEl) {
+    searchEl.addEventListener('input', () => {
+      searchQuery = searchEl.value;
+      // Page 3 of the old results is meaningless against the new ones, and
+      // landing past the end of a short result set looks like no matches.
+      pageIndex = 0;
+      render();
+    });
+    // Escape clears, which is what the native clear button does and what the
+    // key does in every other search box.
+    searchEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape' || !searchEl.value) return;
+      searchEl.value = '';
+      searchQuery = '';
+      pageIndex = 0;
+      render();
+    });
+  }
+
   document.getElementById('btn-list-objects').addEventListener('click', () => {
     selectedIds.clear();
     loadAllObjects();

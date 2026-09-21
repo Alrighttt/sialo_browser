@@ -2150,7 +2150,33 @@ a.addr-chip--link:hover {
 }
 .obj-head-title h2 { margin: 0 0 0.15rem; }
 .obj-head-sub { color: #6b7280; font-size: 0.85rem; }
-.obj-head-actions { display: flex; align-items: center; gap: 0.5rem; }
+/* Grows to fill whatever row it lands on, so the filter can sit at the left
+   edge while the indexer and Refresh sit at the right. Without the grow the
+   container is only as wide as its contents and there is no space between
+   them to push into. */
+.obj-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1 1 24rem;
+}
+/* Starts the right-hand group: this and everything after it is pushed over. */
+.obj-head-actions .obj-indexer { margin-left: auto; }
+
+/* Filter box in the My Objects header. Sized to a plausible filename rather
+   than to its placeholder, since that is what gets typed into it. */
+.obj-search {
+  background: #0d0d0d;
+  border: 1px solid #262626;
+  border-radius: 6px;
+  color: #e5e7eb;
+  font-size: 0.85rem;
+  padding: 0.35rem 0.6rem;
+  min-width: 14rem;
+  flex: 0 1 18rem;
+}
+.obj-search::placeholder { color: #5b6472; }
+.obj-search:focus { outline: none; border-color: #2563eb; }
 
 .obj-indexer {
   background: #141414;

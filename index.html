@@ -978,6 +978,11 @@
                 <div class="obj-head-sub" id="objects-summary">&nbsp;</div>
               </div>
               <div class="obj-head-actions">
+                <!-- Filters the whole dataset, not the page on screen: the
+                     thing being looked for is usually not on it. -->
+                <input type="search" id="objects-search" class="obj-search"
+                  placeholder="Filter by name" autocomplete="off" spellcheck="false"
+                  title="Show only objects whose name contains this" />
                 <select id="objects-profile-select" class="obj-indexer"
                   title="Which indexer this list comes from"></select>
                 <button id="btn-list-objects" class="obj-btn">Refresh</button>
