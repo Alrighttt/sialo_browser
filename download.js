@@ -93,10 +93,12 @@ async function streamingDownload(sdk, obj, status, progress, label, signal) {
 }
 
 // Download an object through the SDK's built-in parallel shard fetching.
-// The multi-worker Web Worker pool is kept around (see parallelDownloadToDisk)
-// for the write-to-disk path, but is disabled for in-memory downloads —
-// multiple SDK instances compete for Chrome's 64 WebTransport session limit
-// and the SDK already parallelises shards internally.
+// The multi-worker Web Worker pool this used to drive is gone entirely, the
+// write-to-disk path included: each worker owned its own SDK, and several at
+// once compete for Chrome's 64 WebTransport session limit while the SDK
+// already parallelises shards internally. The numWorkers / workerStatus /
+// hostStats parameters on these three functions are what is left of it, kept
+// so every call site did not have to change. Nothing reads them.
 async function parallelDownload(objectUrl, status, progress, label, _numWorkers, _workerStatusRef, _hostStatsRef, signal) {
   progress.style.display = 'block';
 
