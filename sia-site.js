@@ -807,6 +807,26 @@ function bareObjectAddress(siaUrl) {
   return m ? m[1].toLowerCase() : null;
 }
 
+/**
+ * The object a key-backed site holds under `id`, or null.
+ *
+ * A sharing key's files are keyed by path, but an embed often names the object
+ * itself: an id survives renames and belongs to no site in particular, which is
+ * what makes it the portable way to reference media from several pages. Freed
+ * handles are skipped rather than thrown from, so one dead entry cannot hide a
+ * live one later in the list.
+ */
+function keyObjectById(site, id) {
+  for (const candidate of Object.values(site.files)) {
+    try {
+      if (candidate && candidate.id && candidate.id().toLowerCase() === id) {
+        return candidate;
+      }
+    } catch (_) { /* freed handle; skip */ }
+  }
+  return null;
+}
+
 async function resolveStreamSource(siaUrl, siteId) {
   /** Object ID that a key-backed site referenced but does not actually hold. */
   let unattached = null;
@@ -818,6 +838,13 @@ async function resolveStreamSource(siaUrl, siteId) {
       const path = (asSite.path || '/').replace(/^\/+/, '');
       for (const p of pathForms(path)) {
         if (site.files[p]) return { sdk: site.sdk, obj: site.files[p] };
+      }
+      // `sialo://<seed>/<objectId>`: the key says who may read, the id says
+      // what. Tried after the path forms so a file genuinely named in 64 hex
+      // characters still wins, and only for something shaped like an id.
+      if (/^[0-9a-f]{64}$/i.test(path)) {
+        const byId = keyObjectById(site, path.toLowerCase());
+        if (byId) return { sdk: site.sdk, obj: byId };
       }
       throw notInThisSite(path);
     }
@@ -846,13 +873,8 @@ async function resolveStreamSource(siaUrl, siteId) {
       } catch (_) { /* fall through to the account path */ }
       if (site && site.kind === 'sharing-key' && site.sdk) {
         const want = embedded;
-        for (const candidate of Object.values(site.files)) {
-          try {
-            if (candidate && candidate.id && candidate.id().toLowerCase() === want) {
-              return { sdk: site.sdk, obj: candidate };
-            }
-          } catch (_) { /* freed handle; skip */ }
-        }
+        const held = keyObjectById(site, want);
+        if (held) return { sdk: site.sdk, obj: held };
         _dbgWarn(
           '[sia-site] embedded published URL is not attached to this sharing key;'
           + ' falling back to the account SDK:', want,
