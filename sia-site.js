@@ -815,9 +815,14 @@ function bareObjectAddress(siaUrl) {
  * what makes it the portable way to reference media from several pages. Freed
  * handles are skipped rather than thrown from, so one dead entry cannot hide a
  * live one later in the list.
+ *
+ * Searches the key's whole listing rather than its path map, so an object with
+ * no filename metadata is still reachable. Those never enter `files` — there is
+ * no path to key them by — and would otherwise be attached to the key yet
+ * addressable by nothing.
  */
 function keyObjectById(site, id) {
-  for (const candidate of Object.values(site.files)) {
+  for (const candidate of (site.objects || Object.values(site.files))) {
     try {
       if (candidate && candidate.id && candidate.id().toLowerCase() === id) {
         return candidate;
@@ -1498,6 +1503,12 @@ async function keySite(seed) {
   return {
     kind: 'sharing-key',
     files,
+    // Every object the key grants, including those `files` dropped for having
+    // no filename metadata. A path map cannot represent those at all, but an
+    // address that names an object by id can, and that is exactly the case the
+    // id form exists for: media attached to a key without ever being given a
+    // path within it.
+    objects,
     // Exposed so the streaming route can reuse this connection. It is a
     // SharedSdk built from the seed alone, which is the whole point: the
     // holder of a sharing key has no account here, so anything serving their
