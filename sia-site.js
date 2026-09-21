@@ -45,6 +45,7 @@ import {
 import { encodeMetadata, filenameForDisplay, stripUploadUuid } from './object-metadata.js';
 import { downloadOptions } from './transfer-options.js';
 import { isSiteAddress } from './object-input.js';
+import { openSharingLink } from './shared-ui.js';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
 
 // "not enough shards: 0/N" after a period of idle usually means every
@@ -321,6 +322,16 @@ async function onMessage(e) {
       // normal navigation flow.
       const target = d.url;
       if (typeof target !== 'string') return;
+      // A sharing link is an ordinary https URL, so it arrives here rather than
+      // as a scheme the iframe cannot handle. Answered locally from its
+      // fragment: a `site=1` link renders in a browser tab, a bare key opens
+      // Shared With Me. Neither fetches the link's origin, which is what keeps
+      // a page written for sialo.io working when the app is served elsewhere.
+      if (isAppSharingLink(target)) {
+        cancelStreamsForSource(e.source);
+        openSharingLink(target);
+        return;
+      }
       if (!/^(sia|sialo):\/\//i.test(target)) return;
       // `sialo://` addresses app pages as well as content, so a scheme test
       // alone would let a hosted page post `sialo://wallet` and drive the
@@ -470,6 +481,25 @@ async function onMessage(e) {
  * a bare string and is rebuilt on the far side, losing it. `isAccountError`
  * therefore also recognises the wording.
  */
+/**
+ * Whether `url` is one of this app's own sharing links.
+ *
+ * Restricted to the app's own origin and the canonical sialo.io, rather than
+ * any URL carrying a `sharing_key` fragment. A hosted page can put whatever it
+ * likes in an href, and silently swallowing a link to someone else's site
+ * because its fragment happened to match would be a surprise; a link to sialo
+ * is the only one we are entitled to answer ourselves.
+ */
+function isAppSharingLink(url) {
+  let u;
+  try { u = new URL(String(url || ''), location.href); } catch (_) { return false; }
+  if (!/^https?:$/.test(u.protocol)) return false;
+  const mine = u.origin === location.origin
+    || /^(www\.)?sialo\.io$/i.test(u.hostname);
+  if (!mine) return false;
+  return /[#&]sharing_key=[0-9a-f]{64}(?:&|$)/i.test(u.hash);
+}
+
 function notInThisSite(path) {
   const err = new Error('not in this site: ' + path);
   err.needsAccount = false;

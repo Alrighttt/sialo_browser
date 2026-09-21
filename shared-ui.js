@@ -275,14 +275,15 @@ function renderObject(sdk, obj, highlight, seed) {
 
   // Registered as the module-level entry point so registering can repeat it;
   // the body needs this scope's `open` and `seedEl`, so it stays a closure.
-  openFromLocationImpl = () => {
-    const publishedSite = parsePublishedSiteFragment(location.hash);
+  openFromLocationImpl = (hash) => {
+    const frag = hash || location.hash;
+    const publishedSite = parsePublishedSiteFragment(frag);
     if (publishedSite) {
       openSiteTab(publishedSite.url);
       return true;
     }
 
-    const fromFragment = parseShareFragment(location.hash);
+    const fromFragment = parseShareFragment(frag);
     if (fromFragment) {
       if (fromFragment.site) {
         // A site link renders in a browser tab through the sandboxed iframe,
@@ -302,7 +303,7 @@ function renderObject(sdk, obj, highlight, seed) {
 }
 
 /** Set by `initSharedUI`; a no-op before the panel has been wired up. */
-let openFromLocationImpl = () => false;
+let openFromLocationImpl = (_hash) => false;
 
 /**
  * Opens whatever the address fragment points at, if anything.
@@ -316,6 +317,26 @@ let openFromLocationImpl = () => false;
  *
  * Returns whether it found somewhere to go, so a caller can fall back.
  */
-export function openFromLocation() {
-  return openFromLocationImpl();
+export function openFromLocation(hash) {
+  return openFromLocationImpl(hash);
+}
+
+/**
+ * Opens a sharing link that arrived from somewhere other than the address bar
+ * — a click inside a hosted site, in particular.
+ *
+ * Takes a whole URL or a bare fragment, since a link in someone's markup is a
+ * URL and `location.hash` is not. Only the fragment is read: the origin is
+ * never fetched, because everything needed is the seed, and a link written for
+ * sialo.io has to work the same when the app is served from localhost.
+ *
+ * Routing is `openFromLocation`'s, so a `site=1` link renders in a browser tab
+ * and a bare key opens the Shared With Me panel, exactly as the same link does
+ * when it is pasted into the bar.
+ */
+export function openSharingLink(input) {
+  const raw = String(input || '');
+  const hash = raw.startsWith('#') ? raw : raw.slice(raw.indexOf('#'));
+  if (!hash) return false;
+  return openFromLocationImpl(hash);
 }
