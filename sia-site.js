@@ -1580,6 +1580,46 @@ async function keySite(seed) {
 }
 
 /**
+ * The object behind one path in a site, with the SDK that can read it.
+ *
+ * Exists so a caller can act on the page a reader is actually looking at —
+ * saving it, in particular — without knowing how the site is put together.
+ * Both kinds resolve here: a key-backed site hands back a handle its own
+ * SharedSdk already decrypted, and a manifest site hands back the object its
+ * recorded published URL names, resolved through the viewer's account.
+ *
+ * That difference is the whole point. A key holder has no account, so routing
+ * their save through `connectSdk` asks them to register for content the link
+ * they followed already grants.
+ *
+ * Path resolution is the same one the loader uses, so `/` lands on the site's
+ * index and a directory lands on its `index.html`, rather than failing on an
+ * address the reader plainly arrived at.
+ */
+export async function siteObjectAt(siteId, path) {
+  const site = await getSite(String(siteId).toLowerCase());
+  const wanted = String(path || '/').replace(/^\/+/, '');
+  const hit = resolveManifestKey(site.files, wanted);
+  if (!hit) throw notInThisSite(wanted || '/');
+
+  if (site.kind === 'sharing-key' && site.sdk) {
+    return { sdk: site.sdk, obj: hit.objectId, path: hit.key };
+  }
+
+  const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });
+  if (!sdk) {
+    const err = new Error(
+      'Saving a file from a published site resolves it through your own indexer '
+      + 'account, the same way viewing it does.',
+    );
+    err.needsAccount = true;
+    throw err;
+  }
+  const { obj } = await resolveObject(hit.objectId, sdk);
+  return { sdk, obj, path: hit.key };
+}
+
+/**
  * The files a site holds, flattened for callers that act on objects rather
  * than render pages — pinning, in particular.
  *

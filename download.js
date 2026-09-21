@@ -123,10 +123,25 @@ async function parallelDownloadToDisk(objectUrl, writable, status, progress, byt
   if (!primarySdk) return null;
 
   const { sdk, obj } = await resolveObject(objectUrl, primarySdk);
+  return downloadObjectToDisk(sdk, obj, writable, progress, bytesCallback);
+}
+
+/**
+ * Stream an already-resolved object to `writable`.
+ *
+ * Split out from `parallelDownloadToDisk` because not every caller can start
+ * from a URL. A page inside a key-backed site is reachable only through the
+ * SharedSdk built from that key — its reader has no account, so there is no
+ * `connectSdk` to resolve against and no published URL to resolve from. The
+ * caller that already holds the pair passes it in.
+ */
+async function downloadObjectToDisk(sdk, obj, writable, progress, bytesCallback) {
   await assertDownloadable(sdk, obj);
   const totalSize = Number(obj.size());
-  progress.max = totalSize || 1;
-  progress.value = 0;
+  if (progress) {
+    progress.max = totalSize || 1;
+    progress.value = 0;
+  }
 
   // Options were missing here, so this path ran at the SDK's own WASM default
   // of 32 buffered chunks while the streaming path ran at the configured 6.
@@ -145,7 +160,7 @@ async function parallelDownloadToDisk(objectUrl, writable, status, progress, byt
       const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
       await writable.write(bytes);
       bytesWritten += bytes.length;
-      progress.value = bytesWritten;
+      if (progress) progress.value = bytesWritten;
       if (bytesCallback) bytesCallback(bytesWritten);
     }
   } finally {
@@ -255,6 +270,7 @@ export {
   streamingDownload,
   parallelDownload,
   parallelDownloadToDisk,
+  downloadObjectToDisk,
   getActiveServiceWorker,
   parallelDownloadViaSW,
 };

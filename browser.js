@@ -16,17 +16,17 @@ import {
   activePanel, tabStatusProxy,
 } from './tabs.js';
 import {
-  streamingDownload, parallelDownload, parallelDownloadViaSW,
+  streamingDownload, parallelDownload, parallelDownloadViaSW, downloadObjectToDisk,
 } from './download.js';
 import { fileTypeFromBlob } from './vendor/file-type.bundle.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
-import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource } from './sia-site.js';
+import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
-import { classifyObjectInput } from './object-input.js';
+import { classifyObjectInput, isSiteAddress } from './object-input.js';
 
 // -- Decentralized Browser (HTML Viewer with Navigation) --
 
@@ -1666,6 +1666,16 @@ document.getElementById('btn-external-tab').addEventListener('click', () => {
     return;
   }
 
+  // A site address is not a single object, and the Download panel would read
+  // its 64 hex characters as an object id and look it up through the viewer's
+  // account — which a sharing-key reader does not have, and which is the wrong
+  // object anyway. What the reader means by Save here is the page in front of
+  // them, so resolve that within the site instead.
+  if (isSiteAddress(url)) {
+    saveCurrentSitePage(url, setStatus);
+    return;
+  }
+
   const idMatch = url.match(/([0-9a-fA-F]{64})/);
   const suggestedName = idMatch ? `sia_${idMatch[1].slice(0, 8)}` : 'sia_download';
 
@@ -1674,6 +1684,69 @@ document.getElementById('btn-external-tab').addEventListener('click', () => {
   openOrActivateInternalTab('download');
   document.getElementById('btn-download').click();
 });
+
+/** A filename for an in-site path, falling back to the site's index. */
+function siteFileName(subpath) {
+  const clean = String(subpath || '/').split(/[?#]/)[0];
+  // A trailing slash is a directory, which the loader serves as that
+  // directory's index — so the file being saved is index.html, not the
+  // directory's own name.
+  if (!clean || clean.endsWith('/')) return 'index.html';
+  return clean.slice(clean.lastIndexOf('/') + 1) || 'index.html';
+}
+
+/**
+ * Save the page the reader is currently looking at inside a site.
+ *
+ * Stays synchronous up to `showSaveFilePicker` on purpose, the same constraint
+ * the Download panel documents: awaiting anything first spends the user
+ * activation and Chrome then refuses the picker. Everything needed before that
+ * point is already known — the path comes from the announce the bridge sent
+ * when the document loaded, so no lookup is required to name the file.
+ */
+async function saveCurrentSitePage(siteAddr, setStatus) {
+  const active = getActiveTab();
+  const entry = active && active.navHistory ? active.navHistory[active.navIndex] : null;
+  const site = parseSiteUrl(siteAddr);
+  // The address bar holds the site root, so the path the reader has navigated
+  // to inside it comes from the tab's own record of the last announce.
+  const subpath = (entry && entry.subpath) || (site && site.path) || '/';
+  const suggested = siteFileName(subpath);
+
+  let writable = null;
+  let savedAs = suggested;
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: suggested });
+      writable = await handle.createWritable();
+      savedAs = handle.name || suggested;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      writable = null;
+    }
+  }
+
+  setStatus(`Saving ${_esc(suggested)}…`);
+  try {
+    const { sdk, obj } = await siteObjectAt(site ? site.siteId : siteAddr, subpath);
+    if (writable) {
+      const { size } = await downloadObjectToDisk(sdk, obj, writable, null, null);
+      await writable.close();
+      setStatus(`Saved ${_esc(savedAs)} (${formatSize(size)})`);
+      return;
+    }
+    // No File System Access API: collect the bytes and hand them to the same
+    // prompt-and-anchor path the rest of the app uses on Firefox and Safari.
+    const parts = [];
+    await downloadObjectToDisk(sdk, obj, { write: (b) => { parts.push(b); } }, null, null);
+    const name = await saveBlobAsDownload(new Blob(parts), suggested);
+    setStatus(name ? `Saved ${_esc(name)}` : 'Save cancelled');
+  } catch (err) {
+    if (writable) { try { await writable.abort(); } catch (_) {} }
+    const msg = (err && err.message) || String(err);
+    setStatus(`<span class="fail">${_esc(msg)}</span>`);
+  }
+}
 
 // Pin whatever the current tab is showing onto this account, so it survives the
 // person who shared it losing interest. Costs storage on your account rather
