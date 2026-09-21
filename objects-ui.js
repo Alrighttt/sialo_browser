@@ -675,11 +675,10 @@ async function indexSharingKeyLabels(sdk) {
       if (item.kind === 'header') {
         const color = uuidToColor(item.uuid);
         const caret = item.collapsed ? '▶' : '▼';
-        const shortUuid = item.uuid.substring(0, 8);
-        // The site's name when it has one; the UUID is the fallback for an
-        // upload that was never published as a site. Either way the UUID stays
-        // reachable in the tooltip, since it is what groups these rows.
-        const groupLabel = item.name || shortUuid;
+        // The site's name when it has one; the full UUID is the fallback for
+        // an upload that was never published as a site. Truncating it only
+        // made the group look like an opaque hex blob, so show all of it.
+        const groupLabel = item.name || item.uuid;
         const labelIsName = Boolean(item.name);
         const suffix = item.continuation ? ' (continued)' : '';
         const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
