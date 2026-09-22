@@ -260,24 +260,51 @@ export async function pickSharingKey(sdk, subject) {
   });
 }
 
-/** Shows a finished recipient link with a copy button. */
+/**
+ * Shows a finished recipient link with a copy button.
+ *
+ * A key can be handed out as two different things, and which one a reader
+ * wants is not something this can guess: the same seed either lists the files
+ * it grants or renders them as a site. Both are offered, because the site form
+ * was otherwise only ever produced at the moment of sharing — from Upload Site,
+ * Update Site, or the address-bar chip while already viewing the site. Coming
+ * back to the Sharing Keys page later, there was no way to get it at all.
+ *
+ * Not offered for a link to one object: `&object=` selects a file within the
+ * listing, so pairing it with a site view would name two different things.
+ */
 export function showShareLinkModal(row, objectId, heading) {
   const link = shareLink(row.seed, objectId);
+  const asSite = objectId ? null : siteLink(row.seed);
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.8); display:flex; align-items:center; justify-content:center; z-index:1000;';
   modal.innerHTML = `
     <div style="background:#1a1a1a; padding:2rem; border-radius:8px; max-width:640px; width:90%; border:1px solid #333;">
       <h3 style="margin:0 0 1rem 0; color:#059669;">${_esc(heading || 'Recipient link')}</h3>
-      <div style="background:#0a0a0a; border:1px solid #059669; border-radius:6px; padding:1rem; margin-bottom:1rem;">
+      <div style="background:#0a0a0a; border:1px solid #059669; border-radius:6px; padding:0.9rem 1rem; margin-bottom:0.6rem;">
+        <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.4rem;">
+          <strong style="color:#6ee7b7; font-size:0.8rem;">${asSite ? 'File listing' : 'Link'}</strong>
+          <span style="color:#6b7280; font-size:0.78rem;">${asSite ? 'every object the key grants' : 'opens on this object'}</span>
+          <button id="sl-copy" style="margin-left:auto; padding:0.3rem 0.7rem; font-size:0.8rem; background:#059669; color:white; border:none; border-radius:4px; cursor:pointer;">Copy</button>
+        </div>
         <div style="word-break:break-all; font-family:monospace; font-size:0.85rem; color:#e0e0e0;">${_esc(link)}</div>
       </div>
+      ${asSite ? `
+      <div style="background:#0a0a0a; border:1px solid #2563eb; border-radius:6px; padding:0.9rem 1rem; margin-bottom:1rem;">
+        <div style="display:flex; align-items:baseline; gap:0.5rem; margin-bottom:0.4rem;">
+          <strong style="color:#93c5fd; font-size:0.8rem;">As a site</strong>
+          <span style="color:#6b7280; font-size:0.78rem;">renders index.html, relative links work</span>
+          <button id="sl-copy-site" style="margin-left:auto; padding:0.3rem 0.7rem; font-size:0.8rem; background:#2563eb; color:white; border:none; border-radius:4px; cursor:pointer;">Copy</button>
+        </div>
+        <div style="word-break:break-all; font-family:monospace; font-size:0.85rem; color:#e0e0e0;">${_esc(asSite)}</div>
+      </div>` : ''}
       <p style="color:#888; font-size:0.85rem; margin:0 0 1rem 0;">
-        Anyone holding this link can read every object attached to
+        ${asSite ? 'Both are the same key seen two ways, so either can be turned into the other by adding or removing <code>&amp;site=1</code>. ' : ''}Anyone
+        holding ${asSite ? 'one' : 'this link'} can read every object attached to
         <strong style="color:#e0e0e0;">${_esc(row.description || 'this key')}</strong>, and the downloads
         are billed to your account. Revoking the key from the Sharing Keys page cuts off access.
       </p>
       <div style="display:flex; gap:0.5rem;">
-        <button id="sl-copy" style="flex:1; padding:0.75rem; background:#059669; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:500;">Copy link</button>
         <button id="sl-copy-seed" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer;">Copy seed only</button>
         <button id="sl-close" style="flex:1; padding:0.75rem; background:#333; color:white; border:none; border-radius:4px; cursor:pointer;">Close</button>
       </div>
@@ -287,6 +314,8 @@ export function showShareLinkModal(row, objectId, heading) {
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
   modal.querySelector('#sl-close').addEventListener('click', () => modal.remove());
   modal.querySelector('#sl-copy').addEventListener('click', (e) => copyToClipboard(link, e.target));
+  const siteBtn = modal.querySelector('#sl-copy-site');
+  if (siteBtn) siteBtn.addEventListener('click', (e) => copyToClipboard(asSite, e.target));
   modal.querySelector('#sl-copy-seed').addEventListener('click', (e) => copyToClipboard(row.seed, e.target));
 }
 
