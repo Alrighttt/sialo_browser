@@ -836,14 +836,27 @@ function hasIntraSiteHistory(tab) {
     && tab.iframePathStack.length > iframeArrivalDepth(tab));
 }
 
-/** Whether this tab can navigate back inside itself. */
+/**
+ * Whether this tab can navigate back inside itself.
+ *
+ * Has to answer for exactly what `goBack` will actually do, because
+ * `backCloseTarget` refuses to unwind a tab this claims still has somewhere to
+ * go. When the two disagree, Back does nothing at all: the tab is not unwound
+ * because it supposedly has history, and the history is never used because
+ * `goBack` took a different branch.
+ */
 function hasOwnHistory(tab) {
   if (!tab) return false;
   if (tab.type !== 'browser') return false;
   if (tab.navIndex > 0) return true;
-  // A site tab also has intra-site depth, tracked from the iframe's own page
-  // announces. More than one entry means there is a page to go back to.
-  if (isSiaSiteTab(tab) && hasIntraSiteHistory(tab)) return true;
+  if (isSiaSiteTab(tab)) {
+    // A site tab's other layer is the iframe's own history, reached by posting
+    // to it — so it counts only while the iframe is there to receive the
+    // message. The failed-nav clause below is deliberately not applied here:
+    // `goBack` returns from its site branch before reaching the recovery that
+    // would act on it, so counting it strands the tab with no way back.
+    return hasIntraSiteHistory(tab) && !!(tab.iframeEl && tab.iframeEl.contentWindow);
+  }
   // A failed navigation leaves tab.url pointing at the broken address while
   // navHistory still holds the last good page; that counts as somewhere to go.
   const cur = tab.navHistory && tab.navHistory[tab.navIndex];
