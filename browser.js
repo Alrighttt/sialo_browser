@@ -23,7 +23,7 @@ import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
-import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl } from './sia-site.js';
+import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl, setEmbedRecorder } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
 import { classifyObjectInput, isSiteAddress } from './object-input.js';
@@ -551,7 +551,10 @@ function historyIndexer(item) {
 function historyActions(item) {
   const url = item.originalUrl || item.displayUrl || '';
   const parsed = classifyObjectInput(url);
-  const isSite = item.fileType === 'sialo' || parsed.kind === 'site';
+  // An embed's address has a site's shape — seed plus a path — but names one
+  // object, so it must not be judged "many files" the way a site is.
+  const isEmbed = item.fileType === 'embed';
+  const isSite = !isEmbed && (item.fileType === 'sialo' || parsed.kind === 'site');
 
   let canSave = true;
   let saveTitle = 'Save this file to disk';
@@ -561,6 +564,11 @@ function historyActions(item) {
     canSave = false; saveTitle = 'Nothing to save: this was an external tab, not Sia content';
   } else if (isSite) {
     canSave = false; saveTitle = 'A site is many files — open it and save them individually';
+  } else if (isEmbed) {
+    // Saving resolves through the Download panel, which reads an address as an
+    // object id or a published URL and knows neither form here.
+    canSave = false;
+    saveTitle = 'Open the page it is embedded in and use Save there';
   } else if (parsed.kind === 'invalid') {
     canSave = false; saveTitle = 'Nothing to save: this entry does not name a Sia object';
   }
@@ -578,6 +586,34 @@ function historyActions(item) {
 const HISTORY_STORAGE_KEY = 'sia-browser-history';
 const browserHistory = [];
 let currentHistoryIndex = -1;
+
+/**
+ * Record an embed the reader has just been served.
+ *
+ * Not a navigation — it loaded inside a page they were already on — so this
+ * appends without moving `currentHistoryIndex`. Moving it would make Back
+ * step to a video the reader never navigated to.
+ *
+ * It belongs in history because that is where keeping something lives: a
+ * reader who watches a video from someone else's key has no other route to
+ * pinning it onto their own account, and the key can be revoked under them.
+ */
+setEmbedRecorder(({ url, objectId }) => {
+  if (!url) return;
+  const already = browserHistory.some((h) => (h.originalUrl || h.displayUrl) === url);
+  if (already) return;
+  browserHistory.push({
+    displayUrl: url,
+    blobUrl: null,
+    title: objectId ? `${objectId.slice(0, 8)}…${objectId.slice(-8)}` : url,
+    external: false,
+    originalUrl: url,
+    fileType: 'embed',
+    indexerUrl: getUrl(),
+  });
+  updateBrowserUI();
+  saveHistoryToStorage();
+});
 
 // Load history from localStorage on page load
 function loadHistoryFromStorage() {

@@ -44,7 +44,7 @@ import {
 } from './tabs.js';
 import { encodeMetadata, filenameForDisplay, stripUploadUuid } from './object-metadata.js';
 import { downloadOptions } from './transfer-options.js';
-import { isSiteAddress } from './object-input.js';
+import { isSiteAddress, objectIdInUrl } from './object-input.js';
 import { openSharingLink } from './shared-ui.js';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
 
@@ -948,6 +948,26 @@ async function resolveStreamSource(siaUrl, siteId) {
   return { sdk, obj };
 }
 
+/**
+ * Told when an embed's bytes are served, so the app can record it.
+ *
+ * A registration rather than an import because browser.js already imports this
+ * module; calling back the other way would close the cycle.
+ */
+let embedRecorder = null;
+export function setEmbedRecorder(fn) { embedRecorder = fn; }
+
+/** Embeds already reported, so seeking a video does not report it repeatedly. */
+const reportedEmbeds = new Set();
+
+function noteEmbedServed(siaUrl, objectId) {
+  if (!embedRecorder || !siaUrl) return;
+  if (reportedEmbeds.has(siaUrl)) return;
+  reportedEmbeds.add(siaUrl);
+  // Never let bookkeeping break the stream it is describing.
+  try { embedRecorder({ url: siaUrl, objectId: objectId || '' }); } catch (_) {}
+}
+
 async function streamExternalObject(source, id, siaUrl, offset, length, siteId) {
   if (typeof siaUrl !== 'string') throw new Error('sia-ext-request missing url');
 
@@ -966,6 +986,9 @@ async function streamExternalObject(source, id, siaUrl, offset, length, siteId) 
     withSdkRetry(async () => {
       const { sdk, obj } = await resolveStreamSource(siaUrl, siteId);
       const totalSize = Number(obj.size());
+      let objectId = '';
+      try { objectId = obj.id ? String(obj.id()) : ''; } catch (_) { /* freed handle */ }
+      noteEmbedServed(siaUrl, objectId);
       const stream = sdk.download(obj, opts);
       const reader = stream.getReader();
       let firstChunk = null;
@@ -1630,6 +1653,37 @@ export async function siteObjectAt(siteId, path) {
  *
  * Shares `getSite`'s cache, so asking right after viewing a site costs nothing.
  */
+/**
+ * The site entry naming `objectId`, or null.
+ *
+ * An embed addresses media as `sialo://<seed>/<objectId>`, so the same address
+ * has to resolve for pinning as it does for streaming — otherwise a reader can
+ * watch something and then be told there is nothing there to keep.
+ *
+ * Looks past the path map, which is keyed by filename and therefore cannot
+ * hold an object the key grants but never named. Those are exactly the objects
+ * an id addresses, so finding them here is the point rather than an edge case.
+ */
+export async function siteEntryById(siteId, objectId) {
+  const want = String(objectId || '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(want)) return null;
+  const site = await getSite(String(siteId).toLowerCase());
+
+  for (const [path, ref] of Object.entries(site.files)) {
+    let id = null;
+    if (typeof ref === 'string') id = objectIdInUrl(ref);
+    else { try { id = ref && ref.id ? ref.id() : null; } catch (_) { id = null; } }
+    if (id && String(id).toLowerCase() === want) return { path, ref };
+  }
+
+  if (site.kind === 'sharing-key') {
+    const held = keyObjectById(site, want);
+    // Named by its id, because it has no path to be named by.
+    if (held) return { path: want, ref: held };
+  }
+  return null;
+}
+
 export async function siteEntries(siteId) {
   const site = await getSite(siteId);
   return {

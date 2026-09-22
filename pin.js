@@ -21,7 +21,7 @@
 // stays in the app's own chrome where site content cannot reach it.
 
 import { connectSdk } from './config.js';
-import { siteEntries, parseSiteUrl } from './sia-site.js';
+import { siteEntries, siteEntryById, parseSiteUrl } from './sia-site.js';
 import { isSiteAddress, objectIdInUrl } from './object-input.js';
 import { filenameForDisplay, stripUploadUuid } from './object-metadata.js';
 import { explainSdkError } from './utils.js';
@@ -69,9 +69,18 @@ export async function resolvePinTargets(address) {
   const path = String(parsed.path || '').replace(/^\/+/, '');
   if (!path) return entries;
   const one = entries.find((e) => e.path === path);
+  if (one) return [one];
+  // An embed names its media by object id rather than by path, so the address
+  // a reader just watched has to resolve here too. Tried after the exact path,
+  // so a file genuinely named in 64 hex characters still wins, and it reaches
+  // objects the key grants without ever naming — which are absent from the
+  // path map, and so from `entries`, entirely.
+  if (/^[0-9a-f]{64}$/i.test(path)) {
+    const byId = await siteEntryById(parsed.siteId, path);
+    if (byId) return [byId];
+  }
   // A path that matches nothing is not an error worth throwing over: the
   // address bar may simply be showing a directory inside the site.
-  if (one) return [one];
   const under = entries.filter((e) => e.path.startsWith(path.replace(/\/*$/, '/')));
   return under.length ? under : null;
 }
