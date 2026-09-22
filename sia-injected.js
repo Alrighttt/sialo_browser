@@ -11,11 +11,33 @@
   var VPC = self.VideoPipelineCore;
 
   // --- 1. Link navigation ---
+  // Both schemes address Sia content and both have to be intercepted here.
+  // `sialo://` is not a prefix of `sia://`, so an indexOf check for one never
+  // matches the other — which is how sharing-key embeds went unseen entirely
+  // on this path while working inside a site.
+  function isSiaAddr(u) {
+    return !!u && (u.indexOf('sia://') === 0 || u.indexOf('sialo://') === 0);
+  }
+  /** A key-backed address, which the streaming worker cannot authenticate. */
+  function isKeyAddr(u) { return !!u && u.indexOf('sialo://') === 0; }
+
+  /**
+   * Whether a video has to be fetched whole rather than streamed.
+   *
+   * Only when the browser cannot decode incrementally. A key-backed address is
+   * streamed like any other: the worker builds a reader from the seed, which
+   * the parent resolves and passes down, so the credential makes no difference
+   * once the object is in hand.
+   */
+  function needsResourceFallback(u) {
+    return isSiaAddr(u) && typeof VideoDecoder === 'undefined';
+  }
+
   document.addEventListener('click', function(e) {
     var a = e.target.closest('a');
     if (!a) return;
     var href = a.getAttribute('href');
-    if (href && href.indexOf('sia://') === 0) {
+    if (isSiaAddr(href)) {
       e.preventDefault();
       window.parent.postMessage({ type: 'SIA_NAVIGATE', url: href }, '*');
     }
@@ -27,7 +49,7 @@
 
   function requestResource(el, attr) {
     var url = el.getAttribute(attr);
-    if (!url || url.indexOf('sia://') !== 0) return;
+    if (!isSiaAddr(url)) return;
     var id = 'r' + (++_reqId);
     _pending[id] = { el: el, attr: attr };
     if (el.tagName === 'IMG') {
@@ -67,8 +89,8 @@
 
   function requestVideoStream(videoEl) {
     var url = videoEl.getAttribute('src');
-    if (!url || url.indexOf('sia://') !== 0) return;
-    if (typeof VideoDecoder === 'undefined') {
+    if (!isSiaAddr(url)) return;
+    if (needsResourceFallback(url)) {
       requestResource(videoEl, 'src');
       return;
     }
@@ -384,27 +406,24 @@
   // --- 5. Scan + MutationObserver ---
   function scan(root) {
     var selectors = [
-      'img[src^="sia://"]',
-      'video[src^="sia://"]',
-      'video[poster^="sia://"]',
-      'audio[src^="sia://"]',
-      'source[src^="sia://"]',
-      'link[href^="sia://"]'
+      'img[src^="sia://"]', 'img[src^="sialo://"]',
+      'video[src^="sia://"]', 'video[src^="sialo://"]',
+      'video[poster^="sia://"]', 'video[poster^="sialo://"]',
+      'audio[src^="sia://"]', 'audio[src^="sialo://"]',
+      'source[src^="sia://"]', 'source[src^="sialo://"]',
+      'link[href^="sia://"]', 'link[href^="sialo://"]'
     ];
     var els = root.querySelectorAll(selectors.join(','));
     for (var i = 0; i < els.length; i++) {
       var el = els[i];
       // Video elements: use streaming path
-      if ((el.tagName === 'VIDEO') && el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0) {
+      if (el.tagName === 'VIDEO' && isSiaAddr(el.getAttribute('src'))) {
         requestVideoStream(el);
         continue;
       }
-      if (el.hasAttribute('src') && el.getAttribute('src').indexOf('sia://') === 0)
-        requestResource(el, 'src');
-      if (el.hasAttribute('href') && el.getAttribute('href').indexOf('sia://') === 0)
-        requestResource(el, 'href');
-      if (el.hasAttribute('poster') && el.getAttribute('poster').indexOf('sia://') === 0)
-        requestResource(el, 'poster');
+      if (isSiaAddr(el.getAttribute('src'))) requestResource(el, 'src');
+      if (isSiaAddr(el.getAttribute('href'))) requestResource(el, 'href');
+      if (isSiaAddr(el.getAttribute('poster'))) requestResource(el, 'poster');
     }
   }
 

@@ -2,6 +2,7 @@
 // sia:// link interception, iframe video streaming, and content auto-detection.
 
 import { _dbg, _dbgWarn, _esc, formatSize, explainSdkError } from './utils.js';
+import { downloadOptions } from './transfer-options.js';
 import {
   connectSdk, resolveObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
   getUrl, getKeyHex, getLogLevel,
@@ -23,7 +24,8 @@ import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4
 import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
-import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl, setEmbedRecorder } from './sia-site.js';
+import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl, setEmbedRecorder,
+  resolveEmbedSource, keyStreamCredentials } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
 import { classifyObjectInput, isSiteAddress } from './object-input.js';
@@ -234,6 +236,39 @@ function handleSiaResourceRequest(url, requestId, sourceTab) {
   }
 }
 
+/**
+ * Above this, a standalone page will not buffer an embed into memory.
+ *
+ * This route has no service worker and so no Range support: the only way to
+ * satisfy the element is to hold the whole object as a blob. That is fine for
+ * an image and ruinous for a film, so the size is checked before any bytes are
+ * fetched and the reader is told where it does work instead.
+ */
+const EMBED_BLOB_MAX_BYTES = 64 * 1024 * 1024;
+
+async function downloadEmbedToBlob(url) {
+  const { sdk, obj } = await resolveEmbedSource(url, null);
+  const size = Number(obj.size()) || 0;
+  if (size > EMBED_BLOB_MAX_BYTES) {
+    throw new Error(
+      `This embed is ${formatSize(size)}, too large to load into a standalone page. `
+      + 'Open the site it belongs to — there it streams, and seeking works.',
+    );
+  }
+  const reader = sdk.download(obj, downloadOptions(getMaxDownloads())).getReader();
+  const parts = [];
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) parts.push(value instanceof Uint8Array ? value : new Uint8Array(value));
+    }
+  } finally {
+    try { reader.releaseLock(); } catch (_) {}
+  }
+  return new Blob(parts);
+}
+
 async function _processSiaResourceQueue() {
   _siaResourceProcessing = true;
   while (_siaResourceQueue.length > 0) {
@@ -243,10 +278,19 @@ async function _processSiaResourceQueue() {
     if (!iframe || !iframe.contentWindow) continue;
 
     try {
-      const dummyStatus = document.createElement('span');
-      const dummyProgress = document.createElement('progress');
-      const result = await parallelDownload(url, dummyStatus, dummyProgress, 'Resource');
-      const blob = result.blob;
+      let blob;
+      if (/^sialo:\/\//i.test(url)) {
+        // A sharing-key address resolves through the key itself, so it works
+        // for a reader with no account — which is the whole reason a page
+        // writes one. `parallelDownload` below cannot: it goes through
+        // connectSdk and understands only object ids and published URLs.
+        blob = await downloadEmbedToBlob(url);
+      } else {
+        const dummyStatus = document.createElement('span');
+        const dummyProgress = document.createElement('progress');
+        const result = await parallelDownload(url, dummyStatus, dummyProgress, 'Resource');
+        blob = result.blob;
+      }
 
       const detected = await fileTypeFromBlob(blob);
       const mimeType = detected ? detected.mime : 'application/octet-stream';
@@ -421,6 +465,19 @@ async function handleSiaStreamRequest(url, sessionId, sourceTab) {
 
   mp4box.onError = (e) => console.error('[iframe-stream] mp4box error:', e);
 
+  // A key-backed address is read by the worker through the key itself. The
+  // seed and indexer are resolved here rather than in the worker, because the
+  // worker cannot resolve a path and an SDK does not survive postMessage.
+  let keyCreds = null;
+  if (/^sialo:\/\//i.test(url)) {
+    try {
+      keyCreds = await keyStreamCredentials(url);
+    } catch (e) {
+      post({ type: 'SIA_STREAM_ERROR', sessionId, error: (e && e.message) || String(e) });
+      return;
+    }
+  }
+
   // Download via worker (separate WASM instance — no tokio re-entrancy)
   const worker = new Worker('./worker.js', { type: 'module' });
   const streamPromise = new Promise((resolve, reject) => {
@@ -449,11 +506,13 @@ async function handleSiaStreamRequest(url, sessionId, sourceTab) {
 
   worker.postMessage({
     type: 'start',
-    indexerUrl: getUrl(),
+    indexerUrl: keyCreds ? keyCreds.indexer : getUrl(),
     keyHex: getKeyHex(),
     maxDownloads: getMaxDownloads(),
     objectUrl: url,
     logLevel: getLogLevel(),
+    seed: keyCreds ? keyCreds.seed : null,
+    objectId: keyCreds ? keyCreds.objectId : null,
   });
 
   tab.iframeStreamAbort = {

@@ -7,7 +7,7 @@
 // - 'stream-demux': Download + MP4 demux — posts parsed video/audio samples
 //   (moves mp4box.appendBuffer off the main thread to prevent render stalls)
 
-import init, { AppKey, Builder, setLogger } from './pkg/sia_storage_wasm.js';
+import init, { AppKey, Builder, SharedSdk, setLogger } from './pkg/sia_storage_wasm.js';
 import { createFile as createMP4Box, DataStream, Endianness } from './vendor/mp4box.bundle.js';
 import { fromHex } from './worker-utils.js';
 import { downloadOptions } from './transfer-options.js';
@@ -32,6 +32,34 @@ function audioCodecScore(codec) {
   return 50;
 }
 
+/**
+ * The SDK and object this job should read, from either kind of credential.
+ *
+ * A sharing key is not a lesser case: `SharedSdk` downloads with the same
+ * options as an account SDK, so once the object is in hand everything below is
+ * identical. What it cannot do is resolve a path, so the caller resolves that
+ * and passes an object id.
+ *
+ * The seed reaches this worker from the main thread, which took it from an
+ * address it had already resolved — not from anything the sandboxed page said
+ * directly.
+ */
+async function openSource({ seed, indexerUrl, keyHex, objectUrl, objectId }) {
+  if (seed) {
+    const sdk = await SharedSdk.connect(indexerUrl, seed);
+    if (!sdk) throw new Error('sharing key was not accepted by ' + indexerUrl);
+    return { sdk, obj: await sdk.object(objectId) };
+  }
+  const appKey = new AppKey(((x) => x.length === 64 ? x.slice(0, 32) : x)(fromHex(keyHex)));
+  const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
+  const sdk = await builder.connected(appKey);
+  if (!sdk) throw new Error('SDK connection failed — app key not recognized');
+  const obj = objectUrl.startsWith('sia://')
+    ? await sdk.objectFromShareUrl(objectUrl)
+    : await sdk.object(objectUrl);
+  return { sdk, obj };
+}
+
 self.onmessage = async (e) => {
   const { type } = e.data;
 
@@ -42,6 +70,8 @@ self.onmessage = async (e) => {
       maxDownloads,
       objectUrl,
       logLevel,
+      seed,
+      objectId,
     } = e.data;
 
     try {
@@ -50,20 +80,7 @@ self.onmessage = async (e) => {
       _debugEnabled = !!logLevel;
       if (logLevel) setLogger((msg) => console.log(msg), logLevel);
 
-      // Build SDK
-      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
-      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
-
-      const sdk = await builder.connected(appKey);
-      if (!sdk) {
-        self.postMessage({ type: 'error', message: 'SDK connection failed — app key not recognized' });
-        return;
-      }
-
-      // Get object
-      const obj = objectUrl.startsWith('sia://')
-        ? await sdk.objectFromShareUrl(objectUrl)
-        : await sdk.object(objectUrl);
+      const { sdk, obj } = await openSource({ seed, indexerUrl, keyHex, objectUrl, objectId });
 
       // Stream download — post chunks back to main thread
       let byteOffset = 0;
@@ -96,7 +113,7 @@ self.onmessage = async (e) => {
   // Keeps mp4box.appendBuffer() off the main thread so the render loop
   // (rAF + VideoDecoder) is never blocked by MP4 parsing at slab boundaries.
   if (type === 'stream-demux') {
-    const { indexerUrl, keyHex, maxDownloads, objectUrl, logLevel } = e.data;
+    const { indexerUrl, keyHex, maxDownloads, objectUrl, logLevel, seed, objectId } = e.data;
     _dbg('[worker-demux] Starting stream-demux:', objectUrl);
 
     try {
@@ -106,19 +123,8 @@ self.onmessage = async (e) => {
       if (logLevel) setLogger((msg) => console.log(msg), logLevel);
       _dbg('[worker-demux] WASM initialized. Connecting SDK...');
 
-      const appKey = new AppKey(((s) => s.length === 64 ? s.slice(0, 32) : s)(fromHex(keyHex)));
-      const builder = new Builder(indexerUrl, { appId: 'c0000000000000000000000000000000000000000000000000000000000000de', name: 'Sialo', description: 'Sialo Browser worker', serviceUrl: 'https://sialo.io' });
-
-      const sdk = await builder.connected(appKey);
-      if (!sdk) {
-        self.postMessage({ type: 'stream-error', message: 'SDK connection failed — app key not recognized' });
-        return;
-      }
-      _dbg('[worker-demux] SDK connected. Getting object...');
-
-      const obj = objectUrl.startsWith('sia://')
-        ? await sdk.objectFromShareUrl(objectUrl)
-        : await sdk.object(objectUrl);
+      const { sdk, obj } = await openSource({ seed, indexerUrl, keyHex, objectUrl, objectId });
+      _dbg('[worker-demux] SDK connected, object ready.');
 
       const totalSize = obj.size();
       _dbg('[worker-demux] Object ready, size:', totalSize, 'Starting download + demux...');

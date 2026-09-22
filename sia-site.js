@@ -862,6 +862,46 @@ function keyObjectById(site, id) {
   return null;
 }
 
+/**
+ * The SDK and object behind an embed address, for callers outside the site
+ * loader.
+ *
+ * A page opened as a standalone HTML object renders from a blob URL with
+ * `sia-injected.js` inlined, not through the sandbox service worker, so it
+ * never reaches `/_sia-ext/`. Its embeds still have to resolve, and a
+ * `sialo://<seed>/…` address carries everything needed: pass `siteId` as null
+ * and the seed in the address supplies the reader.
+ */
+/**
+ * What a streaming worker needs to read a key-backed embed itself.
+ *
+ * The worker cannot be handed an SDK or an object — neither survives
+ * `postMessage` — so it gets the three things it needs to rebuild them: the
+ * seed, the indexer that answered for it, and the object's id. Resolving the
+ * address here rather than there also means the worker never has to
+ * understand a path, only an id.
+ *
+ * Returns null for anything that is not a key-backed address, which the
+ * caller streams through the account as before.
+ */
+export async function keyStreamCredentials(siaUrl) {
+  const asSite = parseSiteUrl(String(siaUrl || ''));
+  if (!asSite || !/^[0-9a-f]{64}$/i.test(asSite.siteId)) return null;
+  const seed = asSite.siteId.toLowerCase();
+  let site;
+  try { site = await getSite(seed); } catch (_) { return null; }
+  if (!site || site.kind !== 'sharing-key') return null;
+  const { obj } = await resolveStreamSource(siaUrl, null);
+  let objectId = '';
+  try { objectId = obj && obj.id ? String(obj.id()) : ''; } catch (_) { return null; }
+  if (!objectId) return null;
+  return { seed, indexer: site.indexer || getUrl(), objectId };
+}
+
+export function resolveEmbedSource(siaUrl, siteId) {
+  return resolveStreamSource(siaUrl, siteId || null);
+}
+
 async function resolveStreamSource(siaUrl, siteId) {
   /** Object ID that a key-backed site referenced but does not actually hold. */
   let unattached = null;
@@ -1537,7 +1577,7 @@ async function keySite(seed) {
   // on production has to open for a reader whose settings point at staging —
   // and for a reader with no settings at all, which is the common case for
   // someone following a link they were sent.
-  const { sdk } = await connectSharedSdk(seed);
+  const { sdk, indexer } = await connectSharedSdk(seed);
 
   const objects = await listSharedObjects(sdk);
 
@@ -1555,6 +1595,10 @@ async function keySite(seed) {
 
   return {
     kind: 'sharing-key',
+    // Which indexer answered for this key. A second SDK built elsewhere — the
+    // streaming worker, in particular — would otherwise have to probe every
+    // candidate again to find out.
+    indexer,
     files,
     // Every object the key grants, including those `files` dropped for having
     // no filename metadata. A path map cannot represent those at all, but an
