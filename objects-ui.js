@@ -203,6 +203,42 @@ export function initObjectsUI() {
   // latest event per object ID (objectEvents returns one event per change;
   // we keep the newest for each id). `sortState` and `pageIndex` drive
   // what slice is rendered into the DOM.
+  /**
+   * Let go of an object handle.
+   *
+   * These are WASM-side allocations holding the object's slabs, so a listing of
+   * a large account is holding real memory. wasm-bindgen registers them with a
+   * FinalizationRegistry, so nothing is leaked outright, but collection happens
+   * whenever the GC feels like it — releasing explicitly keeps the footprint to
+   * the listing on screen. Already-freed handles throw, which is not worth
+   * caring about here.
+   */
+  function releaseObject(obj) {
+    if (!obj || typeof obj.free !== 'function') return;
+    try { obj.free(); } catch (_) { /* already gone */ }
+  }
+
+  /**
+   * Run `fn` over `items` with at most `limit` in flight.
+   *
+   * Each worker takes the next index rather than the list being sliced up
+   * front, so one slow item does not hold back a whole share of the work.
+   */
+  async function runPool(items, limit, fn) {
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.max(1, Math.min(limit, items.length)) },
+      async () => {
+        for (;;) {
+          const i = next++;
+          if (i >= items.length) return;
+          await fn(items[i], i);
+        }
+      },
+    );
+    await Promise.all(workers);
+  }
+
   const allObjects = []; // [{ id, updatedAt, deleted, size, uploadUuid, ... }]
   const selectedIds = new Set(); // checkbox state survives page switches
   const sortState = { column: 'updated', asc: false };
@@ -344,11 +380,27 @@ async function indexSharingKeyLabels(sdk) {
       const sdk = await connectSdk(status);
       if (!sdk) return;
 
-      const PAGE = 500; // indexer hard-caps each call at 500
+      // Every event arrives with its object fully hydrated — each slab, each
+      // sector root — so a page's size scales with how much data the account
+      // holds, not how many objects it has. At a terabyte, 500 objects is a
+      // body large enough to die partway through, which surfaces as a decode
+      // error on a request that already returned 200. Start smaller, and back
+      // off further if a page is still refused.
+      const PAGE_MAX = 100;
+      const PAGE_MIN = 5;
+      let pageSize = PAGE_MAX;
       const latest = new Map(); // id → newest event
       let cursor = null;
       for (;;) {
-        const page = await sdk.objectEvents(cursor, PAGE);
+        let page;
+        try {
+          page = await sdk.objectEvents(cursor, pageSize);
+        } catch (e) {
+          if (pageSize <= PAGE_MIN) throw e;
+          pageSize = Math.max(PAGE_MIN, Math.floor(pageSize / 4));
+          _dbgWarn(`[objects] page refused; retrying with limit=${pageSize}`);
+          continue;
+        }
         for (const ev of page) {
           const prev = latest.get(ev.id);
           const ms = new Date(ev.updatedAt).getTime() || 0;
@@ -395,16 +447,32 @@ async function indexSharingKeyLabels(sdk) {
               uploadUuid,
               isManifest,
               ms,
+              // The handle this event already carries. Keeping it is what lets
+              // an action on the row skip re-fetching the object, which would
+              // pull every slab back down a second time.
+              object: ev.object || null,
             });
+            // Superseded by the row just stored.
+            if (prev) releaseObject(prev.object);
+          } else {
+            // An older event for an object already seen. There is one of these
+            // per edit the object has had, and each holds its own copy of the
+            // slabs.
+            releaseObject(ev.object);
           }
         }
         status.textContent = `Loading objects… ${latest.size} so far`;
         renderLoadingState(latest.size);
-        if (page.length < PAGE) break;
+        if (page.length < pageSize) break;
         const last = page[page.length - 1];
         cursor = { id: last.id, after: last.updatedAt };
       }
 
+      // The previous listing's handles are dead the moment this one replaces
+      // them. A FinalizationRegistry would get to them eventually; releasing
+      // here keeps WASM memory bounded to one listing rather than however many
+      // refreshes happen before a collection runs.
+      for (const o of allObjects) releaseObject(o.object);
       allObjects.length = 0;
       for (const o of latest.values()) allObjects.push(o);
 
@@ -1126,19 +1194,30 @@ async function indexSharingKeyLabels(sdk) {
     if (!row) return;
     let done = 0;
     let failed = 0;
-    for (const o of chosen) {
-      done++;
-      progress(`Attaching ${done} / ${chosen.length}…`);
+    // Attaching is one small signed request per object: the indexer takes a
+    // single object per call, so there is no batch to ask for. What it is not
+    // is slow work — each one re-seals two keys and posts a few hundred bytes —
+    // so the wall time was almost entirely waiting, one round trip at a time.
+    // Several in flight turns that into roughly the latency of the slowest few.
+    const ATTACH_CONCURRENCY = 8;
+    await runPool(chosen, ATTACH_CONCURRENCY, async (o) => {
       try {
-        await sdk.shareObject(row.key, await sdk.object(o.id));
+        // The listing already fetched this object, and attaching does not need
+        // its slabs — only its id, data key and metadata. Re-fetching would
+        // pull every slab back down for nothing, which on a large account is
+        // the whole cost of this operation.
+        const obj = o.object || await sdk.object(o.id);
+        await sdk.shareObject(row.key, obj);
       } catch (e) {
         failed++;
         console.warn('shareObject failed for', o.id, e);
+      } finally {
+        done++;
+        progress(`Attaching ${done} / ${chosen.length}…`);
       }
-    }
-    // Sequentially, and reporting failures rather than throwing on the first:
-    // one object that cannot be attached must not hide that the other forty
-    // nine were.
+    });
+    // Failures are reported rather than thrown on the first: one object that
+    // cannot be attached must not hide that the other forty nine were.
     status.innerHTML = failed === 0
       ? `<span class="pass">✓ Attached ${chosen.length} object${chosen.length === 1 ? '' : 's'} to ${_esc(row.description || 'the key')}.</span>`
       : `<span class="fail">Attached ${chosen.length - failed} / ${chosen.length}; ${failed} failed.</span>`;
