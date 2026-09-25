@@ -25,7 +25,7 @@ import { marked } from './vendor/marked.esm.js';
 import DOMPurify from './vendor/purify.es.mjs';
 import { isAccountError, showAccountPrompt } from './page-gate.js';
 import { loadSite as loadSiaSiteIntoIframe, HOSTED_ORIGIN as SIA_HOSTED_ORIGIN, cancelStreamsForSource, siteObjectAt, parseSiteUrl, setEmbedRecorder,
-  resolveEmbedSource, keyStreamCredentials } from './sia-site.js';
+  resolveEmbedSource, keyStreamCredentials, landingPathFor } from './sia-site.js';
 import { filenameForSave, stripUploadUuid, sanitizeFilename } from './object-metadata.js';
 import { resolvePinTargets, pinTargets, describePinResult, looksPinnable } from './pin.js';
 import { classifyObjectInput, isSiteAddress } from './object-input.js';
@@ -1030,6 +1030,18 @@ async function navigateToHistory(index) {
 // Re-download a history item (when blob URL is missing after refresh)
 async function redownloadHistoryItem(item, index) {
   const tab = getOrCreateActiveBrowserTab();
+  // The tab is showing this address whichever branch below serves it, and the
+  // toolbar reads `tab.url` to decide whether Save and Pin apply at all.
+  // `navigateToHistory` sets this, but only after the branch that returns here
+  // — and an item with no cached blob always returns here, which is every
+  // streamed video and everything at all after a reload, since blob URLs are
+  // deliberately not persisted. Left unset, re-opening a video from History
+  // offered neither button for an object that was perfectly pinnable.
+  tab.url = item.originalUrl || item.displayUrl || '';
+  tab.label = item.title || item.displayUrl || tab.label;
+  setLastBrowserUrl(tab.url);
+  renderTabBar();
+  updateNavButtons();
   const { status, progress } = tabStatusProxy(tab);
   const iframe = tab.iframeEl;
   const videoContainer = document.getElementById('video-container');
@@ -1323,6 +1335,10 @@ async function loadContentWithAutoDetect() {
       clearTimeout(tab.iframeBaseTimer);
       tab.iframeBaseDepth = null;
       tab.iframeBaseSettled = false;
+      // What this load asked for. The announce for it counts as landing
+      // however long it takes to arrive, which on a large sharing key is
+      // longer than any debounce worth having.
+      tab.iframeLandingPath = landingPathFor(subpath);
       loadSiaSiteIntoIframe(iframe, parsed.resolvable, subpath);
       const shortId = (parsed.objectId || parsed.resolvable).slice(0, 12);
       tab.label = 'Sia site: ' + shortId + '…';

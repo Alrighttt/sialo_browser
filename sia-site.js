@@ -283,22 +283,7 @@ async function onMessage(e) {
       // parent's previous URL and exits sialo.io. We push on new
       // forward navigations and pop when we recognise a back-style
       // announce (current path equals the one beneath top of stack).
-      if (!Array.isArray(tab.iframePathStack)) tab.iframePathStack = [];
-      const stack = tab.iframePathStack;
-      const top = stack[stack.length - 1];
-      const prev = stack[stack.length - 2];
-      if (subpath === prev) stack.pop();           // backward nav
-      else if (subpath !== top) stack.push(subpath); // new forward nav
-      // Freeze the depth the reader arrived at, once the landing burst goes
-      // quiet. Landing announces come in a rapid group — a redirect, a
-      // bootstrap rewriting the path — and none of them are navigations the
-      // reader made. A click arrives long after the group has settled, so a
-      // debounce separates the two without having to ask the page.
-      if (!tab.iframeBaseSettled) {
-        tab.iframeBaseDepth = stack.length;
-        clearTimeout(tab.iframeBaseTimer);
-        tab.iframeBaseTimer = setTimeout(() => { tab.iframeBaseSettled = true; }, 1200);
-      }
+      notePageAnnounce(tab, subpath);
       return;
     }
 
@@ -513,6 +498,71 @@ function findIframeForSource(source) {
     try { if (el.contentWindow === source) return el; } catch (_) {}
   }
   return null;
+}
+
+/** How long a quiet gap has to be before the landing burst counts as over. */
+const LANDING_QUIET_MS = 1200;
+
+/**
+ * The document a load asked for, in the form an announce reports it.
+ *
+ * Recorded on the tab so the announce for it can be recognised as part of
+ * landing however long it takes to arrive.
+ */
+export function landingPathFor(subpath) {
+  const bare = String(subpath || '').split(/[?#]/)[0].replace(/^\/+/, '');
+  return '/' + bare;
+}
+
+/** Whether an announce is the sandbox bootstrap rather than site content. */
+function isBootstrapPath(path) {
+  return /\/_sia-bootstrap\.html$/.test(path);
+}
+
+/**
+ * Record one page announce from a site's iframe.
+ *
+ * Two things are tracked: the intra-site path stack, which tells the in-app
+ * Back button whether delegating to the iframe's own history is safe, and the
+ * depth the reader arrived at, which is the floor that stack is measured
+ * against.
+ *
+ * Landing announces are the bootstrap and the document it replaces itself
+ * with; neither is a navigation the reader made. A quiet debounce used to be
+ * the only thing separating them from a click, on the assumption they arrive
+ * in a rapid burst. They do not always: the gap is however long the parent
+ * takes to serve the first document, which for a sharing key means connecting
+ * a reader and listing every object it grants. On a large key that exceeds the
+ * debounce, the landing document lands after the floor has frozen, and Back
+ * then believes the reader navigated somewhere they never went — so it
+ * delegates to an iframe with nowhere to go, and does nothing at all.
+ *
+ * So the requested path is recognised outright, whenever it arrives. It counts
+ * once and is then consumed: returning to it later by clicking really is a
+ * navigation, and must not reset the floor.
+ */
+function notePageAnnounce(tab, subpath) {
+  if (!Array.isArray(tab.iframePathStack)) tab.iframePathStack = [];
+  const stack = tab.iframePathStack;
+  const top = stack[stack.length - 1];
+  const prev = stack[stack.length - 2];
+  if (subpath === prev) stack.pop();           // backward nav
+  else if (subpath !== top) stack.push(subpath); // new forward nav
+
+  const path = String(subpath || '/').split(/[?#]/)[0];
+  const awaited = tab.iframeLandingPath;
+  const arrived = !!awaited && path === awaited;
+  const landing = arrived || isBootstrapPath(path);
+
+  if (!tab.iframeBaseSettled || landing) {
+    tab.iframeBaseDepth = stack.length;
+    clearTimeout(tab.iframeBaseTimer);
+    tab.iframeBaseTimer = setTimeout(
+      () => { tab.iframeBaseSettled = true; }, LANDING_QUIET_MS);
+  }
+  // Consumed, so a later click back to the same page is read as the
+  // navigation it is.
+  if (arrived) tab.iframeLandingPath = null;
 }
 
 async function resolveSitePath(siteId, path, mode) {
