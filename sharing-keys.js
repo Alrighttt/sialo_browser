@@ -539,8 +539,25 @@ export function initSharingKeysUI() {
   });
   // If the panel is already the visible one at startup (a restored tab), the
   // activation event has come and gone before this listener existed.
-  const panel = document.getElementById('panel-sharing');
-  if (panel && panel.style.display && panel.style.display !== 'none') refreshOnce();
+  const sharingPanelVisible = () => {
+    const el = document.getElementById('panel-sharing');
+    return !!(el && el.style.display && el.style.display !== 'none');
+  };
+  if (sharingPanelVisible()) refreshOnce();
+
+  // A sharing key belongs to one indexer account, so switching profile changes
+  // whose keys these are entirely. Leaving the previous account's list on
+  // screen would invite acting on it — revoking a key, copying a link — under
+  // an account that has never heard of it. Cleared either way, and reloaded
+  // only when someone is looking; otherwise the activation listener above
+  // picks it up on the way back in.
+  window.addEventListener('profile-updated', () => {
+    const el = listEl();
+    if (el) {
+      el.innerHTML = '<div style="padding:1rem; color:#888;">Press Refresh to load your sharing keys.</div>';
+    }
+    if (sharingPanelVisible()) refreshOnce();
+  });
 
   // Importing a seed lets the owner rebuild a link for a key created
   // elsewhere, such as one made with the sialo CLI on another machine.

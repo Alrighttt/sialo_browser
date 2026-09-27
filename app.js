@@ -537,9 +537,11 @@ function migrateToProfiles() {
 }
 
 const objectsProfileSelect = document.getElementById('objects-profile-select');
+const sharingProfileSelect = document.getElementById('sharing-profile-select');
 
 function renderProfileSelect(data) {
-  for (const sel of [profileSelect, objectsProfileSelect]) {
+  for (const sel of [profileSelect, objectsProfileSelect, sharingProfileSelect]) {
+    if (!sel) continue;
     sel.innerHTML = '';
     for (const name of Object.keys(data.profiles)) {
       const opt = document.createElement('option');
@@ -650,6 +652,9 @@ profileSelect.addEventListener('change', () => {
   activateProfile(profileData, profileSelect.value);
 });
 
+sharingProfileSelect.addEventListener('change', () => {
+  activateProfile(profileData, sharingProfileSelect.value);
+});
 objectsProfileSelect.addEventListener('change', () => {
   activateProfile(profileData, objectsProfileSelect.value);
 });

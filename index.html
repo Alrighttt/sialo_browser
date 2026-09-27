@@ -890,7 +890,14 @@
       <div id="panel-sharing" class="viewport-panel internal-page" data-panel="sharing">
         <div class="internal-page-content">
           <div class="panel-section">
-            <h2>Sharing Keys</h2>
+            <!-- Reuses My Objects' header layout: a title on the left and the
+                 indexer on the right. A sharing key belongs to one indexer
+                 account, so the list is meaningless without saying whose. -->
+            <div class="obj-head" style="align-items:center;">
+              <div class="obj-head-title"><h2>Sharing Keys</h2></div>
+              <select id="sharing-profile-select" class="obj-indexer"
+                title="Which indexer these keys come from"></select>
+            </div>
             <p style="color:#999; font-size:0.85rem; margin-bottom:1rem;">
               A sharing key is a credential you hand to someone else. It covers every object you attach
               to it, you can revoke it at any time, and downloads through it are billed to your account.
