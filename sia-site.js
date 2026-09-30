@@ -92,6 +92,11 @@ export const HOSTED_HOSTNAME = (() => {
 const manifestCache = new Map(); // manifestId → { "path": publishUrl, ... }
 const objectCache = new Map();   // publishUrl → Uint8Array
 const siteCache = new Map();     // siteId → site source (see getSite)
+// Seeds that have been confirmed to be sharing keys, recorded as soon as the
+// shared SDK connects rather than when the site finishes loading. A key with
+// very many objects spends most of its load in the object listing, and a
+// failure during that window must still be recognised as key-backed.
+const keyBackedSites = new Set();
 
 // Published URLs baked into site manifests should outlive the lifetime of
 // the site. 100 years from upload time is effectively "forever" from a user
@@ -159,12 +164,19 @@ export function initSiaSiteHandler() {
  * that is the only way to get this right for a message nobody thought to
  * special-case: the reader's situation is what decides it, not the wording of
  * whatever went wrong.
+ *
+ * `keyBackedSites` is consulted before the cache because the cache is only
+ * written once a site has fully loaded. A key granting hundreds of objects can
+ * spend the whole resolve window listing them, so asking the cache alone
+ * answers "no" for exactly the reader this exists to protect.
  */
 function isKeyBackedSource(source) {
   const iframe = findIframeForSource(source);
   const siteId = iframe && iframeSites.get(iframe);
   if (!siteId) return false;
-  const site = siteCache.get(siteId) || siteCache.get(String(siteId).toLowerCase());
+  const id = String(siteId).toLowerCase();
+  if (keyBackedSites.has(id)) return true;
+  const site = siteCache.get(siteId) || siteCache.get(id);
   return !!(site && site.kind === 'sharing-key');
 }
 
@@ -407,16 +419,33 @@ async function onMessage(e) {
           resolveSitePath(siteId, d.path, d.mode),
           new Promise((_, reject) => setTimeout(
             // Deliberately not "network unreachable": the common cause is a
-            // large file, not a broken network. resolveSitePath buffers the
-            // whole object before replying, so anything that cannot be
-            // fetched and held within this window fails here regardless of
-            // how healthy the hosts are. Naming the real constraint stops
-            // this being debugged as a connectivity problem.
-            () => reject(new Error(
-              `Timed out after 30s fetching ${d.path || '/'} — the whole file has `
-              + 'to be retrieved before it can be served, so large files fail here '
-              + 'even when the network is fine.',
-            )),
+            // large file or a large key, not a broken network. Naming the real
+            // constraint stops this being debugged as a connectivity problem.
+            //
+            // Which phase ran out decides the wording. resolveSitePath loads
+            // the site before it resolves anything within it, so an uncached
+            // site means the object listing is what did not finish, and
+            // blaming file size there sends the reader looking at the wrong
+            // thing entirely.
+            () => {
+              const listing = !siteCache.has(siteId)
+                && !siteCache.has(String(siteId).toLowerCase());
+              const err = new Error(listing
+                ? 'Timed out after 30s opening this site — every object the key '
+                  + 'grants is listed before any path can be served, so a key '
+                  + 'holding very many objects fails here even when the network '
+                  + 'is fine.'
+                : `Timed out after 30s fetching ${d.path || '/'} — the whole file `
+                  + 'has to be retrieved before it can be served, so large files '
+                  + 'fail here even when the network is fine.');
+              // Never an account problem: the same request made with an account
+              // would be exactly as slow. Without this the catch-all in
+              // isAccountError blames any failure on registration whenever the
+              // browser has no account, which is precisely the sharing-key
+              // reader it should never be shown to.
+              err.needsAccount = false;
+              reject(err);
+            },
             30000,
           )),
         ]);
@@ -1628,6 +1657,10 @@ async function keySite(seed) {
   // and for a reader with no settings at all, which is the common case for
   // someone following a link they were sent.
   const { sdk, indexer } = await connectSharedSdk(seed);
+  // The seed is a valid sharing key from here on, whatever the listing does.
+  // Recorded now rather than on return so a failure while listing is still
+  // attributed to a key holder, who can never be helped by registering.
+  keyBackedSites.add(seed);
 
   const objects = await listSharedObjects(sdk);
 
