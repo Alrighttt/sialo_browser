@@ -37,7 +37,7 @@ import { _dbg, _dbgWarn, _esc, formatSize } from './utils.js';
 import {
   connectSdk, resolveObject, invalidateSdk, getLastConnectError, getUrl, getKeyHex,
   connectSharedSdk,
-  listSharedObjects,
+  listSharedSummaries, fullObject, releaseObject,
 } from './config.js';
 import {
   findTabByIframeWindow, tabStatusProxy, getActiveTab, setChromeCollapsed,
@@ -1662,7 +1662,11 @@ async function keySite(seed) {
   // attributed to a key holder, who can never be helped by registering.
   keyBackedSites.add(seed);
 
-  const objects = await listSharedObjects(sdk);
+  // Summaries, not whole objects: a key of a few hundred large files is
+  // otherwise minutes of slab hydration before the first byte of the site can
+  // be served, and nothing here needs a slab. `read` fetches the one object it
+  // is actually asked for.
+  const objects = await listSharedSummaries(sdk);
 
   const files = {};
   for (const obj of objects) {
@@ -1694,8 +1698,18 @@ async function keySite(seed) {
     // holder of a sharing key has no account here, so anything serving their
     // files must go through this rather than connectSdk.
     sdk,
-    read: (obj) => withSdkRetry(() => readStreamFully(sdk.download(obj))),
-    sizeOf: (obj) => Number(obj.size()),
+    // The listing holds summaries, which carry no slabs, so the object being
+    // read is fetched here and only here — one object per request rather than
+    // every object in the key up front.
+    read: async (entry) => {
+      const obj = await fullObject(entry);
+      try {
+        return await withSdkRetry(() => readStreamFully(sdk.download(obj)));
+      } finally {
+        if (obj !== entry) releaseObject(obj);
+      }
+    },
+    sizeOf: (entry) => Number(entry.size()),
     // Relative, so a click is handled inside the site and an index.html can
     // link its neighbours with ordinary relative URLs. Large files are NOT
     // linked at /_sia-ext/ directly: that would make it a top-level
@@ -1753,7 +1767,10 @@ export async function siteObjectAt(siteId, path) {
   if (!hit) throw notInThisSite(wanted || '/');
 
   if (site.kind === 'sharing-key' && site.sdk) {
-    return { sdk: site.sdk, obj: hit.objectId, path: hit.key };
+    // The listing holds a summary, which describes the file but cannot be read
+    // from. Saving moves bytes, so resolve the real object before handing it
+    // over.
+    return { sdk: site.sdk, obj: await fullObject(hit.objectId), path: hit.key };
   }
 
   const sdk = await connectSdk({ set textContent(_) {}, set innerHTML(_) {} });

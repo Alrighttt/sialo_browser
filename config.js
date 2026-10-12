@@ -354,13 +354,25 @@ export async function connectSharedSdk(seed) {
  * hydrates every slab and sector of every object on the page — for objects of a
  * few gigabytes that is thousands of sector rows each — and a listing has no
  * use for any of it.
+ *
+ * A sharing key can now avoid the cost outright with `listSharedSummaries`.
+ * Nothing else can: neither `/objects` nor the owner's view of a key has an
+ * endpoint that leaves the slabs out, so both still pay it and still need the
+ * backoff below.
  */
 const LIST_PAGE_MAX = 100;
 const LIST_PAGE_MIN = 5;
 
-export async function listAllPages(fetchPage) {
+/**
+ * Starting page for a listing that carries no slabs. An order of magnitude
+ * larger because the per-object cost is a few hundred bytes rather than every
+ * sector row behind it, and a refusal still backs off the same way.
+ */
+const SUMMARY_PAGE_MAX = 500;
+
+export async function listAllPages(fetchPage, startPage = LIST_PAGE_MAX) {
   const out = [];
-  let page = LIST_PAGE_MAX;
+  let page = startPage;
   for (let offset = 0; ;) {
     let batch;
     try {
@@ -381,6 +393,78 @@ export async function listAllPages(fetchPage) {
 /** Every object a sharing key grants, as its holder. */
 export function listSharedObjects(sdk) {
   return listAllPages((offset, limit) => sdk.objects(offset, limit));
+}
+
+/**
+ * A listing entry built from a summary.
+ *
+ * Every field is read before the wasm handle is freed. The accessors trap once
+ * it is gone, and holding one live handle per object is most of what made a
+ * large key expensive to list at all.
+ *
+ * Shaped like a PinnedObject so display code does not have to know which
+ * listing produced it. It cannot be downloaded from — see `fullObject`.
+ */
+function summaryEntry(sdk, summary) {
+  const id = summary.id;
+  const size = summary.size;
+  const metadata = summary.metadata;
+  try { summary.free(); } catch (_) { /* already gone */ }
+  return {
+    id: () => id,
+    size: () => size,
+    metadata: () => metadata,
+    // Bound to the SharedSdk that listed it, so an entry can be turned back
+    // into a readable object by a caller holding only an account SDK — which
+    // is what pinning does.
+    full: () => sdk.object(id),
+  };
+}
+
+/**
+ * Every object a sharing key grants, without their slabs.
+ *
+ * This is the listing to reach for. A summary is the id, size, metadata and
+ * timestamps, so the indexer answers from the object rows alone instead of
+ * hydrating every sector behind them — which is the cost described above, and
+ * the reason a key of a few hundred large objects could not be listed at all.
+ */
+export async function listSharedSummaries(sdk) {
+  if (typeof sdk.objectSummaries !== 'function') {
+    // Worth saying out loud rather than silently taking the slow path: this
+    // means the wasm was built without the binding, not that the key is odd.
+    _dbgWarn('[listing] SDK has no objectSummaries; falling back to the full listing');
+    return listSharedObjects(sdk);
+  }
+  const summaries = await listAllPages(
+    (offset, limit) => sdk.objectSummaries(offset, limit),
+    SUMMARY_PAGE_MAX,
+  );
+  return summaries.map((s) => summaryEntry(sdk, s));
+}
+
+/**
+ * The downloadable object behind a listing entry.
+ *
+ * A summary carries no slabs, so anything that moves bytes has to fetch the
+ * real object first. A full handle passes straight through, so a caller does
+ * not have to know which kind of listing it came from. The result is a fresh
+ * wasm handle whenever a fetch happened, so free it when done.
+ */
+export function fullObject(entry) {
+  return entry && typeof entry.full === 'function'
+    ? entry.full()
+    : Promise.resolve(entry);
+}
+
+/**
+ * Drop a wasm handle, if it is one. Safe to call on a summary entry, on an
+ * already-freed handle, and on nothing at all, so a caller that does not know
+ * which it has can still clean up.
+ */
+export function releaseObject(obj) {
+  if (!obj || typeof obj.free !== 'function') return;
+  try { obj.free(); } catch (_) { /* already gone */ }
 }
 
 /** Every object attached to one of your own keys, as its owner. */

@@ -5,7 +5,7 @@ import { _dbg, _dbgWarn, _esc, formatSize, explainSdkError } from './utils.js';
 import { downloadOptions } from './transfer-options.js';
 import {
   connectSdk, resolveObject, webcodecStream, transmuxAndStream, getMaxDownloads, getDownloadWorkers,
-  getUrl, getKeyHex, getLogLevel,
+  getUrl, getKeyHex, getLogLevel, fullObject, releaseObject,
 } from './config.js';
 import {
   tabs, activeTabId, streamingTabId, loadContentInProgress,
@@ -255,7 +255,11 @@ async function downloadEmbedToBlob(url) {
       + 'Open the site it belongs to — there it streams, and seeking works.',
     );
   }
-  const reader = sdk.download(obj, downloadOptions(getMaxDownloads())).getReader();
+  // The size check above runs on the listing entry, which for a sharing key
+  // carries no slabs. Only a download that is actually going ahead pays for
+  // fetching them.
+  const full = await fullObject(obj);
+  const reader = sdk.download(full, downloadOptions(getMaxDownloads())).getReader();
   const parts = [];
   try {
     for (;;) {
@@ -265,6 +269,7 @@ async function downloadEmbedToBlob(url) {
     }
   } finally {
     try { reader.releaseLock(); } catch (_) {}
+    if (full !== obj) releaseObject(full);
   }
   return new Blob(parts);
 }

@@ -240,7 +240,7 @@ export class Builder {
 }
 if (Symbol.dispose) Builder.prototype[Symbol.dispose] = Builder.prototype.free;
 
-export class IntoUnderlyingByteSource {
+class IntoUnderlyingByteSource {
     static __wrap(ptr) {
         const obj = Object.create(IntoUnderlyingByteSource.prototype);
         obj.__wbg_ptr = ptr;
@@ -292,7 +292,7 @@ export class IntoUnderlyingByteSource {
 }
 if (Symbol.dispose) IntoUnderlyingByteSource.prototype[Symbol.dispose] = IntoUnderlyingByteSource.prototype.free;
 
-export class IntoUnderlyingSink {
+class IntoUnderlyingSink {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -331,7 +331,7 @@ export class IntoUnderlyingSink {
 }
 if (Symbol.dispose) IntoUnderlyingSink.prototype[Symbol.dispose] = IntoUnderlyingSink.prototype.free;
 
-export class IntoUnderlyingSource {
+class IntoUnderlyingSource {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -477,6 +477,81 @@ export class ObjectEvent {
     }
 }
 if (Symbol.dispose) ObjectEvent.prototype[Symbol.dispose] = ObjectEvent.prototype.free;
+
+/**
+ * An object listed without its slabs, as `SharedSdk.objectSummaries` returns
+ * it. It describes the object but cannot be downloaded. Fetch the full
+ * object with `SharedSdk.object(id)` to download it.
+ */
+export class ObjectSummary {
+    static __wrap(ptr) {
+        const obj = Object.create(ObjectSummary.prototype);
+        obj.__wbg_ptr = ptr;
+        ObjectSummaryFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        ObjectSummaryFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_objectsummary_free(ptr, 0);
+    }
+    /**
+     * The creation time.
+     * @returns {Date}
+     */
+    get createdAt() {
+        const ret = wasm.objectsummary_createdAt(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * The object's ID as a hex string.
+     * @returns {string}
+     */
+    get id() {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ret = wasm.objectsummary_id(this.__wbg_ptr);
+            deferred1_0 = ret[0];
+            deferred1_1 = ret[1];
+            return getStringFromWasm0(ret[0], ret[1]);
+        } finally {
+            wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * The object's decrypted metadata.
+     * @returns {Uint8Array}
+     */
+    get metadata() {
+        const ret = wasm.objectsummary_metadata(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
+    }
+    /**
+     * The object's size in bytes.
+     * @returns {number}
+     */
+    get size() {
+        const ret = wasm.objectsummary_size(this.__wbg_ptr);
+        return ret;
+    }
+    /**
+     * The last updated time.
+     * @returns {Date}
+     */
+    get updatedAt() {
+        const ret = wasm.objectsummary_updatedAt(this.__wbg_ptr);
+        return ret;
+    }
+}
+if (Symbol.dispose) ObjectSummary.prototype[Symbol.dispose] = ObjectSummary.prototype.free;
 
 /**
  * A packed upload handle for efficiently uploading multiple objects
@@ -808,7 +883,7 @@ export class Sdk {
      * }
      * ```
      * @param {PinnedObject} object
-     * @param {any | null} [options]
+     * @param {DownloadOptions} [options]
      * @returns {ReadableStream}
      */
     download(object, options) {
@@ -943,10 +1018,14 @@ export class Sdk {
     }
     /**
      * Prunes unused slabs from the indexer.
+     *
+     * `before` prunes only slabs pinned before that date. Omitting it leaves
+     * the cutoff to the indexer.
+     * @param {Date | null} [before]
      * @returns {Promise<void>}
      */
-    pruneSlabs() {
-        const ret = wasm.sdk_pruneSlabs(this.__wbg_ptr);
+    pruneSlabs(before) {
+        const ret = wasm.sdk_pruneSlabs(this.__wbg_ptr, isLikeNone(before) ? 0 : addToExternrefTable0(before));
         return ret;
     }
     /**
@@ -1008,27 +1087,17 @@ export class Sdk {
         return ret;
     }
     /**
-     * Retrieves a pinned slab from the indexer by its hex ID.
-     * @param {string} slab_id
-     * @returns {PinnedSlab}
-     */
-    slab(slab_id) {
-        const ptr0 = passStringToWasm0(slab_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sdk_slab(this.__wbg_ptr, ptr0, len0);
-        return ret;
-    }
-    /**
      * Detaches an object from a sharing key, leaving the key and its other
      * attachments in place.
      * @param {SharingKey} key
-     * @param {PinnedObject} object
+     * @param {string} id
      * @returns {Promise<void>}
      */
-    unshareObject(key, object) {
+    unshareObject(key, id) {
         _assertClass(key, SharingKey);
-        _assertClass(object, PinnedObject);
-        const ret = wasm.sdk_unshareObject(this.__wbg_ptr, key.__wbg_ptr, object.__wbg_ptr);
+        const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sdk_unshareObject(this.__wbg_ptr, key.__wbg_ptr, ptr0, len0);
         return ret;
     }
     /**
@@ -1054,7 +1123,7 @@ export class Sdk {
      * ```
      * @param {PinnedObject} object
      * @param {ReadableStream} source
-     * @param {any | null} [options]
+     * @param {UploadOptions} [options]
      * @returns {Promise<PinnedObject>}
      */
     upload(object, source, options) {
@@ -1068,7 +1137,7 @@ export class Sdk {
      * Objects smaller than the slab size (~40 MiB) are packed into shared slabs
      * to avoid wasting storage. Call `add(data)` for each object, then
      * `finalize()` to get the resulting `PinnedObject` handles.
-     * @param {any | null} [options]
+     * @param {PackedUploadOptions} [options]
      * @returns {PackedUpload}
      */
     uploadPacked(options) {
@@ -1122,7 +1191,7 @@ export class SharedSdk {
     /**
      * Streams a shared object's data.
      * @param {PinnedObject} object
-     * @param {any | null} [options]
+     * @param {DownloadOptions} [options]
      * @returns {ReadableStream}
      */
     download(object, options) {
@@ -1153,6 +1222,18 @@ export class SharedSdk {
         const ptr0 = passStringToWasm0(id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.sharedsdk_object(this.__wbg_ptr, ptr0, len0);
+        return ret;
+    }
+    /**
+     * Lists a page of the objects the key grants access to without their
+     * slabs, which is much smaller and faster than `objects`. Each summary
+     * has the object's id, size, decrypted metadata and timestamps.
+     * @param {number} offset
+     * @param {number} limit
+     * @returns {Promise<ObjectSummary[]>}
+     */
+    objectSummaries(offset, limit) {
+        const ret = wasm.sharedsdk_objectSummaries(this.__wbg_ptr, offset, limit);
         return ret;
     }
     /**
@@ -1261,7 +1342,10 @@ if (Symbol.dispose) SharingKey.prototype[Symbol.dispose] = SharingKey.prototype.
  */
 export function encodedSize(data_size, data_shards, parity_shards) {
     const ret = wasm.encodedSize(data_size, data_shards, parity_shards);
-    return ret;
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
 }
 
 /**
@@ -1406,6 +1490,10 @@ function __wbg_get_imports() {
         __wbg_abort_8bae0f33e7833997: function(arg0) {
             arg0.abort();
         },
+        __wbg_abort_962541bfa57985c4: function(arg0) {
+            const ret = arg0.abort();
+            return ret;
+        },
         __wbg_abort_eee9248a6d680839: function(arg0, arg1) {
             arg0.abort(arg1);
         },
@@ -1481,7 +1569,7 @@ function __wbg_get_imports() {
             const ret = arg0.createBidirectionalStream();
             return ret;
         },
-        __wbg_done_4ead556d01fd3011: function(arg0) {
+        __wbg_done_11408d3db12f8f67: function(arg0) {
             const ret = arg0.done;
             return ret;
         },
@@ -1514,15 +1602,15 @@ function __wbg_get_imports() {
         __wbg_getRandomValues_cc7f052a444bb2ce: function() { return handleError(function (arg0, arg1) {
             globalThis.crypto.getRandomValues(getArrayU8FromWasm0(arg0, arg1));
         }, arguments); },
-        __wbg_getReader_1ef752ebe7bb7900: function() { return handleError(function (arg0, arg1) {
-            const ret = arg0.getReader(arg1);
-            return ret;
-        }, arguments); },
         __wbg_getReader_7455d080fa48369b: function(arg0) {
             const ret = arg0.getReader();
             return ret;
         },
-        __wbg_getReader_bb0230851fbf986b: function() { return handleError(function (arg0) {
+        __wbg_getReader_9838808cf6e83f4f: function() { return handleError(function (arg0, arg1) {
+            const ret = arg0.getReader(arg1);
+            return ret;
+        }, arguments); },
+        __wbg_getReader_bf34f92ee19c42b4: function() { return handleError(function (arg0) {
             const ret = arg0.getReader();
             return ret;
         }, arguments); },
@@ -1671,7 +1759,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h6f3b0be531f650a9(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h2e2eca41a5fa27e4(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -1709,7 +1797,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h6f3b0be531f650a9(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h2e2eca41a5fa27e4(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -1724,7 +1812,7 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(arg0, arg1 >>> 0, arg2 >>> 0);
             return ret;
         },
-        __wbg_new_with_into_underlying_byte_source_f2380eddfced1ef5: function() { return handleError(function (arg0) {
+        __wbg_new_with_into_underlying_byte_source_e1bffc8549ce4568: function() { return handleError(function (arg0) {
             const ret = new ReadableStream(IntoUnderlyingByteSource.__wrap(arg0));
             return ret;
         }, arguments); },
@@ -1754,6 +1842,10 @@ function __wbg_get_imports() {
         },
         __wbg_objectevent_new: function(arg0) {
             const ret = ObjectEvent.__wrap(arg0);
+            return ret;
+        },
+        __wbg_objectsummary_new: function(arg0) {
+            const ret = ObjectSummary.__wrap(arg0);
             return ret;
         },
         __wbg_performance_3fcf6e32a7e1ed0a: function(arg0) {
@@ -1914,11 +2006,11 @@ function __wbg_get_imports() {
             getDataViewMemory0().setInt32(arg0 + 4 * 1, len1, true);
             getDataViewMemory0().setInt32(arg0 + 4 * 0, ptr1, true);
         },
-        __wbg_value_a5d5488a9589444a: function(arg0) {
+        __wbg_value_015ff34c896f8461: function(arg0) {
             const ret = arg0.value;
             return ret;
         },
-        __wbg_value_da5243f0032ab973: function(arg0) {
+        __wbg_value_a5d5488a9589444a: function(arg0) {
             const ret = arg0.value;
             return ret;
         },
@@ -1935,33 +2027,33 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1063, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h58e43e20b254d344);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 1029, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h1e3f64418de0f062);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 532, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h928f2b5d512b12d1);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 495, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h8922a47371e3ba53);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 596, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 544, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669);
             return ret;
         },
         __wbindgen_cast_0000000000000004: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 596, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_3);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("WebTransportBidirectionalStream")], shim_idx: 544, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_3);
             return ret;
         },
         __wbindgen_cast_0000000000000005: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 596, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_4);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [NamedExternref("undefined")], shim_idx: 544, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_4);
             return ret;
         },
         __wbindgen_cast_0000000000000006: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 877, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__hf415a85db1af51b0);
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [], shim_idx: 843, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm_bindgen__convert__closures_____invoke__h36107270e7a7c701);
             return ret;
         },
         __wbindgen_cast_0000000000000007: function(arg0) {
@@ -1996,6 +2088,13 @@ function __wbg_get_imports() {
         __wbindgen_cast_000000000000000c: function(arg0, arg1) {
             var v0 = getArrayJsValueFromWasm0(arg0, arg1).slice();
             wasm.__wbindgen_free(arg0, arg1 * 4, 4);
+            // Cast intrinsic for `Vector(NamedExternref("ObjectSummary")) -> Externref`.
+            const ret = v0;
+            return ret;
+        },
+        __wbindgen_cast_000000000000000d: function(arg0, arg1) {
+            var v0 = getArrayJsValueFromWasm0(arg0, arg1).slice();
+            wasm.__wbindgen_free(arg0, arg1 * 4, 4);
             // Cast intrinsic for `Vector(NamedExternref("PinnedObject")) -> Externref`.
             const ret = v0;
             return ret;
@@ -2016,44 +2115,44 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hf415a85db1af51b0(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hf415a85db1af51b0(arg0, arg1);
+function wasm_bindgen__convert__closures_____invoke__h36107270e7a7c701(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h36107270e7a7c701(arg0, arg1);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h928f2b5d512b12d1(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h928f2b5d512b12d1(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h8922a47371e3ba53(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h8922a47371e3ba53(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h58e43e20b254d344(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h58e43e20b254d344(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h1e3f64418de0f062(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h1e3f64418de0f062(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_3(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_3(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_3(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_3(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_4(arg0, arg1, arg2) {
-    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h0cf55fbbbe7ee994_4(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_4(arg0, arg1, arg2) {
+    const ret = wasm.wasm_bindgen__convert__closures_____invoke__h6cd7f7d88282e669_4(arg0, arg1, arg2);
     if (ret[1]) {
         throw takeFromExternrefTable0(ret[0]);
     }
 }
 
-function wasm_bindgen__convert__closures_____invoke__h6f3b0be531f650a9(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h6f3b0be531f650a9(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h2e2eca41a5fa27e4(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h2e2eca41a5fa27e4(arg0, arg1, arg2, arg3);
 }
 
 
@@ -2091,6 +2190,9 @@ const KeyRecordFinalization = (typeof FinalizationRegistry === 'undefined')
 const ObjectEventFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_objectevent_free(ptr, 1));
+const ObjectSummaryFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_objectsummary_free(ptr, 1));
 const PackedUploadFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_packedupload_free(ptr, 1));

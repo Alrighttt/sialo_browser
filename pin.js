@@ -20,7 +20,7 @@
 // could send for any object it named. Pinning spends the user's money, so it
 // stays in the app's own chrome where site content cannot reach it.
 
-import { connectSdk } from './config.js';
+import { connectSdk, fullObject } from './config.js';
 import { siteEntries, siteEntryById, parseSiteUrl } from './sia-site.js';
 import { isSiteAddress, objectIdInUrl } from './object-input.js';
 import { filenameForDisplay, stripUploadUuid } from './object-metadata.js';
@@ -92,9 +92,13 @@ export async function resolvePinTargets(address) {
  * object handle a sharing key already decrypted for us.
  */
 async function pinOne(sdk, target) {
+  // A sharing key lists its objects as summaries, which carry no slabs — and a
+  // pin is precisely a claim over the slabs, so the real object is fetched
+  // here. One per target as pinning proceeds, rather than every object in the
+  // key before any of it starts.
   const obj = typeof target.ref === 'string'
     ? await sdk.objectFromShareUrl(target.ref)
-    : target.ref;
+    : await fullObject(target.ref);
   await sdk.pinObject(obj);
   return obj;
 }
@@ -152,7 +156,8 @@ export async function pinTargets(targets, { statusEl, onProgress } = {}) {
 
 /**
  * Pin an object handle we already hold, which is the case anywhere the app has
- * listed a sharing key's objects. Skips resolution entirely.
+ * listed a sharing key's objects. Skips address resolution entirely; a summary
+ * entry still has its slabs fetched, because that is what a pin claims.
  */
 export async function pinHandle(obj, { statusEl } = {}) {
   return pinTargets([{ path: pinnedName(obj, ''), ref: obj }], { statusEl });

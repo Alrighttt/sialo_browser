@@ -10,7 +10,7 @@
 // hostile one point the SDK wherever it liked.
 
 import { _esc, _dbg, formatSize } from './utils.js';
-import { getUrl, connectSharedSdk, listSharedObjects } from './config.js';
+import { getUrl, connectSharedSdk, listSharedSummaries, fullObject, releaseObject } from './config.js';
 import { streamingDownload } from './download.js';
 import {
   filenameForSave, filenameForDisplay, stripUploadUuid,
@@ -95,7 +95,10 @@ export function initSharedUI() {
     list.innerHTML = '<div style="padding:1rem; color:#888;">Loading objects…</div>';
     let objects;
     try {
-      objects = await listSharedObjects(sdk);
+      // Summaries: the rows show a name, an id and a size, none of which
+      // need the object's slabs. Download and Pin fetch the one object they
+      // are asked for.
+      objects = await listSharedSummaries(sdk);
     } catch (e) {
       list.innerHTML = `<div style="padding:1rem; color:#f87171;">Could not list shared objects: ${_esc(e.message || e)}</div>`;
       return;
@@ -218,7 +221,13 @@ function renderObject(sdk, obj, highlight, seed) {
       button.disabled = true;
       try {
         const status = panelStatus();
-        const { blob } = await streamingDownload(sdk, obj, status, progressEl(), `Downloading ${name}`);
+        const full = await fullObject(obj);
+        let blob;
+        try {
+          ({ blob } = await streamingDownload(sdk, full, status, progressEl(), `Downloading ${name}`));
+        } finally {
+          if (full !== obj) releaseObject(full);
+        }
         const a = document.createElement('a');
         a.href = URL.createObjectURL(blob);
         a.download = filenameForSave(metadata) || id.slice(0, 16);
