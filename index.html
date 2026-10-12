@@ -44,14 +44,14 @@
           Keys</button>
         <button class="gear-menu-item" data-panel="shared"><span class="gear-menu-icon">&#129309;</span> Shared With
           Me</button>
-        <hr class="gear-menu-sep">
-        <div class="gear-menu-header">Blockchain</div>
-        <button class="gear-menu-item" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span>
+        <hr class="gear-menu-sep gear-experimental">
+        <div class="gear-menu-header gear-experimental">Blockchain</div>
+        <button class="gear-menu-item gear-experimental" data-panel="syncer-config"><span class="gear-menu-icon">&#128259;</span>
           Syncer</button>
-        <button class="gear-menu-item" data-panel="explorer"><span class="gear-menu-icon">&#128269;</span>
+        <button class="gear-menu-item gear-experimental" data-panel="explorer"><span class="gear-menu-icon">&#128269;</span>
           Explorer</button>
-        <button class="gear-menu-item" data-panel="wallet"><span class="gear-menu-icon">&#128176;</span> Wallet</button>
-        <button class="gear-menu-item" data-panel="manifest"><span class="gear-menu-icon">&#128220;</span>
+        <button class="gear-menu-item gear-experimental" data-panel="wallet"><span class="gear-menu-icon">&#128176;</span> Wallet</button>
+        <button class="gear-menu-item gear-experimental" data-panel="manifest"><span class="gear-menu-icon">&#128220;</span>
           Manifest</button>
         <hr class="gear-menu-sep">
         <div class="gear-menu-header">System</div>
@@ -287,6 +287,11 @@
                   class="info-tip">&#9432;<span class="info-tip-text">Enables verbose debug logging from the SDK. Output
                     is written to the browser console (open DevTools to view).</span></span></label>
               <input id="cfg-debug-logging" type="checkbox" style="cursor:pointer; justify-self:center;" />
+              <label for="cfg-experimental" style="font-size:0.85rem; color:#999; cursor:pointer;">Experimental Features: <span
+                  class="info-tip">&#9432;<span class="info-tip-text">Shows the Blockchain tools in the menu: Syncer,
+                    Explorer, Wallet and Manifest. They work directly against consensus rather than through the
+                    indexer, and are unfinished.</span></span></label>
+              <input id="cfg-experimental" type="checkbox" style="cursor:pointer; justify-self:center;" />
             </div>
           </div><!-- /panel-section: Performance -->
 

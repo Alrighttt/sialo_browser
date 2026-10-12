@@ -507,6 +507,22 @@ const keyInput = document.getElementById('cfg-key');
 const maxDownloadsInput = document.getElementById('cfg-max-downloads');
 const maxUploadsInput = document.getElementById('cfg-max-uploads');
 const debugLoggingCheckbox = document.getElementById('cfg-debug-logging');
+const experimentalCheckbox = document.getElementById('cfg-experimental');
+
+/**
+ * Show or hide the Blockchain group in the gear menu.
+ *
+ * Those pages talk to consensus directly rather than through the indexer and
+ * are unfinished, so they are off unless asked for. Off is also the state a
+ * fresh browser starts in, which is why the stored value has to be exactly
+ * '1' to turn them on rather than merely present.
+ */
+const EXPERIMENTAL_KEY = 'experimental-features';
+function applyExperimental(on) {
+  for (const el of document.querySelectorAll('.gear-experimental')) {
+    el.style.display = on ? '' : 'none';
+  }
+}
 
 // --- Indexer Profile Management ---
 const PROFILES_KEY = 'indexer-profiles';
@@ -647,6 +663,9 @@ const savedLogLevel = localStorage.getItem('log-level');
 if (savedMaxDownloads) maxDownloadsInput.value = savedMaxDownloads;
 if (savedMaxUploads) maxUploadsInput.value = savedMaxUploads;
 if (savedLogLevel === 'debug') debugLoggingCheckbox.checked = true;
+const savedExperimental = localStorage.getItem(EXPERIMENTAL_KEY) === '1';
+experimentalCheckbox.checked = savedExperimental;
+applyExperimental(savedExperimental);
 
 profileSelect.addEventListener('change', () => {
   activateProfile(profileData, profileSelect.value);
@@ -705,6 +724,11 @@ debugLoggingCheckbox.addEventListener('change', () => {
   const level = debugLoggingCheckbox.checked ? 'debug' : 'info';
   localStorage.setItem('log-level', level);
   setLogger((msg) => console.log(msg), level);
+});
+experimentalCheckbox.addEventListener('change', () => {
+  const on = experimentalCheckbox.checked;
+  localStorage.setItem(EXPERIMENTAL_KEY, on ? '1' : '0');
+  applyExperimental(on);
 });
 
 // Browser compatibility checks
