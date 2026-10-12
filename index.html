@@ -951,16 +951,67 @@
             <div id="sh-stats" style="color:#888; font-size:0.85rem; margin-top:0.5rem;"></div>
             <progress id="sh-progress" max="100" value="0" style="display:none; width:100%; height:6px; margin-top:0.5rem;"></progress>
 
-            <div id="sh-list" style="margin-top:1rem; max-height:60vh; overflow-y:auto; border:1px solid #222; border-radius:6px;">
-              <div style="padding:1rem; color:#888;">Nothing open yet.</div>
+            <!-- Offered rather than forced: a key holding a root index.html is
+                 a website, but the file listing is still useful. -->
+            <div id="sh-site-banner" class="sh-site-banner" style="display:none;"></div>
+
+            <!-- The same listing as My Objects, so a key of several hundred
+                 objects can be searched, sorted and paged rather than scrolled.
+                 Only the actions differ: a recipient holds a key, not an
+                 account. -->
+            <div class="obj-head" id="sh-list-head" style="margin-top:1rem; display:none;">
+              <div class="obj-head-title">
+                <div class="obj-head-sub" id="sh-summary">&nbsp;</div>
+              </div>
+              <div class="obj-head-actions">
+                <input type="search" id="sh-search" class="obj-search"
+                  placeholder="Filter by name" autocomplete="off" spellcheck="false"
+                  title="Show only objects whose name contains this" />
+              </div>
             </div>
 
-            <!-- Shown to everyone on this page, who by definition arrived on
-                 someone else's key and may have no account of their own.
-                 Registering is the only route from consuming a share to
-                 storing anything, so it is stated once, plainly, rather than
-                 left to be discovered. -->
-            <div class="sh-signup">
+            <div id="sh-selection-bar" class="obj-selbar" style="display:none;">
+              <span id="sh-selected-count">0 selected</span>
+              <button id="sh-btn-download" class="obj-btn"
+                title="Download every selected object, one after another" disabled>Download</button>
+              <button id="sh-btn-pin" class="obj-btn"
+                title="Keep every selected object on your own account, so they survive the key being revoked" disabled>Pin</button>
+              <button id="sh-btn-copy-ids" class="obj-btn"
+                title="Copy every selected object's ID, one per line" disabled>Copy IDs</button>
+            </div>
+
+            <div id="sh-list-scroll" class="obj-table-wrap">
+              <div id="sh-list">
+                <div style="padding:1rem; color:#888;">Nothing open yet.</div>
+              </div>
+            </div>
+
+            <div id="sh-pager" class="obj-foot" style="display:none;">
+              <label class="obj-foot-field">Rows per page:
+                <select id="sh-page-size" class="obj-pagesize">
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="250">250</option>
+                  <option value="500">500</option>
+                </select>
+              </label>
+              <span id="sh-page-info">&mdash;</span>
+              <div class="obj-pages">
+                <button id="sh-page-first" class="obj-page-btn" title="First page">&laquo;</button>
+                <button id="sh-page-prev"  class="obj-page-btn" title="Previous page">&lsaquo;</button>
+                <span id="sh-page-num" class="obj-page-num">1</span>
+                <button id="sh-page-next"  class="obj-page-btn" title="Next page">&rsaquo;</button>
+                <button id="sh-page-last"  class="obj-page-btn" title="Last page">&raquo;</button>
+              </div>
+            </div>
+
+            <!-- For a reader who arrived on someone else's key with no
+                 account of their own: registering is the only route from
+                 consuming a share to storing anything, so it is stated once,
+                 plainly, rather than left to be discovered. Hidden once an
+                 account exists, where it is just an advert for something the
+                 reader already has. -->
+            <div class="sh-signup" id="sh-signup" style="display:none;">
               <div>
                 <strong>Storing your own files takes an account.</strong>
                 Reading a share costs you nothing &mdash; downloads here are paid for by

@@ -417,6 +417,15 @@ progress::-moz-progress-bar {
   max-width: 800px;
   margin: 0 auto;
 }
+/* The two listing pages are a table, not prose. 800px squeezed six columns
+   into the middle of the window with empty gutters either side, truncating
+   names that had room and pushing Actions off the edge, so these take the
+   width they are given. */
+#panel-objects > .internal-page-content,
+#panel-shared > .internal-page-content {
+  max-width: none;
+  margin: 0;
+}
 
 /* Tab Bar */
 #tab-bar {
@@ -2220,23 +2229,22 @@ a.addr-chip--link:hover {
 }
 
 .obj-table-wrap {
-  border: 1px solid #1f1f1f;
+  /* A ring rather than a border: a border takes 2px out of the content box,
+     and the table's `width: 100%` under `border-collapse: collapse` does not
+     discount it, so the pane overflowed by exactly that and sat under a
+     permanent horizontal scrollbar. `box-shadow` draws the same 1px line
+     without participating in layout, which keeps `overflow-x: auto` honest —
+     it now appears only when the columns genuinely do not fit. */
+  box-shadow: 0 0 0 1px #1f1f1f;
   border-radius: 10px;
   overflow-y: auto;
-  /* Nothing in the table needs horizontal reach any more: the fixed layout
-     below sizes every column to fit and truncates the name that does not.
-     What is left is a 2px sliver from this element's own border, which the
-     table's `width: 100%` does not discount, and which was enough to leave a
-     scrollbar sitting under the list permanently. */
-  overflow-x: hidden;
+  /* Scrolls sideways when the window cannot hold the columns. The table's
+     min-width below is what decides that, rather than a viewport breakpoint:
+     the panel is no longer a fixed 800px, so the width available to the table
+     depends on the window, the chrome and which columns the page asks for. */
+  overflow-x: auto;
   max-height: 62vh;
   background: #0d0d0d;
-}
-
-/* Below this the fixed columns genuinely cannot all fit, so give the pane its
-   horizontal scroll back rather than clipping the Actions menu out of reach. */
-@media (max-width: 640px) {
-  .obj-table-wrap { overflow-x: auto; }
 }
 
 /* The table itself is emitted by objects-ui.js; these style it by class so
@@ -2249,7 +2257,20 @@ a.addr-chip--link:hover {
    scrollbar. Fixed layout takes the widths below as given and hands Name
    whatever is left, so a long name truncates instead of displacing the
    columns that tell you about it. */
-.obj-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 0.9rem; }
+/* `min-width` is the floor the fixed columns need before Name has nowhere
+   left to give. Below it the wrapper scrolls rather than crushing Actions out
+   of reach, which is the one column that must always be clickable. */
+.obj-table {
+  width: 100%;
+  /* The floor the fixed columns need before Name has nothing left to give.
+     A page carrying the extra Sharing Keys column needs more, so it asks for
+     it by class rather than every listing paying for a column it may not
+     show. */
+  min-width: 51rem;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
 .obj-table thead th {
   position: sticky;
   top: 0;
@@ -2268,13 +2289,21 @@ a.addr-chip--link:hover {
 .obj-table tbody td { padding: 0.65rem 0.75rem; border-bottom: 1px solid #191919; vertical-align: middle; }
 .obj-table tbody tr:last-child td { border-bottom: 0; }
 .obj-table tbody tr:hover { background: #121212; }
+.obj-table.has-extra { min-width: 60rem; }
 .obj-col-check { width: 2.5rem; }
 /* Name is deliberately the only column with no width: it takes the remainder. */
 .obj-col-size { width: 6.5rem; }
-.obj-col-updated { width: 10.5rem; }
+.obj-col-updated { width: 12rem; }
+.obj-col-created { width: 12rem; }
 .obj-col-keys { width: 9rem; }
-.obj-col-actions { width: 3.5rem; text-align: right; }
-.obj-num { font-variant-numeric: tabular-nums; color: #cbd5e1; white-space: nowrap; }
+.obj-col-actions { width: 4rem; text-align: right; }
+.obj-num {
+  font-variant-numeric: tabular-nums;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .obj-dim { color: #6b7280; }
 
 /* Name cell: a type tile, then the name. The tile is what makes a long list

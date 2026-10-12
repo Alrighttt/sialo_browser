@@ -10,10 +10,11 @@
 // hostile one point the SDK wherever it liked.
 
 import { _esc, _dbg, formatSize } from './utils.js';
-import { getUrl, connectSharedSdk, listSharedSummaries, fullObject, releaseObject } from './config.js';
+import { createObjectTable } from './object-table.js';
+import { getUrl, getKeyHex, connectSharedSdk, listSharedSummaries, fullObject, releaseObject } from './config.js';
 import { streamingDownload } from './download.js';
 import {
-  filenameForSave, filenameForDisplay, stripUploadUuid,
+  filenameForSave, filenameForDisplay, stripUploadUuid, extractUploadUuid,
 } from './object-metadata.js';
 import { parseShareFragment } from './sharing-keys.js';
 import { siteUrl, parsePublishedSiteFragment, canRenderInTab } from './sia-site.js';
@@ -68,10 +69,211 @@ export function initSharedUI() {
     return sdk;
   }
 
+  // The listing is the My Objects table, driven with a recipient's actions.
+  // A key holder has no account, so anything that writes to one — publish,
+  // rename, migrate, delete, attaching to a key of their own — is absent
+  // rather than disabled. What is left is everything a key does grant: open,
+  // download, pin to an account if they have one, and read the details.
+  let currentSeed = null;
+
+  const table = createObjectTable({
+    els: {
+      list: 'sh-list',
+      pager: 'sh-pager',
+      pageInfo: 'sh-page-info',
+      pageSize: 'sh-page-size',
+      pageNum: 'sh-page-num',
+      pageFirst: 'sh-page-first',
+      pagePrev: 'sh-page-prev',
+      pageNext: 'sh-page-next',
+      pageLast: 'sh-page-last',
+      selectionBar: 'sh-selection-bar',
+      selectionCount: 'sh-selected-count',
+      summary: 'sh-summary',
+      search: 'sh-search',
+    },
+    selectionButtons: ['sh-btn-download', 'sh-btn-pin', 'sh-btn-copy-ids'],
+    // Nothing here is ever deleted — a recipient sees only what the key still
+    // grants — so every row can be selected.
+    isEligible: () => true,
+    onRowActivate: (row) => { if (row.openable) openSiteTab(siteUrl(currentSeed, row.displayName)); },
+    menuItems: (row) => sharedRowMenu(row),
+    emptyHtml: '<div style="padding:1rem; color:#888;">This key has no objects attached.</div>',
+    // The stats line above already gives the key's object count, total size
+    // and expiry, so repeating them here said the same thing twice. This says
+    // only what that line cannot: what the filter is currently hiding.
+    summaryText: ({ shown, totalBytes, total, searchQuery }) => (
+      searchQuery.trim()
+        ? {
+          text: `${shown} of ${total} shown \u00b7 ${formatSize(totalBytes)}`,
+          title: `${total - shown} hidden by the filter`,
+        }
+        : { text: '', title: '' }
+    ),
+  });
+
+  /**
+   * The sign-up banner is for a reader with no account of their own, which is
+   * who a sharing link usually reaches. To someone who already has one it is
+   * an advert for something they have, sitting under every share they open.
+   */
+  function refreshSignup() {
+    const el = document.getElementById('sh-signup');
+    if (!el) return;
+    let hasAccount = false;
+    try { hasAccount = !!(getUrl() && getKeyHex()); } catch (_) { /* no config to read */ }
+    el.style.display = hasAccount ? 'none' : '';
+  }
+  refreshSignup();
+  // Registering, or pasting a key into Settings, both announce themselves this
+  // way, so the banner goes as soon as the account exists.
+  window.addEventListener('profile-updated', refreshSignup);
+  for (const id of ['cfg-url', 'cfg-key']) {
+    const input = document.getElementById(id);
+    if (input) input.addEventListener('input', refreshSignup);
+  }
+
+  /** The filter row only means anything once a key has listed something. */
+  function showListHead(on) {
+    const head = document.getElementById('sh-list-head');
+    if (head) head.style.display = on ? '' : 'none';
+    if (!on) {
+      const search = document.getElementById('sh-search');
+      if (search) search.value = '';
+      table.setSearch('');
+    }
+  }
+
+  /**
+   * One row's actions.
+   *
+   * Openability is asked of `canRenderInTab`, which reads the same table that
+   * decides the Content-Type the file would be served with. A private
+   * extension list here is what previously left ordinary videos with no Open
+   * button at all — and an absent action reads as a fault rather than a
+   * statement about the format, so an unrenderable file keeps the item and
+   * says why instead.
+   */
+  function sharedRowMenu(row) {
+    const items = [];
+    if (row.openable) {
+      items.push(['Open', () => openSiteTab(siteUrl(currentSeed, row.displayName)), '&#128065;']);
+    }
+    if (row.isManifest && currentSeed) {
+      items.push(['Open as a site', () => openSiteTab(siteUrl(currentSeed, '')), '&#8599;']);
+    }
+    items.push(
+      ['Download', () => downloadRow(row), '&#8595;'],
+      // Pinning is the one action that needs an account, and it is also the
+      // only reason a recipient would want one: it is what survives the key
+      // being revoked or its owner stopping paying.
+      ['Pin to my account', () => pinRow(row), '&#128204;'],
+      null,
+      ['Details', () => showDetails(row), '&#8505;'],
+      ['Copy object ID', () => copyText(row.id), '&#9112;'],
+    );
+    return items;
+  }
+
+  function copyText(text) {
+    navigator.clipboard.writeText(text).then(() => {
+      panelStatus().innerHTML = '<span class="pass">\u2713 Copied</span>';
+    }).catch(() => {
+      panelStatus().innerHTML = '<span class="fail">Could not copy</span>';
+    });
+  }
+
+  function showDetails(row) {
+    const lines = [
+      `Name: ${row.filename || '(none)'}`,
+      `Object ID: ${row.id}`,
+      `Size: ${formatSize(row.size)} (${row.size.toLocaleString()} bytes)`,
+      row.updatedAt ? `Updated: ${new Date(row.updatedAt).toLocaleString()}` : null,
+      row.createdAt ? `Created: ${new Date(row.createdAt).toLocaleString()}` : null,
+    ].filter(Boolean);
+    alert(lines.join('\n'));
+  }
+
+  async function downloadRow(row) {
+    const status = panelStatus();
+    const sdk = connected && connected.sdk;
+    if (!sdk) return;
+    try {
+      // The listing holds a summary, which has no slabs. Fetch the real object
+      // for the one file being asked for.
+      const full = await fullObject(row.entry);
+      try {
+        const { blob } = await streamingDownload(sdk, full, status, progressEl(), `Downloading ${row.displayName}`);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = row.saveName || row.displayName || row.id.slice(0, 16);
+        a.click();
+        URL.revokeObjectURL(a.href);
+        status.innerHTML = `<span class="pass">\u2713 Saved ${_esc(row.displayName)}</span>`;
+      } finally {
+        if (full !== row.entry) releaseObject(full);
+      }
+    } catch (err) {
+      status.innerHTML = `<span class="fail">Download failed: ${_esc(err.message || err)}</span>`;
+    } finally {
+      progressEl().style.display = 'none';
+    }
+  }
+
+  async function pinRow(row) {
+    const status = panelStatus();
+    if (!confirm(`Pin "${row.displayName}" (${formatSize(row.size)}) to your account?\n\n`
+      + 'It stays available even if this sharing key is revoked, and the storage '
+      + 'is billed to your account from now on. Nothing is re-uploaded.')) return;
+    try {
+      const result = await pinHandle(row.entry, { statusEl: status });
+      const summary = _esc(describePinResult(result));
+      status.innerHTML = result.failed.length === 0
+        ? `<span class="pass">${summary}</span>`
+        : `<span style="color:#f59e0b">${summary}</span>`;
+    } catch (err) {
+      if (isAccountError(err)) {
+        showAccountPrompt('Pinning keeps the file on your own account, which needs one.');
+        status.innerHTML = '';
+      } else {
+        status.innerHTML = `<span class="fail">Could not pin: ${_esc(err.message || err)}</span>`;
+      }
+    }
+  }
+
+  /** Turn a listing entry into a table row. */
+  function toRow(entry) {
+    const metadata = entry.metadata();
+    const full = filenameForDisplay(metadata) || '';
+    // The per-upload grouping prefix is the owner's filing system, noise to a
+    // recipient, and not part of the path the site loader resolves — but it is
+    // what groups the rows, so it is kept as the group key.
+    const name = stripUploadUuid(full) || full;
+    const updated = entry.updatedAt ? entry.updatedAt() : null;
+    const created = entry.createdAt ? entry.createdAt() : null;
+    return {
+      id: entry.id(),
+      filename: full,
+      displayName: name || entry.id().slice(0, 16),
+      saveName: filenameForSave(metadata) || '',
+      size: Number(entry.size()) || 0,
+      ms: updated ? +updated : 0,
+      updatedAt: updated,
+      createdAt: created,
+      createdMs: created ? +created : 0,
+      uploadUuid: extractUploadUuid(full) || null,
+      isManifest: /^index\.x?html?$/i.test(name),
+      openable: canRenderInTab(name),
+      entry,
+    };
+  }
+
   async function open(seed, highlightId) {
     const status = panelStatus();
     const list = listEl();
-    list.innerHTML = '<div style="padding:1rem; color:#888;">Connecting…</div>';
+    currentSeed = seed;
+    showListHead(false);
+    list.innerHTML = '<div style="padding:1rem; color:#888;">Connecting\u2026</div>';
     statsEl().textContent = '';
     let sdk;
     try {
@@ -86,164 +288,140 @@ export function initSharedUI() {
       const stats = await sdk.stats();
       const expires = stats.expiresAt ? stats.expiresAt.toLocaleString() : 'never';
       statsEl().textContent =
-        `${num(stats.objectCount)} object(s) · ${formatSize(num(stats.objectSize))} · expires ${expires}`;
+        `${num(stats.objectCount)} object(s) \u00b7 ${formatSize(num(stats.objectSize))} \u00b7 expires ${expires}`;
     } catch (e) {
       // Stats are decoration; a failure here should not stop the listing.
       _dbg('[shared] stats failed:', e);
     }
 
-    list.innerHTML = '<div style="padding:1rem; color:#888;">Loading objects…</div>';
+    list.innerHTML = '<div style="padding:1rem; color:#888;">Loading objects\u2026</div>';
     let objects;
     try {
-      // Summaries: the rows show a name, an id and a size, none of which
-      // need the object's slabs. Download and Pin fetch the one object they
-      // are asked for.
+      // Summaries: the rows show a name, a size and a date, none of which need
+      // the object's slabs. Download and Pin fetch the one object asked for.
       objects = await listSharedSummaries(sdk);
     } catch (e) {
       list.innerHTML = `<div style="padding:1rem; color:#f87171;">Could not list shared objects: ${_esc(e.message || e)}</div>`;
       return;
     }
 
-    if (!objects.length) {
-      list.innerHTML = '<div style="padding:1rem; color:#888;">This key has no objects attached.</div>';
-      status.innerHTML = '<span style="color:#888;">Nothing shared</span>';
-      return;
-    }
-
-    list.innerHTML = '';
+    const rows = objects.map(toRow);
+    table.setRows(rows);
+    table.setPageIndex(0);
+    table.render();
+    showListHead(rows.length > 0);
 
     // A key holding a root index.html is a website, not a pile of files. The
     // listing can still be useful, so this offers the site view rather than
     // forcing it — but without the offer there is no way to discover that the
     // share renders at all.
-    const hasIndex = objects.some((obj) => {
-      const p = stripUploadUuid(filenameForDisplay(obj.metadata()) || '');
-      return /^index\.x?html?$/i.test(p);
-    });
-    if (hasIndex && seed) {
-      const banner = document.createElement('div');
-      banner.className = 'sh-site-banner';
-      banner.innerHTML =
-        '<div><strong>This share is a website.</strong> You are looking at its files.</div>'
-        + '<button type="button" class="sh-site-open btn-share">Open as a site</button>';
-      banner.querySelector('.sh-site-open')
-        .addEventListener('click', () => openSiteTab(siteUrl(seed, '')));
-      list.appendChild(banner);
+    const banner = document.getElementById('sh-site-banner');
+    if (banner) {
+      const hasIndex = rows.some((r) => /^index\.x?html?$/i.test(r.displayName));
+      if (hasIndex && seed) {
+        banner.style.display = '';
+        banner.innerHTML =
+          '<div><strong>This share is a website.</strong> You are looking at its files.</div>'
+          + '<button type="button" class="sh-site-open btn-share">Open as a site</button>';
+        banner.querySelector('.sh-site-open')
+          .addEventListener('click', () => openSiteTab(siteUrl(seed, '')));
+      } else {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+      }
     }
 
-    for (const obj of objects) {
-      list.appendChild(renderObject(sdk, obj, obj.id() === highlightId, seed));
+    if (!rows.length) {
+      status.innerHTML = '<span style="color:#888;">Nothing shared</span>';
+      return;
     }
-    status.innerHTML = `<span class="pass">✓ ${objects.length} shared object${objects.length !== 1 ? 's' : ''}</span>`;
+    status.innerHTML = `<span class="pass">\u2713 ${rows.length} shared object${rows.length !== 1 ? 's' : ''}</span>`;
+
+    // Arriving on a link that names one object should land on it, not on
+    // whatever happens to sort first.
+    if (highlightId) {
+      const hit = rows.find((r) => r.id === highlightId);
+      if (hit) table.selectedIds.add(hit.id);
+      table.render();
+    }
   }
 
-function renderObject(sdk, obj, highlight, seed) {
-    const id = obj.id();
-    const metadata = obj.metadata();
-    const full = filenameForDisplay(metadata) || id.slice(0, 16);
-    // The per-upload grouping prefix is the owner's filing system, noise to a
-    // recipient, and not part of the path the site loader resolves.
-    const name = stripUploadUuid(full) || full;
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex; justify-content:space-between; gap:1rem; align-items:center; padding:0.6rem 1rem; border-bottom:1px solid #222;'
-      + (highlight ? ' background:#0d1f17;' : '');
-    // Anything the app can render opens in a tab rather than only downloading.
-    // The address is the object's path inside this key's namespace, which the
-    // site machinery already resolves through the SharedSdk — so a video
-    // streams with seeking and an HTML file renders in the sandboxed iframe,
-    // with no account needed.
-    // Openability is asked of `canRenderInTab`, which reads the same table
-    // that decides the Content-Type the file would be served with. A private
-    // extension list here is what previously left ordinary videos with no
-    // Open button at all — and an absent button reads as a layout fault
-    // rather than a statement about the format, which is why an unrenderable
-    // file now gets a disabled button that says why instead of no button.
-    const renderable = canRenderInTab(name);
-    const canOpen = !!seed && renderable;
-    const openTitle = !seed
-      ? 'Opening needs the key itself, not just this listing'
-      : (renderable
-        ? 'Open in a tab'
-        : 'This format cannot be shown in a browser. Download it to view it locally.');
-    row.innerHTML = `
-      <div style="min-width:0; flex:1;">
-        <div class="sh-name${canOpen ? ' sh-name--open' : ''}"
-          title="${_esc(full)}${canOpen ? ' — click to open' : ''}">${_esc(name)}</div>
-        <div style="font-size:0.8rem; color:#666; font-family:monospace;">${_esc(id.slice(0, 8))}…${_esc(id.slice(-8))} · ${_esc(formatSize(obj.size()))}</div>
-      </div>
-      <button data-act="open" class="sh-act sh-act--open" title="${_esc(openTitle)}"${canOpen ? '' : ' disabled'}>Open</button>
-      <button data-act="download" class="sh-act sh-act--download">Download</button>
-      <button data-act="pin" class="sh-act sh-act--pin" title="Keep this on your own account, so it stays after the key is revoked or its owner stops paying">Pin</button>
-    `;
-    if (canOpen) {
-      const open = () => openSiteTab(siteUrl(seed, name));
-      row.querySelector('[data-act="open"]').addEventListener('click', open);
-      row.querySelector('.sh-name').addEventListener('click', open);
-    }
-    // Downloading gives you a copy on this device; pinning keeps it on Sia
-    // under your account, which is what survives the key being revoked. The
-    // object handle came from the sharing key and already carries its
-    // decryption keys, so nothing needs resolving or re-uploading.
-    row.querySelector('[data-act="pin"]').addEventListener('click', async (e) => {
-      const button = e.target;
-      const original = button.textContent;
-      const status = panelStatus();
-      if (!confirm(`Pin "${name}" (${formatSize(obj.size())}) to your account?\n\n`
-        + 'It stays available even if this sharing key is revoked, and the storage '
-        + 'is billed to your account from now on. Nothing is re-uploaded.')) return;
-      button.disabled = true;
-      button.textContent = 'Pinning…';
+  // Bulk actions. Each resolves the real objects it needs, one at a time as it
+  // goes, rather than every object in the key up front.
+  function bulkWire(id, fn) {
+    const btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', () => fn());
+  }
+
+  bulkWire('sh-btn-copy-ids', () => {
+    const rows = table.selectedRows();
+    if (!rows.length) return;
+    copyText(rows.map((r) => r.id).join('\n'));
+  });
+
+  bulkWire('sh-btn-pin', async () => {
+    const rows = table.selectedRows();
+    if (!rows.length) return;
+    const bytes = rows.reduce((n, r) => n + r.size, 0);
+    if (!confirm(`Pin ${rows.length} object${rows.length === 1 ? '' : 's'} (${formatSize(bytes)}) to your account?\n\n`
+      + 'They stay available even if this sharing key is revoked, and the storage '
+      + 'is billed to your account from now on. Nothing is re-uploaded.')) return;
+    const status = panelStatus();
+    let done = 0;
+    let failed = 0;
+    for (const row of rows) {
+      status.textContent = `Pinning ${done + failed + 1} of ${rows.length}\u2026`;
       try {
-        const result = await pinHandle(obj, { statusEl: status });
-        const summary = _esc(describePinResult(result));
-        status.innerHTML = result.failed.length === 0
-          ? `<span class="pass">${summary}</span>`
-          : `<span style="color:#f59e0b">${summary}</span>`;
-        if (result.pinned > 0) button.textContent = '\u2713 Pinned';
+        await pinHandle(row.entry, { statusEl: { set textContent(_) {}, set innerHTML(_) {} } });
+        done++;
       } catch (err) {
         if (isAccountError(err)) {
           showAccountPrompt('Pinning keeps the file on your own account, which needs one.');
           status.innerHTML = '';
-        } else {
-          status.innerHTML = `<span class="fail">Could not pin: ${_esc(err.message || err)}</span>`;
+          return;
         }
-        button.textContent = original;
-      } finally {
-        // Left disabled after a success: the object is pinned, and a second
-        // press would only re-pin what is already there.
-        if (button.textContent === original) button.disabled = false;
+        failed++;
       }
-    });
+    }
+    status.innerHTML = failed === 0
+      ? `<span class="pass">\u2713 Pinned ${done}</span>`
+      : `<span style="color:#f59e0b">Pinned ${done}, ${failed} failed</span>`;
+  });
 
-    row.querySelector('[data-act="download"]').addEventListener('click', async (e) => {
-      const button = e.target;
-      const original = button.textContent;
-      button.disabled = true;
+  bulkWire('sh-btn-download', async () => {
+    const rows = table.selectedRows();
+    if (!rows.length) return;
+    const status = panelStatus();
+    const sdk = connected && connected.sdk;
+    if (!sdk) return;
+    // One at a time: a sharing key's objects are the owner's bandwidth, and a
+    // recipient selecting hundreds should not open hundreds of transfers.
+    let done = 0;
+    for (const row of rows) {
+      status.textContent = `Downloading ${done + 1} of ${rows.length}\u2026`;
       try {
-        const status = panelStatus();
-        const full = await fullObject(obj);
-        let blob;
+        const full = await fullObject(row.entry);
         try {
-          ({ blob } = await streamingDownload(sdk, full, status, progressEl(), `Downloading ${name}`));
+          const { blob } = await streamingDownload(sdk, full, { set textContent(_) {}, set innerHTML(_) {} },
+            progressEl(), `Downloading ${row.displayName}`);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = row.saveName || row.displayName || row.id.slice(0, 16);
+          a.click();
+          URL.revokeObjectURL(a.href);
+          done++;
         } finally {
-          if (full !== obj) releaseObject(full);
+          if (full !== row.entry) releaseObject(full);
         }
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = filenameForSave(metadata) || id.slice(0, 16);
-        a.click();
-        URL.revokeObjectURL(a.href);
-        status.innerHTML = `<span class="pass">✓ Saved ${_esc(name)}</span>`;
       } catch (err) {
-        alert(`Download failed: ${err.message || err}`);
-      } finally {
-        button.disabled = false;
-        button.textContent = original;
+        status.innerHTML = `<span class="fail">Stopped after ${done}: ${_esc(err.message || err)}</span>`;
         progressEl().style.display = 'none';
+        return;
       }
-    });
-    return row;
-  }
+    }
+    progressEl().style.display = 'none';
+    status.innerHTML = `<span class="pass">\u2713 Saved ${done}</span>`;
+  });
 
   document.getElementById('sh-open').addEventListener('click', () => {
     const seed = seedEl().value.trim().replace(/^.*[#&]sharing_key=/, '').replace(/&.*$/, '');

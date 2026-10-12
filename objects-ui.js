@@ -1,4 +1,5 @@
 import { _esc, formatSize, _dbgWarn } from './utils.js';
+import { createObjectTable } from './object-table.js';
 import { connectSdk, connectSharedSdk, listSharedSummaries } from './config.js';
 import { ZipWriter } from './vendor/zip-stream.js';
 import { parallelDownloadToDisk } from './download.js';
@@ -34,26 +35,6 @@ function isManifestFilename(filename) {
   if (typeof filename !== 'string' || !filename) return false;
   const s = filename.toLowerCase();
   return s === 'manifest.json' || s.endsWith('/manifest.json');
-}
-
-// Deterministic hue from an upload UUID. The first 12 hex chars
-// already give plenty of entropy for a nice spread around the wheel,
-// and using the same bytes every render means the same upload
-// session always shows the same color.
-/**
- * The kind of thing a row is, for its type tile.
- *
- * Keyed off the filename because that is all the list has — the indexer stores
- * no content type. A wrong guess costs a misleading icon and nothing else, so
- * the extension list is deliberately short rather than exhaustive.
- */
-function objectKind(obj) {
-  if (obj.isManifest) return { kind: 'site', glyph: '&#9635;' };
-  const name = (obj.filename || '').toLowerCase();
-  const ext = name.slice(name.lastIndexOf('.') + 1);
-  if (['mp4', 'webm', 'mkv', 'mov', 'avi', 'm4v'].includes(ext)) return { kind: 'video', glyph: '&#9654;' };
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'svg', 'bmp'].includes(ext)) return { kind: 'image', glyph: '&#9707;' };
-  return { kind: 'text', glyph: '&#9647;' };
 }
 
 /**
@@ -102,107 +83,11 @@ function rowMenuItems(obj) {
   return items;
 }
 
-/**
- * The one menu element every row shares, created on first use.
- *
- * Anchored to the button that opened it and closed by anything that would make
- * its position wrong: a click elsewhere, Escape, a scroll, a resize. It lives
- * on `body` and is `position: fixed`, so the table's own overflow cannot clip
- * it — which is what happens to a menu rendered inside a scrolling cell.
- */
-let rowMenuEl = null;
-let rowMenuOwner = null;
-
-function closeRowMenu() {
-  if (rowMenuEl) rowMenuEl.hidden = true;
-  if (rowMenuOwner) rowMenuOwner.setAttribute('aria-expanded', 'false');
-  rowMenuOwner = null;
-}
-
-function ensureRowMenu() {
-  if (rowMenuEl) return rowMenuEl;
-  rowMenuEl = document.createElement('div');
-  rowMenuEl.id = 'obj-menu';
-  rowMenuEl.className = 'obj-menu';
-  rowMenuEl.setAttribute('role', 'menu');
-  rowMenuEl.hidden = true;
-  document.body.appendChild(rowMenuEl);
-  document.addEventListener('click', (e) => {
-    if (rowMenuEl.hidden) return;
-    if (rowMenuEl.contains(e.target) || (rowMenuOwner && rowMenuOwner.contains(e.target))) return;
-    closeRowMenu();
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !rowMenuEl.hidden) closeRowMenu();
-  });
-  // Capture, so a scroll inside the table is caught as well as one on the page.
-  window.addEventListener('scroll', closeRowMenu, true);
-  window.addEventListener('resize', closeRowMenu);
-  return rowMenuEl;
-}
-
-function openRowMenu(button, obj) {
-  const menu = ensureRowMenu();
-  if (rowMenuOwner === button && !menu.hidden) {
-    closeRowMenu();
-    return;
-  }
-  closeRowMenu();
-  menu.textContent = '';
-  for (const item of rowMenuItems(obj)) {
-    if (!item) {
-      const sep = document.createElement('div');
-      sep.className = 'obj-menu-sep';
-      menu.appendChild(sep);
-      continue;
-    }
-    const [label, run, icon, danger] = item;
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'obj-menu-item' + (danger ? ' obj-menu-item--danger' : '');
-    btn.setAttribute('role', 'menuitem');
-    btn.innerHTML = `<span class="obj-menu-icon" aria-hidden="true">${icon}</span>`;
-    btn.appendChild(document.createTextNode(label));
-    btn.addEventListener('click', () => {
-      closeRowMenu();
-      run();
-    });
-    menu.appendChild(btn);
-  }
-
-  menu.hidden = false;
-  rowMenuOwner = button;
-  button.setAttribute('aria-expanded', 'true');
-
-  // Right-aligned under the button, nudged back inside the viewport when it
-  // would otherwise hang off the bottom or the right edge.
-  const r = button.getBoundingClientRect();
-  const m = menu.getBoundingClientRect();
-  const left = Math.max(8, Math.min(r.right - m.width, window.innerWidth - m.width - 8));
-  const below = r.bottom + 4;
-  const top = below + m.height > window.innerHeight - 8
-    ? Math.max(8, r.top - m.height - 4)
-    : below;
-  menu.style.left = `${left}px`;
-  menu.style.top = `${top}px`;
-  const first = menu.querySelector('.obj-menu-item');
-  if (first) first.focus();
-}
-
-function uuidToColor(uuid) {
-  let h = 0;
-  for (let i = 0; i < 12 && i < uuid.length; i++) {
-    h = ((h << 5) - h + uuid.charCodeAt(i)) | 0;
-  }
-  const hue = Math.abs(h) % 360;
-  return `hsl(${hue}, 65%, 55%)`;
-}
 
 export function initObjectsUI() {
-  // Cached full listing + pager state. `allObjects` is the deduplicated
-  // latest event per object ID (objectEvents returns one event per change;
-  // we keep the newest for each id). `sortState` and `pageIndex` drive
-  // what slice is rendered into the DOM.
+  // `allObjects` is the deduplicated latest event per object ID (objectEvents
+  // returns one event per change; we keep the newest for each id). Sorting,
+  // grouping and paging belong to the table component below.
   /**
    * Let go of an object handle.
    *
@@ -239,20 +124,132 @@ export function initObjectsUI() {
     await Promise.all(workers);
   }
 
-  const allObjects = []; // [{ id, updatedAt, deleted, size, uploadUuid, ... }]
-  const selectedIds = new Set(); // checkbox state survives page switches
-  const sortState = { column: 'updated', asc: false };
-  // Upload-UUID groups collapsed in the UI. A collapsed group still
-  // contributes its header row to the display list but skips all of
-  // its member object rows. State is kept across renders/pagination.
-  const collapsedUuids = new Set();
-  let pageSize = 50;
-  let pageIndex = 0;
+  /**
+   * Whether deleted objects appear in the list.
+   *
+   * Hidden by default: the indexer keeps an event per change, so a deleted
+   * object stays in the log forever and an account that has churned through
+   * uploads ends up with a list mostly made of things that no longer exist.
+   * They remain reachable behind the toggle rather than being dropped, because
+   * "did that actually delete?" is a real question to be able to answer.
+   */
+  const SHOW_DELETED_KEY = 'objects-show-deleted';
+  let showDeleted = (() => {
+    try {
+      return localStorage.getItem(SHOW_DELETED_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  })();
+
   let loadInFlight = false;
 
-  const pageSizeEl = document.getElementById('list-page-size');
-  const pagerEl = document.getElementById('objects-pager');
-  const pageInfoEl = document.getElementById('objects-page-info');
+  // The listing itself — table, sorting, upload-group headers, selection and
+  // paging — is shared with the Shared With Me page. What stays here is what
+  // is genuinely this page's: which actions a row offers, what the bulk bar
+  // does to a selection, and the sharing-key column.
+  const table = createObjectTable({
+    els: {
+      list: 'objects-list',
+      pager: 'objects-pager',
+      pageInfo: 'objects-page-info',
+      pageSize: 'list-page-size',
+      pageNum: 'objects-page-num',
+      pageFirst: 'objects-page-first',
+      pagePrev: 'objects-page-prev',
+      pageNext: 'objects-page-next',
+      pageLast: 'objects-page-last',
+      selectionBar: 'obj-selection-bar',
+      selectionCount: 'zip-selected-count',
+      summary: 'objects-summary',
+      search: 'objects-search',
+    },
+    selectionButtons: [
+      'btn-download-zip', 'btn-add-selected-to-site', 'btn-share-selected',
+      'btn-copy-selected-ids', 'btn-ungroup-selected', 'btn-delete-selected',
+    ],
+    menuItems: rowMenuItems,
+    onRowActivate: (row) => window.viewObjectById(row.id),
+    filter: (o) => showDeleted || !o.deleted,
+    extraColumn: {
+      header: 'Sharing Keys',
+      // Sharing-key descriptions this object is reachable through. Untrusted
+      // text — untrustedLabel pre-escapes both the visible text and the
+      // tooltip, and neither is used anywhere but as element text and a
+      // double-quoted attribute.
+      cell: (obj) => {
+        const shared = sharedViaByObject.get(obj.id) || [];
+        const chips = shared.slice(0, 2).map((l) =>
+          `<span class="obj-key-chip" title="Shared via a key described: ${l.title}">${l.text}</span>`).join('')
+          + (shared.length > 2
+            ? `<span class="obj-key-chip obj-key-chip--more" title="${shared.length - 2} more">+${shared.length - 2}</span>`
+            : '');
+        return chips || '<span class="obj-dim">\u2014</span>';
+      },
+    },
+    // Site-level buttons, only for a group that has a manifest. They pass the
+    // manifest id so all the site-aware logic in viewObjectById /
+    // publishObjectById / deleteObjectById applies.
+    groupActions: (g) => (g.manifestId ? [
+      { action: 'open-site', id: g.manifestId, label: 'Open Site',
+        title: 'Open as a site', color: '#3b82f6' },
+      { action: 'publish-site', id: g.manifestId, label: 'Publish',
+        title: 'Publish this site as an expiring URL', color: '#10b981' },
+      { action: 'delete-site', id: g.manifestId, label: 'Delete',
+        title: 'Delete this site (or site + all referenced files)', color: '#dc2626' },
+    ] : []),
+    onGroupAction: (action, id) => {
+      switch (action) {
+        case 'open-site': window.viewObjectById('sialo://' + id); return;
+        case 'publish-site': window.publishObjectById(id); return;
+        case 'delete-site': window.deleteObjectById(id); return;
+      }
+    },
+    // The totals belong in the header, beside the title they describe; the
+    // footer says which slice of them is on screen. Naming what the filters
+    // hide stays important: a count that silently drops rows is
+    // indistinguishable from data going missing.
+    //
+    // This is the objects' own size, not what they cost to store: an object
+    // occupies whole 4 MiB sectors across a slab however small it is, so the
+    // billed figure is larger and stating this one as storage would misread a
+    // bill.
+    summaryText: ({ shown, totalBytes, searchQuery, rows }) => {
+      const hiddenDeleted = showDeleted ? 0 : rows.filter((o) => o.deleted).length;
+      const beforeSearch = showDeleted ? rows.length : rows.filter((o) => !o.deleted).length;
+      const filteredOut = searchQuery.trim() ? beforeSearch - shown : 0;
+      return {
+        text: `${shown} object${shown === 1 ? '' : 's'}`
+          + (totalBytes > 0 ? ` \u00b7 ${formatSize(totalBytes)}` : '')
+          + (filteredOut > 0 ? ` \u00b7 ${filteredOut} filtered out` : '')
+          + (hiddenDeleted > 0 ? ` \u00b7 ${hiddenDeleted} deleted hidden` : ''),
+        title: totalBytes > 0
+          ? `${Math.round(totalBytes).toLocaleString()} bytes across ${shown} object${shown === 1 ? '' : 's'}`
+          : '',
+      };
+    },
+  });
+
+  // Same array and same Set the component owns, so everything below keeps
+  // reading and writing the listing it is already written against.
+  const allObjects = table.rows;
+  const selectedIds = table.selectedIds;
+  const render = table.render;
+
+  // Deleted rows are a filter, not a column, so the toggle re-renders rather
+  // than reloading.
+  const showDeletedBox = document.getElementById('objects-show-deleted');
+  if (showDeletedBox) {
+    showDeletedBox.checked = showDeleted;
+    showDeletedBox.addEventListener('change', () => {
+      showDeleted = showDeletedBox.checked;
+      try { localStorage.setItem(SHOW_DELETED_KEY, showDeleted ? '1' : '0'); } catch (_) {}
+      // Back to page one: the row count changes underneath, so the current
+      // index can point past the end of the new, shorter list.
+      table.setPageIndex(0);
+      render();
+    });
+  }
 
   function renderLoadingState(loadedSoFar) {
     const prefix = loadedSoFar == null
@@ -408,7 +405,8 @@ async function indexSharingKeyLabels(sdk) {
     status.textContent = 'Loading objects…';
     const refreshBtn = document.getElementById('btn-list-objects');
     if (refreshBtn) refreshBtn.disabled = true;
-    pagerEl.style.display = 'none';
+    const pagerEl = document.getElementById('objects-pager');
+    if (pagerEl) pagerEl.style.display = 'none';
     renderLoadingState(null);
     try {
       const sdk = await connectSdk(status);
@@ -463,9 +461,16 @@ async function indexSharingKeyLabels(sdk) {
             const siteName = (isManifest && ev.object)
               ? siteNameForDisplay(ev.object.metadata())
               : '';
+            // `ObjectEvent` carries no creation time; the object it points at
+            // does. A deleted event has no object, so those rows show nothing
+            // rather than a borrowed date.
+            let createdAt = null;
+            try { createdAt = ev.object ? ev.object.createdAt() : null; } catch (_) { /* freed */ }
             latest.set(ev.id, {
               id: ev.id,
               updatedAt: ev.updatedAt,
+              createdAt,
+              createdMs: createdAt ? +createdAt : 0,
               deleted: ev.deleted,
               size: ev.object ? Number(ev.object.size()) : 0,
               filename,
@@ -507,17 +512,17 @@ async function indexSharingKeyLabels(sdk) {
       // here keeps WASM memory bounded to one listing rather than however many
       // refreshes happen before a collection runs.
       for (const o of allObjects) releaseObject(o.object);
-      allObjects.length = 0;
-      for (const o of latest.values()) allObjects.push(o);
+      table.setRows([...latest.values()]);
 
       if (allObjects.length === 0) {
-        pagerEl.style.display = 'none';
+        const emptyPager = document.getElementById('objects-pager');
+        if (emptyPager) emptyPager.style.display = 'none';
         document.getElementById('objects-list').innerHTML =
           '<div style="padding:1rem; color:#888; text-align:center;">No objects found. Upload something first!</div>';
         status.innerHTML = '<span style="color:#888;">No objects found</span>';
         return;
       }
-      pageIndex = 0;
+      table.setPageIndex(0);
       render();
       status.innerHTML = `<span class="pass">✓ Found ${allObjects.length} object${allObjects.length !== 1 ? 's' : ''}</span>`;
       // Not awaited: the list is already usable, and indexing costs a request
@@ -546,510 +551,6 @@ async function indexSharingKeyLabels(sdk) {
    * A live manifest wins over a deleted one, matching how the group's Open
    * Site / Publish actions pick theirs.
    */
-  function groupNames() {
-    const names = new Map();
-    for (const o of allObjects) {
-      if (!o.uploadUuid || !o.isManifest || !o.siteName) continue;
-      if (!o.deleted) {
-        names.set(o.uploadUuid, o.siteName);
-      } else if (!names.has(o.uploadUuid)) {
-        names.set(o.uploadUuid, o.siteName);
-      }
-    }
-    return names;
-  }
-
-  function sortValue(obj) {
-    switch (sortState.column) {
-      case 'id':       return obj.id;
-      // `displayName` is the UUID prefix stripped, and the site name for a
-      // manifest. Sorting on the raw filename sorted on the UUID prefix
-      // instead, which is invisible and arbitrary. Case-folded so `apple`
-      // and `Apple` land together rather than in separate blocks.
-      case 'filename': return (obj.displayName || obj.filename || '').toLowerCase();
-      case 'size':     return obj.size;
-      case 'status':   return obj.deleted ? 'deleted' : 'active';
-      case 'updated':
-      default:         return obj.ms;
-    }
-  }
-
-  // Group-aware sort: keeps rows sharing an upload UUID contiguous no
-  // matter which column is sorted. Each group's position is decided by
-  // its best sort value (min for ascending, max for descending), then
-  // rows within a group sort by the same column.
-  //
-  // Rows without a UUID use their own sortValue for the group key, so
-  // they interleave with groups based on the same column criteria.
-  /**
-   * Whether deleted objects appear in the list.
-   *
-   * Hidden by default: the indexer keeps an event per change, so a deleted
-   * object stays in the log forever and an account that has churned through
-   * uploads ends up with a list mostly made of things that no longer exist.
-   * They remain reachable behind the toggle rather than being dropped, because
-   * "did that actually delete?" is a real question to be able to answer.
-   */
-  const SHOW_DELETED_KEY = 'objects-show-deleted';
-  let showDeleted = (() => {
-    try {
-      return localStorage.getItem(SHOW_DELETED_KEY) === '1';
-    } catch (_) {
-      return false;
-    }
-  })();
-
-  /** The objects the list should show, before sorting or grouping. */
-  /** Name filter from the header box; empty means no filter. */
-  let searchQuery = '';
-
-  /**
-   * What the object's name is, for matching purposes.
-   *
-   * `displayName` is what the row shows, which for a grouped object is the
-   * path with its batch prefix stripped and for a site manifest is the site's
-   * name. Both are searched, along with the raw filename, so a query matches
-   * whatever the reader can see as well as what is actually stored — a batch
-   * prefix is invisible in the list, and someone who pastes a full path should
-   * still find the file.
-   */
-  function searchableName(o) {
-    return `${o.displayName || ''}\n${o.filename || ''}\n${o.siteName || ''}`.toLowerCase();
-  }
-
-  /**
-   * The objects the list is currently showing.
-   *
-   * One chokepoint for both filters, because everything downstream derives
-   * from it: sorting, grouping, paging, the header totals and what Select all
-   * selects. Filtering anywhere later would leave those disagreeing with each
-   * other, which is how a count ends up describing rows nobody can see.
-   *
-   * The search runs over the whole dataset rather than the page on screen. A
-   * list long enough to want searching is one where the thing being looked for
-   * is, by definition, usually not on the current page.
-   */
-  function listedObjects() {
-    const base = showDeleted ? allObjects : allObjects.filter((o) => !o.deleted);
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter((o) => searchableName(o).includes(q));
-  }
-
-  function sortedObjects() {
-    // The display set, which excludes deleted objects unless the toggle is on.
-    const visible = listedObjects();
-    const groupKey = new Map(); // uuid → best sort value across its members
-    for (const o of visible) {
-      if (!o.uploadUuid) continue;
-      const v = sortValue(o);
-      if (!groupKey.has(o.uploadUuid)) {
-        groupKey.set(o.uploadUuid, v);
-        continue;
-      }
-      const prev = groupKey.get(o.uploadUuid);
-      if (sortState.asc ? v < prev : v > prev) groupKey.set(o.uploadUuid, v);
-    }
-
-    if (sortState.column === 'filename') {
-      // Otherwise a group would take its position from whichever member
-      // happened to sort first, which is not what its header says.
-      for (const [uuid, name] of groupNames()) {
-        if (groupKey.has(uuid)) groupKey.set(uuid, name.toLowerCase());
-      }
-    }
-
-    const sorted = visible.slice();
-    sorted.sort((a, b) => {
-      const agv = a.uploadUuid ? groupKey.get(a.uploadUuid) : sortValue(a);
-      const bgv = b.uploadUuid ? groupKey.get(b.uploadUuid) : sortValue(b);
-      if (agv < bgv) return sortState.asc ? -1 : 1;
-      if (agv > bgv) return sortState.asc ? 1 : -1;
-      // Same group sort-value — separate distinct groups by their UUID
-      // (or, for ungrouped rows, by id) so different groups never
-      // interleave.
-      const au = a.uploadUuid || ('z' + a.id);
-      const bu = b.uploadUuid || ('z' + b.id);
-      if (au !== bu) return au < bu ? -1 : 1;
-      // Within a single group, fall back to the column's raw value.
-      const av = sortValue(a);
-      const bv = sortValue(b);
-      if (av < bv) return sortState.asc ? -1 : 1;
-      if (av > bv) return sortState.asc ? 1 : -1;
-      return 0;
-    });
-    return sorted;
-  }
-
-  // Build a flat display list from the sorted objects:
-  //   [{ kind: 'header', uuid, count, totalSize, collapsed }, ...]
-  //   [{ kind: 'row', obj }, ...]
-  // Rows inside a collapsed group are omitted; only the header remains.
-  // Aggregates (count, totalSize) reflect the full group regardless of
-  // which rows land on the current page, so the header is self-contained.
-  function buildDisplayList(sorted) {
-    // Per-uuid aggregates: file count, total bytes, and the manifest
-    // object id (if any) so the group header can carry "Open Site /
-    // Publish / Delete" actions for site uploads. A non-deleted
-    // manifest takes priority over a deleted one if there are stale
-    // entries lying around.
-    const names = groupNames();
-    const aggregates = new Map();
-    for (const o of allObjects) {
-      if (!o.uploadUuid) continue;
-      const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0, manifestId: null };
-      agg.count++;
-      agg.totalSize += (Number(o.size) || 0);
-      if (o.isManifest && !o.deleted && !agg.manifestId) {
-        agg.manifestId = o.id;
-      }
-      aggregates.set(o.uploadUuid, agg);
-    }
-    const out = [];
-    let emittedHeaderFor = null;
-    for (const o of sorted) {
-      if (o.uploadUuid) {
-        if (emittedHeaderFor !== o.uploadUuid) {
-          const agg = aggregates.get(o.uploadUuid) || { count: 0, totalSize: 0, manifestId: null };
-          out.push({
-            kind: 'header',
-            uuid: o.uploadUuid,
-            name: names.get(o.uploadUuid) || '',
-            count: agg.count,
-            totalSize: agg.totalSize,
-            manifestId: agg.manifestId,
-            collapsed: collapsedUuids.has(o.uploadUuid),
-          });
-          emittedHeaderFor = o.uploadUuid;
-        }
-        if (collapsedUuids.has(o.uploadUuid)) continue;
-      } else {
-        emittedHeaderFor = null;
-      }
-      out.push({ kind: 'row', obj: o });
-    }
-    return out;
-  }
-
-  function render() {
-    const sorted = sortedObjects();
-    const displayList = buildDisplayList(sorted);
-    const pageCount = Math.max(1, Math.ceil(displayList.length / pageSize));
-    if (pageIndex >= pageCount) pageIndex = pageCount - 1;
-    if (pageIndex < 0) pageIndex = 0;
-    const start = pageIndex * pageSize;
-    const pageItems = displayList.slice(start, start + pageSize);
-
-    // If the page starts mid-group, walk back to find that group's
-    // header so the continuation is labelled. Without this, page 2 of a
-    // long site would show bare indented rows with no context.
-    if (pageItems.length > 0 && pageItems[0].kind === 'row' && pageItems[0].obj.uploadUuid) {
-      const firstUuid = pageItems[0].obj.uploadUuid;
-      for (let i = start - 1; i >= 0; i--) {
-        const item = displayList[i];
-        if (item.kind === 'header' && item.uuid === firstUuid) {
-          pageItems.unshift({ ...item, continuation: true });
-          break;
-        }
-      }
-    }
-
-    const objectsList = document.getElementById('objects-list');
-    // The object ID no longer has a column: it was a truncated hash in the
-    // widest position on the row and the name is what identifies an object to
-    // a person. It stays one click away, as "Copy object ID" in the row menu.
-    let html = `
-        <table class="obj-table">
-          <thead>
-            <tr>
-              <th class="obj-col-check"><input type="checkbox" id="obj-select-all" title="Select all" /></th>
-              <th data-sort="filename">Name<span class="sort-arrow"></span></th>
-              <th class="obj-col-size" data-sort="size">Size<span class="sort-arrow"></span></th>
-              <th class="obj-col-updated" data-sort="updated">Updated<span class="sort-arrow"></span></th>
-              <th class="obj-col-keys">Sharing Keys</th>
-              <th class="obj-col-actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-      `;
-
-    for (const item of pageItems) {
-      if (item.kind === 'header') {
-        const color = uuidToColor(item.uuid);
-        const caret = item.collapsed ? '▶' : '▼';
-        // The site's name when it has one; the full UUID is the fallback for
-        // an upload that was never published as a site. Truncating it only
-        // made the group look like an opaque hex blob, so show all of it.
-        const groupLabel = item.name || item.uuid;
-        const labelIsName = Boolean(item.name);
-        const suffix = item.continuation ? ' (continued)' : '';
-        const sizeLabel = item.totalSize ? formatSize(item.totalSize) : '';
-        // Site-level action buttons. Only render when the group has a
-        // manifest (i.e. it was uploaded as a site). The data-action
-        // attribute pairs with a delegated handler that stops propagation
-        // so clicking a button doesn't toggle collapse on the row.
-        const siteActions = item.manifestId ? `
-          <span style="float:right;">
-            <button data-action="open-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#3b82f6; color:white;" title="Open as a site">Open Site</button>
-            <button data-action="publish-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#10b981; color:white; margin-left:0.25rem;" title="Publish this site as an expiring URL">Publish</button>
-            <button data-action="delete-site" data-id="${item.manifestId}" style="padding:0.25rem 0.5rem; font-size:0.85rem; background:#dc2626; color:white; margin-left:0.25rem;" title="Delete this site (or site + all referenced files)">Delete</button>
-          </span>` : '';
-        html += `
-          <tr class="obj-group-header" data-uuid="${item.uuid}" style="cursor:pointer; background:#0f0f0f; border-bottom:1px solid #222; border-left:4px solid ${color};">
-            <td colspan="6" style="padding:0.45rem 0.75rem;">
-              <span style="display:inline-block; width:1rem; color:#9ca3af; font-size:0.75rem;">${caret}</span>
-              <span style="display:inline-block; width:10px; height:10px; border-radius:2px; background:${color}; margin-right:0.5rem; vertical-align:middle;"></span>
-              <span title="Upload ${_esc(item.uuid)}" style="${labelIsName
-                ? 'color:#e5e7eb; font-size:0.85rem; font-weight:500;'
-                : 'font-family:var(--font-mono); color:#cbd5e1; font-size:0.8rem;'}">${_esc(groupLabel)}</span>
-              <span style="color:#6b7280; font-size:0.8rem; margin-left:0.75rem;">${item.count} file${item.count === 1 ? '' : 's'}${sizeLabel ? ' · ' + sizeLabel : ''}${suffix}</span>
-              ${siteActions}
-            </td>
-          </tr>
-        `;
-        continue;
-      }
-      const obj = item.obj;
-      const sizeBytes = obj.size;
-      const size = sizeBytes ? formatSize(sizeBytes) : 'N/A';
-      const date = new Date(obj.updatedAt).toLocaleString();
-      // Marked on the row rather than in a column of its own: all but one
-      // value would have read "Active", and deleted rows are hidden unless
-      // asked for.
-      const deletedChip = obj.deleted ? '<span class="obj-deleted-chip">Deleted</span>' : '';
-      const checked = selectedIds.has(obj.id) ? 'checked' : '';
-      // Filename cell. Objects with no metadata show an em-dash;
-      // upload-UUID-prefixed filenames have their prefix stripped for
-      // display (full value stays in the hover title). Members of a
-      // group get an extra left-pad so the visible path indents under
-      // the group header.
-      const fnameFull = obj.filename || '';
-      const fnameDisplay = obj.displayName || fnameFull;
-      const indent = obj.uploadUuid ? 'padding-left:2rem;' : '';
-      // Sharing-key descriptions this object is reachable through. Untrusted
-    // text — untrustedLabel pre-escapes both the visible text and the
-    // tooltip, and neither is used anywhere but as element text and a
-    // double-quoted attribute.
-    const shared = sharedViaByObject.get(obj.id) || [];
-    const sharedChips = shared.slice(0, 2).map((l) =>
-      `<span class="obj-key-chip" title="Shared via a key described: ${l.title}">${l.text}</span>`).join('')
-      + (shared.length > 2
-        ? `<span class="obj-key-chip obj-key-chip--more" title="${shared.length - 2} more">+${shared.length - 2}</span>`
-        : '');
-    const kind = objectKind(obj);
-    const nameCell = `
-        <td style="${indent}">
-          <div class="obj-name">
-            <span class="obj-icon obj-icon--${kind.kind}" aria-hidden="true">${kind.glyph}</span>
-            <span class="obj-name-text${fnameFull ? '' : ' is-dim'}" title="${_esc(fnameFull || obj.id)}">${
-              fnameFull ? _esc(fnameDisplay) : '—'}</span>
-            ${deletedChip}
-          </div>
-        </td>`;
-      // Ungrouped rows keep a transparent left-border so horizontal
-      // alignment stays stable. Grouped rows reuse the group's color
-      // as a thinner accent, echoing the header bar.
-      const rowAccent = obj.uploadUuid
-        ? `border-left:4px solid ${uuidToColor(obj.uploadUuid)};`
-        : 'border-left:4px solid transparent;';
-      html += `
-          <tr data-upload-uuid="${obj.uploadUuid || ''}" style="${rowAccent}">
-            <td>${!obj.deleted ? `<input type="checkbox" class="obj-select" data-id="${obj.id}" data-size="${sizeBytes}" ${checked}/>` : ''}</td>
-            ${nameCell}
-            <td class="obj-num">${size}</td>
-            <td class="obj-num obj-dim">${date}</td>
-            <td>${sharedChips || '<span class="obj-dim">—</span>'}</td>
-            <td class="obj-col-actions">
-              ${!obj.deleted ? `
-                <button class="obj-kebab" data-menu-for="${obj.id}" aria-haspopup="menu"
-                  aria-expanded="false" title="Actions">&#8942;</button>
-              ` : ''}
-            </td>
-          </tr>
-        `;
-    }
-
-    html += `
-          </tbody>
-        </table>
-      `;
-
-    // A menu anchored to a button that is about to be replaced has to go.
-    closeRowMenu();
-    objectsList.innerHTML = html;
-
-    // Refresh sort-arrow indicators on the headers.
-    for (const th of objectsList.querySelectorAll('th[data-sort]')) {
-      const arrow = th.querySelector('.sort-arrow');
-      if (arrow) {
-        arrow.textContent = th.dataset.sort === sortState.column
-          ? (sortState.asc ? ' ▲' : ' ▼')
-          : '';
-      }
-      th.addEventListener('click', () => {
-        if (sortState.column === th.dataset.sort) sortState.asc = !sortState.asc;
-        else { sortState.column = th.dataset.sort; sortState.asc = true; }
-        pageIndex = 0;
-        render();
-      });
-    }
-
-    // Pager controls + info text. Totals reflect the display list
-    // (groups + visible rows) so the user sees the same numbers whether
-    // or not any groups are collapsed.
-    pagerEl.style.display = 'flex';
-    // Name what the filter is hiding. A count that silently drops rows is
-    // indistinguishable from data going missing — which is exactly how it
-    // read the first time it happened.
-    const hiddenDeleted = showDeleted ? 0 : allObjects.filter((o) => o.deleted).length;
-    pageInfoEl.textContent = `${start + 1}–${Math.min(start + pageSize, displayList.length)} of ${displayList.length}`;
-    // The totals belong in the header, beside the title they describe; the
-    // footer says which slice of them is on screen. Naming what the filter
-    // hides stays important: a count that silently drops rows is
-    // indistinguishable from data going missing.
-    const summaryEl = document.getElementById('objects-summary');
-    if (summaryEl) {
-      const visible = listedObjects();
-      const shown = visible.length;
-      // Summed over exactly the rows the count describes, so turning "Show
-      // deleted" on moves both numbers together rather than leaving a total
-      // that quietly disagrees with the count beside it.
-      //
-      // This is the objects' own size, not what they cost to store: an object
-      // occupies whole 4 MiB sectors across a slab however small it is, so the
-      // billed figure is larger and stating this one as storage would misread
-      // a bill.
-      const totalBytes = visible.reduce((n, o) => n + (Number(o.size) || 0), 0);
-      // Naming what the filter hides, for the same reason the deleted count is
-      // named: a total that silently drops rows is indistinguishable from data
-      // going missing.
-      const beforeSearch = showDeleted
-        ? allObjects.length
-        : allObjects.filter((o) => !o.deleted).length;
-      const filteredOut = searchQuery.trim() ? beforeSearch - shown : 0;
-      summaryEl.textContent = `${shown} object${shown === 1 ? '' : 's'}`
-        + (totalBytes > 0 ? ` · ${formatSize(totalBytes)}` : '')
-        + (filteredOut > 0 ? ` · ${filteredOut} filtered out` : '')
-        + (hiddenDeleted > 0 ? ` · ${hiddenDeleted} deleted hidden` : '');
-      summaryEl.title = totalBytes > 0
-        ? `${Math.round(totalBytes).toLocaleString()} bytes across ${shown} object${shown === 1 ? '' : 's'}`
-        : '';
-    }
-    const pageNumEl = document.getElementById('objects-page-num');
-    if (pageNumEl) pageNumEl.textContent = String(pageIndex + 1);
-    document.getElementById('objects-page-first').disabled = pageIndex === 0;
-    document.getElementById('objects-page-prev').disabled  = pageIndex === 0;
-    document.getElementById('objects-page-next').disabled  = pageIndex >= pageCount - 1;
-    document.getElementById('objects-page-last').disabled  = pageIndex >= pageCount - 1;
-
-    // Toggle collapse on group-header clicks. Delegated per-render
-    // since the tbody HTML is rebuilt. Buttons inside the header
-    // (Open Site / Publish / Delete) intercept the click first and
-    // dispatch through to the existing per-row handlers — they pass
-    // the manifest id so all the site-aware logic in
-    // viewObjectById / publishObjectById / deleteObjectById applies.
-    objectsList.querySelectorAll('tr.obj-group-header').forEach(tr => {
-      tr.addEventListener('click', (ev) => {
-        const t = ev.target;
-        if (t instanceof HTMLElement && t.dataset && t.dataset.action) {
-          ev.stopPropagation();
-          const id = t.dataset.id;
-          if (!id) return;
-          switch (t.dataset.action) {
-            case 'open-site':   window.viewObjectById('sialo://' + id);   return;
-            case 'publish-site':  window.publishObjectById(id);  return;
-            case 'delete-site': window.deleteObjectById(id); return;
-          }
-          return;
-        }
-        const uuid = tr.dataset.uuid;
-        if (!uuid) return;
-        if (collapsedUuids.has(uuid)) collapsedUuids.delete(uuid);
-        else collapsedUuids.add(uuid);
-        render();
-      });
-    });
-
-    // Selection survives paging and applies to every non-deleted object
-    // across the whole dataset — not just the current page.
-    // Scoped to what the filter is showing. Select all reaching objects the
-    // reader cannot see, and Delete then acting on them, is the kind of
-    // surprise that costs data.
-    function eligibleIds() {
-      return listedObjects().filter(o => !o.deleted).map(o => o.id);
-    }
-
-    function updateSelectionCount() {
-      document.getElementById('zip-selected-count').textContent = `${selectedIds.size} selected`;
-      document.getElementById('btn-download-zip').disabled = selectedIds.size === 0;
-      // Hidden when nothing is selected: these act on a selection, and a
-      // permanent row of disabled buttons is just noise.
-      const bar = document.getElementById('obj-selection-bar');
-      if (bar) bar.style.display = selectedIds.size > 0 ? 'flex' : 'none';
-      for (const id of ['btn-share-selected', 'btn-copy-selected-ids', 'btn-delete-selected',
-        'btn-ungroup-selected']) {
-        const b = document.getElementById(id);
-        if (b) b.disabled = selectedIds.size === 0;
-      }
-      const addSelBtn = document.getElementById('btn-add-selected-to-site');
-      if (addSelBtn) addSelBtn.disabled = selectedIds.size === 0;
-      const selectAll = document.getElementById('obj-select-all');
-      if (selectAll) {
-        const eligible = eligibleIds();
-        // Reflect whole-dataset state, not just visible rows.
-        selectAll.checked = eligible.length > 0 && eligible.every(id => selectedIds.has(id));
-        selectAll.indeterminate = !selectAll.checked && eligible.some(id => selectedIds.has(id));
-      }
-    }
-
-    document.getElementById('obj-select-all').addEventListener('change', (e) => {
-      const check = e.target.checked;
-      if (check) {
-        for (const id of eligibleIds()) selectedIds.add(id);
-      } else {
-        selectedIds.clear();
-      }
-      // Also update visible row checkboxes so the user sees the change
-      // immediately on the current page.
-      objectsList.querySelectorAll('.obj-select').forEach(cb => { cb.checked = check; });
-      updateSelectionCount();
-    });
-    objectsList.querySelectorAll('.obj-select').forEach(cb => {
-      cb.addEventListener('change', () => {
-        if (cb.checked) selectedIds.add(cb.dataset.id);
-        else selectedIds.delete(cb.dataset.id);
-        updateSelectionCount();
-      });
-    });
-    updateSelectionCount();
-  } // end render()
-
-  // Pager navigation.
-  const showDeletedBox = document.getElementById('objects-show-deleted');
-  if (showDeletedBox) {
-    showDeletedBox.checked = showDeleted;
-    showDeletedBox.addEventListener('change', () => {
-      showDeleted = showDeletedBox.checked;
-      try { localStorage.setItem(SHOW_DELETED_KEY, showDeleted ? '1' : '0'); } catch (_) {}
-      // Back to page one: the row count changes underneath, so the current
-      // index can point past the end of the new, shorter list.
-      pageIndex = 0;
-      render();
-    });
-  }
-
-  document.getElementById('objects-page-first').addEventListener('click', () => { pageIndex = 0; render(); });
-  document.getElementById('objects-page-prev').addEventListener('click',  () => { pageIndex--; render(); });
-  document.getElementById('objects-page-next').addEventListener('click',  () => { pageIndex++; render(); });
-  document.getElementById('objects-page-last').addEventListener('click',  () => {
-    pageIndex = Math.max(0, Math.ceil(buildDisplayList(sortedObjects()).length / pageSize) - 1);
-    render();
-  });
-  pageSizeEl.addEventListener('change', () => {
-    pageSize = parseInt(pageSizeEl.value, 10) || 50;
-    pageIndex = 0;
-    render();
-  });
 
   // Bulk: add every selected object to the Site Builder draft. Objects
   // that already have filename metadata are added directly; those
@@ -1346,22 +847,15 @@ async function indexSharingKeyLabels(sdk) {
   // Typing filters as you go. No debounce: the work is a substring test over
   // a list already in memory, and waiting for a pause makes it feel slower
   // than it is.
+  // Typing is handled by the table; Escape-to-clear is about the input
+  // element, which is what the native clear button does and what the key does
+  // in every other search box.
   const searchEl = document.getElementById('objects-search');
   if (searchEl) {
-    searchEl.addEventListener('input', () => {
-      searchQuery = searchEl.value;
-      // Page 3 of the old results is meaningless against the new ones, and
-      // landing past the end of a short result set looks like no matches.
-      pageIndex = 0;
-      render();
-    });
-    // Escape clears, which is what the native clear button does and what the
-    // key does in every other search box.
     searchEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape' || !searchEl.value) return;
       searchEl.value = '';
-      searchQuery = '';
-      pageIndex = 0;
+      table.setSearch('');
       render();
     });
   }
@@ -2049,29 +1543,6 @@ async function indexSharingKeyLabels(sdk) {
       alert(`Could not attach to a sharing key: ${e.message || e}`);
     }
   };
-
-  // Row menus. Bound once, on the container, which survives every render:
-  // binding inside render() added one listener per render, and because a
-  // second call for the same button toggles, an even number of listeners
-  // opened the menu and closed it again inside the same click. The button
-  // looked dead.
-  document.getElementById('objects-list').addEventListener('click', (e) => {
-    const button = e.target.closest('.obj-kebab');
-    if (!button) return;
-    e.stopPropagation();
-    const obj = allObjects.find((o) => o.id === button.dataset.menuFor);
-    if (obj) openRowMenu(button, obj);
-  });
-
-  // Clicking the name opens the object, which is what a row's title should do.
-  document.getElementById('objects-list').addEventListener('click', (e) => {
-    const name = e.target.closest('.obj-name-text');
-    if (!name) return;
-    const row = name.closest('tr');
-    const id = row && row.querySelector('.obj-kebab')?.dataset.menuFor;
-    // No kebab means a deleted row: nothing to open.
-    if (id) window.viewObjectById(id);
-  });
 
   window.migrateObjectById = async (objectId) => {
     const status = panelStatus();

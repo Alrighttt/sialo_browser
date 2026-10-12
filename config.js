@@ -409,11 +409,19 @@ function summaryEntry(sdk, summary) {
   const id = summary.id;
   const size = summary.size;
   const metadata = summary.metadata;
+  // Timestamps come back as Date, and reading them here is what lets a listing
+  // show an Updated column without fetching anything.
+  let createdAt = null;
+  let updatedAt = null;
+  try { createdAt = summary.createdAt; } catch (_) { /* older binding */ }
+  try { updatedAt = summary.updatedAt; } catch (_) { /* older binding */ }
   try { summary.free(); } catch (_) { /* already gone */ }
   return {
     id: () => id,
     size: () => size,
     metadata: () => metadata,
+    createdAt: () => createdAt,
+    updatedAt: () => updatedAt,
     // Bound to the SharedSdk that listed it, so an entry can be turned back
     // into a readable object by a caller holding only an account SDK — which
     // is what pinning does.
