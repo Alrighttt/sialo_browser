@@ -129,7 +129,12 @@ export async function listSharingKeys(sdk) {
         publicKey: key.publicKey,
         seed: key.seed(),
         description: record.description,
-        // The snapshot from the indexer, replaced below by a real count.
+        // Live, not a snapshot: indexd maintains object_count and size on the
+        // sharing_keys row with statement triggers on shared_objects, created
+        // in the same migration as the table, so no attachment can go
+        // uncounted. Walking the key to recount it listed every object and
+        // every slab behind it, which for a key of a few hundred large files
+        // took minutes to arrive at a number already in this response.
         objectCount: num(stats.objectCount),
         objectSize: num(stats.objectSize),
         expiresAt: stats.expiresAt || null,
@@ -138,31 +143,6 @@ export async function listSharingKeys(sdk) {
     }
     if (page.length < PAGE) break;
   }
-
-  // `KeyStats` is documented as "a snapshot, not a live view", and in practice
-  // it is taken when the key is created — which is *before* anything is
-  // attached, because every flow here mints the key first and then attaches.
-  // So the snapshot reads 0 for a key that is actually full, which is worse
-  // than showing nothing. Count what the key really holds.
-  //
-  // One walk per key. Failures leave the snapshot in place rather than
-  // blanking the row: a wrong number is still better than an empty one.
-  await Promise.all(rows.map(async (row) => {
-    try {
-      let count = 0;
-      let size = 0;
-      for (let offset = 0; ; offset += PAGE) {
-        const page = await sdk.sharedObjects(row.key, offset, PAGE);
-        for (const obj of page) {
-          count += 1;
-          size += num(obj.size());
-        }
-        if (page.length < PAGE) break;
-      }
-      row.objectCount = count;
-      row.objectSize = size;
-    } catch (_) { /* keep the snapshot */ }
-  }));
 
   return rows;
 }

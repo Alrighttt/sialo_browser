@@ -1,5 +1,5 @@
 import { _esc, formatSize, _dbgWarn } from './utils.js';
-import { connectSdk } from './config.js';
+import { connectSdk, connectSharedSdk, listSharedSummaries } from './config.js';
 import { ZipWriter } from './vendor/zip-stream.js';
 import { parallelDownloadToDisk } from './download.js';
 import { withKeepAlive } from './keep-alive.js';
@@ -301,11 +301,24 @@ function untrustedLabel(raw, max = 40) {
 }
 
 /**
+ * Above this many objects, a key is walked through its own SharedSdk rather
+ * than the owner-side listing.
+ *
+ * The owner-side `sharedObjects` has no endpoint that leaves the slabs out, so
+ * it hydrates every sector of every object to collect a set of ids it then
+ * throws away. The key's own listing does, but reaching it costs a connection
+ * and a stats check per key — worth it for a key of hundreds of large objects,
+ * not for a handful of small ones. The count this decides on is live, so it
+ * can be trusted to make the choice.
+ */
+const SUMMARY_WALK_MIN_OBJECTS = 100;
+
+/**
  * Index which sharing keys each object is attached to.
  *
- * Best effort: it costs a `sharedObjects` walk per key, so failures are
- * swallowed rather than breaking the object list, and it runs after the first
- * render so the list is never held up waiting for it.
+ * Best effort: it costs a walk per key, so failures are swallowed rather than
+ * breaking the object list, and it runs after the first render so the list is
+ * never held up waiting for it.
  */
 async function indexSharingKeyLabels(sdk) {
   sharedViaByObject.clear();
@@ -324,17 +337,38 @@ async function indexSharingKeyLabels(sdk) {
   for (const record of keys) {
     const label = untrustedLabel(record.description);
     if (!label) continue;
+    const note = (id) => {
+      const list = sharedViaByObject.get(id) || [];
+      // Two keys can carry the same description; showing it twice on one row
+      // is noise, not information.
+      if (!list.some((l) => l.title === label.title)) list.push(label);
+      sharedViaByObject.set(id, list);
+    };
+
+    const count = Number(record.stats && record.stats.objectCount) || 0;
+    if (count === 0) continue;
+
+    // Each `record.key` access allocates a fresh wasm handle, so take one.
+    const key = record.key;
+
+    if (count >= SUMMARY_WALK_MIN_OBJECTS) {
+      let shared = null;
+      try {
+        ({ sdk: shared } = await connectSharedSdk(key.seed()));
+        for (const entry of await listSharedSummaries(shared)) note(entry.id());
+        continue;
+      } catch (_) {
+        // Fall through: the key is still readable the owner's way, just not
+        // cheaply, and a label is better than none.
+      } finally {
+        try { if (shared && shared.free) shared.free(); } catch (_) { /* gone */ }
+      }
+    }
+
     try {
       for (let offset = 0; ; offset += PAGE) {
-        const page = await sdk.sharedObjects(record.key, offset, PAGE);
-        for (const obj of page) {
-          const id = obj.id();
-          const list = sharedViaByObject.get(id) || [];
-          // Two keys can carry the same description; showing it twice on one
-          // row is noise, not information.
-          if (!list.some((l) => l.title === label.title)) list.push(label);
-          sharedViaByObject.set(id, list);
-        }
+        const page = await sdk.sharedObjects(key, offset, PAGE);
+        for (const obj of page) note(obj.id());
         if (page.length < PAGE) break;
       }
     } catch (_) { /* skip this key */ }
