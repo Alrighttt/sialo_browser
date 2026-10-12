@@ -569,6 +569,27 @@ function renderProfileSelect(data) {
   }
 }
 
+/**
+ * Rename a profile, keeping its position in the list.
+ *
+ * The name is the key, so this rebuilds the map rather than assigning the new
+ * key and deleting the old one: that would move the profile to the end of
+ * every select, reordering a list the reader arranged. Returns false when the
+ * name is taken or the profile is gone, so the caller can say which.
+ */
+function renameProfile(data, from, to) {
+  if (!data.profiles[from]) return false;
+  if (to === from) return true;
+  if (data.profiles[to]) return false;
+  const renamed = {};
+  for (const [name, profile] of Object.entries(data.profiles)) {
+    renamed[name === from ? to : name] = profile;
+  }
+  data.profiles = renamed;
+  if (data.active === from) data.active = to;
+  return true;
+}
+
 function activateProfile(data, name) {
   // Only a real switch is announced. This also runs once at startup with the
   // already-active name, and panels that rebuild themselves on the event have
@@ -685,6 +706,26 @@ document.getElementById('cfg-profile-add').addEventListener('click', () => {
   if (profileData.profiles[trimmed]) { alert('Profile already exists.'); return; }
   profileData.profiles[trimmed] = { url: '', key: '' };
   activateProfile(profileData, trimmed);
+});
+
+document.getElementById('cfg-profile-rename').addEventListener('click', () => {
+  const current = profileData.active;
+  const name = prompt('Rename profile:', current);
+  // Cancel is not an empty name: one leaves the profile alone, the other is a
+  // mistake worth saying something about.
+  if (name === null) return;
+  const trimmed = name.trim();
+  if (!trimmed) { alert('A profile needs a name.'); return; }
+  if (trimmed === current) return;
+  if (!renameProfile(profileData, current, trimmed)) {
+    alert('A profile with that name already exists.');
+    return;
+  }
+  // Only the label changed, so this saves and redraws without going through
+  // activateProfile: the account underneath is the same one, and the inputs
+  // should not be rewritten from under someone mid-edit.
+  saveProfiles(profileData);
+  renderProfileSelect(profileData);
 });
 
 document.getElementById('cfg-profile-delete').addEventListener('click', () => {
